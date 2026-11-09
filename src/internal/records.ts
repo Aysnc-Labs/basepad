@@ -3,18 +3,29 @@ import { dirname } from "node:path";
 import { z } from "zod";
 
 /**
- * A service a project added, and what basepad made for it. `postgres-neon` is a database on the
- * same shared Postgres, reached through the shared Neon proxy.
+ * What basepad made on this machine for one of a project's services. The project's config says
+ * which services it has; these records say where they are.
  */
-const Service = z.object({
-	type: z.enum(["postgres", "postgres-neon"]),
-	database: z.string(),
-});
+const Service = z.discriminatedUnion("type", [
+	z.object({
+		type: z.literal("postgres"),
+		/** Each of the service's databases, by its name in the config, to its name in Postgres. */
+		databases: z.record(z.string(), z.string()),
+	}),
+	/** A database on the shared Postgres, which apps reach through the shared Neon proxy. */
+	z.object({
+		type: z.literal("postgres-neon"),
+		databases: z.record(z.string(), z.string()),
+	}),
+	z.object({ type: z.literal("mailpit") }),
+	z.object({ type: z.literal("redis"), port: z.number() }),
+]);
 export type Service = z.infer<typeof Service>;
 
 const Project = z.object({
-	preset: z.enum(["next"]),
 	services: z.record(z.string(), Service),
+	/** The app server's port, for the variables that point at the app. */
+	app: z.object({ port: z.number() }).optional(),
 });
 export type Project = z.infer<typeof Project>;
 
@@ -26,6 +37,7 @@ export type Daemon = z.infer<typeof Daemon>;
 const Records = z.object({
 	version: z.literal(1),
 	postgres: z.object({ port: z.number(), password: z.string() }).optional(),
+	mailpit: z.object({ smtpPort: z.number(), uiPort: z.number() }).optional(),
 	/** The shared Neon proxy's listeners. Only `wss` is for apps; the others are set so none clash. */
 	neonProxy: z
 		.object({ wss: z.number(), proxy: z.number(), mgmt: z.number(), http: z.number() })

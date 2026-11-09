@@ -67,7 +67,7 @@ export async function openHome(): Promise<Home> {
 	};
 }
 
-/** A TOML key, quoted when it isn't bare (`"github:aysnc-labs/mise-binaries"`). */
+/** A TOML key, quoted when it isn't bare (`"aqua:axllent/mailpit"`). */
 function tomlKey(key: string): string {
 	return /^[A-Za-z0-9_-]+$/.test(key) ? key : JSON.stringify(key);
 }

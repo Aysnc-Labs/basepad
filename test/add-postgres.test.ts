@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { type Sandbox, sandbox } from "./sandbox.ts";
+import { blockOf, type Sandbox, sandbox } from "./sandbox.ts";
 
 let box: Sandbox;
 beforeAll(async () => {
@@ -12,17 +12,6 @@ afterAll(async () => {
 });
 
 const userEnv = "# my own settings\nSECRET_KEY=keep-me\n";
-
-function blockOf(envFile: string): Record<string, string> {
-	const match = envFile.match(/# >>> basepad[^\n]*\n([\s\S]*?)# <<< basepad\n/);
-	if (!match?.[1]) throw new Error(`no basepad block in:\n${envFile}`);
-	return Object.fromEntries(
-		match[1]
-			.split("\n")
-			.filter((line) => line && !line.startsWith("#"))
-			.map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
-	);
-}
 
 describe("basepad add postgres", () => {
 	test("gives the project a database on the shared Postgres, in its env block", async () => {

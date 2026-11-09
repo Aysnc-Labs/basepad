@@ -1,27 +1,30 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Home } from "./home.ts";
-import { NEON_PROXY_DAEMON } from "./neon.ts";
-import { POSTGRES_DAEMON } from "./postgres.ts";
-import type { Project } from "./records.ts";
 import { MISE_MIN_VERSION, PITCHFORK_VERSION } from "./versions.ts";
 
-/** Where basepad keeps a project's mise config: conf.d, the lowest-precedence file, so the project's own config wins. */
+/**
+ * Where basepad keeps a project's mise config: conf.d, the lowest-precedence file, so the
+ * project's own config wins. It holds machine paths and ports, so it isn't meant to be committed.
+ */
 export function confFile(projectDir: string): string {
 	return join(projectDir, ".config", "mise", "conf.d", "basepad.toml");
 }
 
 /**
- * Writes the project's references to the home project's shared daemons. A reference takes only
- * `project` and `name`; the daemon's settings live in the home project.
+ * A reference to one of the home project's shared daemons. A reference takes only `project` and
+ * `name`; the daemon's settings live in the home project.
  */
-export async function writeProjectConfig(
-	projectDir: string,
-	project: Project,
-	home: Home,
-): Promise<void> {
+export function referenceTable(name: string, home: Home, daemon: string): string {
+	return [`[daemons.${name}]`, `project = ${JSON.stringify(home.dir)}`, `name = "${daemon}"`].join(
+		"\n",
+	);
+}
+
+/** Writes the project's conf.d file with these daemon tables: references, or its own daemons. */
+export async function writeProjectConfig(projectDir: string, tables: string[]): Promise<void> {
 	const lines = [
-		"# Written by basepad. Change services with `basepad add`; edits here are overwritten.",
+		"# Written by basepad from basepad.toml. Run `basepad up` to rewrite it; edits here are overwritten.",
 		`min_version = "${MISE_MIN_VERSION}"`,
 		"",
 		"[settings]",
@@ -29,22 +32,11 @@ export async function writeProjectConfig(
 		"",
 		"[tools]",
 		`pitchfork = "${PITCHFORK_VERSION}"`,
+		...tables.flatMap((table) => ["", table]),
 	];
-	const reference = (name: string, daemon: string) =>
-		lines.push(
-			"",
-			`[daemons.${name}]`,
-			`project = ${JSON.stringify(home.dir)}`,
-			`name = "${daemon}"`,
-		);
-	for (const name of Object.keys(project.services)) reference(name, POSTGRES_DAEMON);
-	// One proxy for the project, however many of its databases go through it.
-	if (Object.values(project.services).some((s) => s.type === "postgres-neon")) {
-		reference(NEON_PROXY_DAEMON, NEON_PROXY_DAEMON);
-	}
 	const file = confFile(projectDir);
 	const text = `${lines.join("\n")}\n`;
 	if ((await readFile(file, "utf8").catch(() => "")) === text) return;
-	await mkdir(join(projectDir, ".config", "mise", "conf.d"), { recursive: true });
+	await mkdir(dirname(file), { recursive: true });
 	await writeFile(file, text);
 }
