@@ -4,11 +4,13 @@ import { writeEnvBlock } from "./envfile.ts";
 import { BasepadError } from "./exec.ts";
 import { withHome } from "./home.ts";
 import { daemons } from "./mise.ts";
+import { NEON_PROXY_DAEMON, type NeonProxy, startNeonProxy } from "./neon.ts";
 import { startPostgres } from "./postgres.ts";
-import { envVars, PRESETS, type Preset } from "./presets.ts";
+import { databaseVar, envVars, PRESETS, type Preset } from "./presets.ts";
 import { writeProjectConfig } from "./project.ts";
 
-export const SERVICES = ["postgres"] as const;
+export const SERVICES = ["postgres", "postgres-neon"] as const;
+type ServiceType = (typeof SERVICES)[number];
 
 export interface AddOptions {
 	cwd: string;
@@ -24,7 +26,13 @@ export async function add(options: AddOptions): Promise<string[]> {
 			`Unknown service \`${options.service}\`. basepad can add: ${SERVICES.join(", ")}.`,
 		);
 	}
-	const name = options.name ?? options.service;
+	const type = options.service as ServiceType;
+	const name = options.name ?? type;
+	if (name === NEON_PROXY_DAEMON) {
+		throw new BasepadError(
+			`\`${name}\` is the name of basepad's shared Neon proxy; choose another.`,
+		);
+	}
 	if (!/^[a-z][a-z0-9_-]*$/.test(name) || name.includes("--")) {
 		throw new BasepadError(
 			`\`${name}\` isn't a valid service name: use lowercase letters, digits, \`-\` and \`_\`, starting with a letter.`,
@@ -39,19 +47,35 @@ export async function add(options: AddOptions): Promise<string[]> {
 		const project = home.records.projects[projectDir] ?? { preset: "next", services: {} };
 		home.records.projects[projectDir] = project;
 		if (options.preset) project.preset = options.preset as Preset;
+		const variable = databaseVar(name, { type });
+		for (const [other, service] of Object.entries(project.services)) {
+			if (other !== name && databaseVar(other, service) === variable) {
+				throw new BasepadError(
+					`This project's ${other} already writes ${variable}. Give this one a name with \`--name\`.`,
+				);
+			}
+		}
 
 		const server = await startPostgres(home);
 		const existing = project.services[name];
-		const database = existing?.database ?? databaseName(home.records.projects, projectDir, name);
-		project.services[name] = { type: "postgres", database };
+		const database =
+			existing?.database ?? databaseName(home.records.projects, projectDir, name, type);
+		project.services[name] = { type, database };
 		await server.ensureDatabase(database);
 		await home.save();
 
+		let neon: NeonProxy | undefined;
+		if (Object.values(project.services).some((s) => s.type === "postgres-neon")) {
+			neon = await startNeonProxy(home, server);
+		}
+
 		await writeProjectConfig(projectDir, project, home);
-		const { file, vars } = envVars(project, server);
+		const { file, vars } = envVars(project, server, neon);
 		await writeEnvBlock(join(projectDir, file), vars);
 		return [
-			`Added ${name}: database ${database} on the shared Postgres (port ${server.port}).`,
+			type === "postgres-neon"
+				? `Added ${name}: database ${database} on the shared Postgres (port ${server.port}), through the shared Neon proxy (${neon?.wsProxy}).`
+				: `Added ${name}: database ${database} on the shared Postgres (port ${server.port}).`,
 			`Wrote ${file}.`,
 		];
 	});
@@ -71,10 +95,9 @@ function databaseName(
 	projects: Record<string, { services: Record<string, { database: string }> }>,
 	projectDir: string,
 	name: string,
+	type: ServiceType,
 ): string {
-	const base = sanitise(
-		name === "postgres" ? basename(projectDir) : `${basename(projectDir)}_${name}`,
-	);
+	const base = sanitise(name === type ? basename(projectDir) : `${basename(projectDir)}_${name}`);
 	const taken = new Set(
 		Object.values(projects).flatMap((p) => Object.values(p.services).map((s) => s.database)),
 	);

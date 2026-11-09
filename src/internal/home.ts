@@ -3,8 +3,8 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { BasepadError } from "./exec.ts";
 import { mise } from "./mise.ts";
-import { loadRecords, type Records, saveRecords } from "./records.ts";
-import { MISE_MIN_VERSION, PITCHFORK_VERSION, POSTGRES_VERSION } from "./versions.ts";
+import { type Daemon, loadRecords, type Records, saveRecords } from "./records.ts";
+import { MISE_MIN_VERSION, PITCHFORK_VERSION } from "./versions.ts";
 
 /** The daemon namespace of the home project, so shared daemons have stable IDs (`basepad/postgres`). */
 export const HOME_NAMESPACE = "basepad";
@@ -17,8 +17,8 @@ export interface Home {
 	dir: string;
 	records: Records;
 	save(): Promise<void>;
-	/** Writes the home's `mise.toml` with these daemon tables, and trusts it. */
-	configure(daemons: string): Promise<void>;
+	/** Sets one shared daemon, then writes the home's `mise.toml` with every daemon, and trusts it. */
+	configure(name: string, daemon: Daemon): Promise<void>;
 }
 
 /** `$BASEPAD_HOME`, else `$XDG_DATA_HOME/basepad`, else `~/.local/share/basepad`. */
@@ -36,9 +36,13 @@ export async function openHome(): Promise<Home> {
 		dir,
 		records,
 		save: () => saveRecords(recordsFile, records),
-		async configure(daemons) {
+		async configure(name, daemon) {
+			records.daemons[name] = daemon;
+			await saveRecords(recordsFile, records);
 			await mkdir(dir, { recursive: true });
 			const file = join(dir, "mise.toml");
+			const entries = Object.entries(records.daemons).sort(([a], [b]) => a.localeCompare(b));
+			const tools = Object.fromEntries(entries.flatMap(([, d]) => Object.entries(d.tools)));
 			const text = [
 				"# basepad's home project. basepad rewrites this file; change services through basepad.",
 				`min_version = "${MISE_MIN_VERSION}"`,
@@ -47,13 +51,12 @@ export async function openHome(): Promise<Home> {
 				"experimental = true",
 				"",
 				"[tools]",
-				`postgres = "${POSTGRES_VERSION}"`,
+				...Object.entries(tools).map(([tool, version]) => `${tomlKey(tool)} = "${version}"`),
 				`pitchfork = "${PITCHFORK_VERSION}"`,
 				"",
 				"[daemons_settings]",
 				`namespace = "${HOME_NAMESPACE}"`,
-				"",
-				daemons.trim(),
+				...entries.flatMap(([, d]) => ["", d.table.trim()]),
 				"",
 			].join("\n");
 			const current = await readFile(file, "utf8").catch(() => "");
@@ -62,6 +65,11 @@ export async function openHome(): Promise<Home> {
 			await mise(dir, "trust", "--quiet", dir);
 		},
 	};
+}
+
+/** A TOML key, quoted when it isn't bare (`"github:aysnc-labs/mise-binaries"`). */
+function tomlKey(key: string): string {
+	return /^[A-Za-z0-9_-]+$/.test(key) ? key : JSON.stringify(key);
 }
 
 const LOCK_TIMEOUT_MS = 180_000;

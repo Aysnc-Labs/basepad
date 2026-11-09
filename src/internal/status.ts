@@ -1,6 +1,7 @@
 import { access, realpath } from "node:fs/promises";
 import { openHome } from "./home.ts";
 import { daemons } from "./mise.ts";
+import { NEON_ENDPOINT_OPTIONS, NEON_PROXY_DAEMON, NEON_PROXY_DAEMON_ID } from "./neon.ts";
 import { POSTGRES_DAEMON_ID } from "./postgres.ts";
 
 export interface Status {
@@ -27,7 +28,19 @@ export async function status(cwd: string): Promise<Status> {
 			name,
 			daemon?.status ?? "missing",
 			port === undefined ? "-" : String(port),
-			port === undefined ? "-" : `postgres://postgres:***@localhost:${port}/${service.database}`,
+			port === undefined
+				? "-"
+				: `postgres://postgres:***@localhost:${port}/${service.database}${service.type === "postgres-neon" ? `?${NEON_ENDPOINT_OPTIONS}` : ""}`,
+		]);
+	}
+	if (Object.values(project?.services ?? {}).some((s) => s.type === "postgres-neon")) {
+		const daemon = shared.find((d) => d.id === NEON_PROXY_DAEMON_ID);
+		const port = home.records.neonProxy?.wss;
+		rows.push([
+			NEON_PROXY_DAEMON,
+			daemon?.status ?? "missing",
+			port === undefined ? "-" : String(port),
+			port === undefined ? "-" : `ws://localhost:${port}/v2`,
 		]);
 	}
 
