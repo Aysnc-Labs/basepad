@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { add } from "./internal/add.ts";
 import { changed, ci } from "./internal/ci.ts";
+import { claudeCreate, claudeRemove } from "./internal/claude.ts";
 import { clone } from "./internal/clone.ts";
 import { SERVICE_TYPES } from "./internal/config.ts";
 import { BasepadError } from "./internal/exec.ts";
@@ -20,8 +21,14 @@ Commands:
   status          List this project's services with their state, port and URL
   worktree add <name> [--path <dir>]
                   Make a git worktree with its own databases, Redis, port and env block
+  worktree add --claude
+                  The same, as Claude Code's WorktreeCreate hook: reads the name from the
+                  hook's input on stdin, and prints only the worktree's path on stdout
   worktree remove <name> [--force]
                   Run its pre-remove hook, drop its databases, stop its services, remove it
+  worktree remove --claude
+                  The same, as Claude Code's WorktreeRemove hook: removes the worktree at the
+                  input's worktree_path, even with uncommitted work, and its merged branch
   worktree ls     List this repo's worktrees with their state, ports and databases
   clone <path>... Copy paths from main into this worktree (copy-on-write where supported)
   changed [--base <ref>]
@@ -44,6 +51,7 @@ async function main(argv: string[]): Promise<number> {
 			force: { type: "boolean" },
 			base: { type: "string" },
 			all: { type: "boolean" },
+			claude: { type: "boolean" },
 			help: { type: "boolean", short: "h" },
 			version: { type: "boolean", short: "v" },
 		},
@@ -61,6 +69,8 @@ async function main(argv: string[]): Promise<number> {
 		return command === undefined && !values.help ? 1 : 0;
 	}
 	const cwd = process.cwd();
+	// As a Claude Code hook, stdout carries only the worktree's path.
+	if (values.claude) console.log = console.error;
 	switch (command) {
 		case "add": {
 			if (rest.length === 0) throw new BasepadError(`\`basepad add\` needs a service.\n\n${USAGE}`);
@@ -80,6 +90,19 @@ async function main(argv: string[]): Promise<number> {
 		}
 		case "worktree": {
 			const [sub, name, ...extra] = rest;
+			if (values.claude) {
+				if (sub === "add" && name === undefined && values.path === undefined) {
+					process.stdout.write(`${await claudeCreate(cwd)}\n`);
+					return 0;
+				}
+				if (sub === "remove" && name === undefined) {
+					for (const line of await claudeRemove()) console.error(line);
+					return 0;
+				}
+				throw new BasepadError(
+					"`--claude` takes `worktree add --claude` or `worktree remove --claude`, with no name: it reads Claude Code's hook input on stdin.",
+				);
+			}
 			if (sub === "ls" && name === undefined) {
 				console.log(await listWorktrees(cwd));
 				return 0;
