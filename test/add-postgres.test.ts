@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { blockOf, type Sandbox, sandbox } from "./sandbox.ts";
+import { blockOf, daemonExports, type Sandbox, sandbox } from "./sandbox.ts";
 
 let box: Sandbox;
 beforeAll(async () => {
@@ -77,9 +77,7 @@ describe("basepad add postgres", () => {
 			expect.objectContaining({ id: "basepad/postgres", status: "running", proxy: "off" }),
 		);
 
-		const env = await box.mise(deli, "env", "--json");
-		const keys = Object.keys(JSON.parse(env.stdout) as Record<string, string>);
-		expect(keys.filter((key) => /^(DB|POSTGRES)_(URL|PORT)$/.test(key))).toEqual([]);
+		expect(await daemonExports(box, deli)).toEqual([]);
 	});
 
 	test("rewrites a stale block in place, keeping the lines around it", async () => {

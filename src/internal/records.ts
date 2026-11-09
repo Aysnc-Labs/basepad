@@ -46,6 +46,14 @@ const Project = z.object({
 		.optional(),
 });
 export type Project = z.infer<typeof Project>;
+export type Worktree = NonNullable<Project["worktree"]>;
+
+/** The Postgres databases a service's record holds, if it's a postgres or postgres-neon one. */
+export function databasesOf(service: Service): string[] {
+	return service.type === "postgres" || service.type === "postgres-neon"
+		? Object.values(service.databases)
+		: [];
+}
 
 /** A shared daemon in the home project: its mise table, and the tools it runs. */
 const Daemon = z.object({ tools: z.record(z.string(), z.string()), table: z.string() });

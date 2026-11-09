@@ -1,10 +1,8 @@
 import type { ServiceConfig } from "./config.ts";
 import type { Home } from "./home.ts";
 import type { PostgresServer } from "./postgres.ts";
-import type { Project } from "./records.ts";
+import { databasesOf, type Project, type Worktree } from "./records.ts";
 import { redisPort } from "./redis.ts";
-
-type Worktree = NonNullable<Project["worktree"]>;
 
 /** Postgres's limit on an identifier. */
 const MAX_IDENTIFIER = 63;
@@ -98,9 +96,7 @@ function worktreeDatabaseName(home: Home, database: string, worktree: string): s
 	const base = `${database}_${suffix}`.slice(0, MAX_IDENTIFIER - 3);
 	const taken = new Set(
 		Object.values(home.records.projects).flatMap((p) =>
-			Object.values(p.services).flatMap((s) =>
-				s.type === "postgres" || s.type === "postgres-neon" ? Object.values(s.databases) : [],
-			),
+			Object.values(p.services).flatMap((s) => databasesOf(s)),
 		),
 	);
 	if (!taken.has(base)) return base;

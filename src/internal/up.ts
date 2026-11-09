@@ -1,8 +1,8 @@
 import { basename, join } from "node:path";
 import {
-	CONFIG_FILE,
 	hasConfig,
 	loadConfig,
+	noConfig,
 	type ProjectConfig,
 	type ServiceConfig,
 } from "./config.ts";
@@ -17,7 +17,7 @@ import { freePort } from "./ports.ts";
 import { POSTGRES_DAEMON, type PostgresServer, startPostgres } from "./postgres.ts";
 import { ENV_FILES, NEON_WS_PROXY_VAR, needsAppPort, presetVars } from "./presets.ts";
 import { referenceTable, writeProjectConfig } from "./project.ts";
-import type { Project } from "./records.ts";
+import { databasesOf, type Project } from "./records.ts";
 import { redisDaemon, redisPort, redisUrl, startRedis } from "./redis.ts";
 import { worktreeDatabases, worktreeRedis } from "./worktree-data.ts";
 
@@ -31,7 +31,7 @@ const APP_PORT_BASE = 8000;
  */
 export async function up(projectDir: string): Promise<string[]> {
 	if (!(await hasConfig(projectDir))) {
-		throw new BasepadError(`No ${CONFIG_FILE} here. Add a service with \`basepad add <service>\`.`);
+		throw noConfig();
 	}
 	return withHome(async (home) => (await bringUp(home, projectDir)).lines);
 }
@@ -239,9 +239,7 @@ function databaseName(
 	const base = sanitise(plain ? basename(projectDir) : `${basename(projectDir)}_${database}`);
 	const taken = new Set(
 		Object.values(home.records.projects).flatMap((p) =>
-			Object.values(p.services).flatMap((s) =>
-				s.type === "postgres" || s.type === "postgres-neon" ? Object.values(s.databases) : [],
-			),
+			Object.values(p.services).flatMap((s) => databasesOf(s)),
 		),
 	);
 	if (!taken.has(base)) return base;

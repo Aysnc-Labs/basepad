@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, open, realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { CONFIG_FILE, hasConfig } from "./config.ts";
-import { BasepadError } from "./exec.ts";
+import { hasConfig, noConfig } from "./config.ts";
 import { homeDir, openHome } from "./home.ts";
 
 /**
@@ -16,7 +15,7 @@ export async function upInBackground(cwd: string): Promise<string[]> {
 		!(await hasConfig(projectDir)) &&
 		!(await openHome()).records.projects[projectDir]?.worktree
 	) {
-		throw new BasepadError(`No ${CONFIG_FILE} here. Add a service with \`basepad add <service>\`.`);
+		throw noConfig();
 	}
 	const logs = join(homeDir(), "logs");
 	await mkdir(logs, { recursive: true });

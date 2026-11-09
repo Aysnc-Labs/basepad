@@ -59,6 +59,8 @@ CI evidence: a GitHub Actions workflow ran `mise-proxy.sh`, `portless.sh` and `n
 
 ## Findings basepad must act on
 
+As recorded at spike time.
+
 - **Put proxy settings in pitchfork's config file, not in env vars.** With `PITCHFORK_PROXY_*` env vars, any mise call made without them reports the wrong URL (`mise daemons urls` showed `https://…` with no port). Write `~/.config/pitchfork/config.toml` (as root, `/etc/pitchfork/config.toml`) once. A project's own `[settings.proxy]` is ignored.
 - **Name resolution on minimal Linux:**
   - curl resolves `*.localhost` itself. Node (`getaddrinfo`) does not, and fails with `ENOTFOUND app.shop.localhost` in a local Docker ubuntu:24.04 container (no systemd-resolved). The same image as a GitHub Actions job container resolved fine, so this depends on the host's resolver. basepad can't assume either way.
@@ -66,7 +68,7 @@ CI evidence: a GitHub Actions workflow ran `mise-proxy.sh`, `portless.sh` and `n
   - macOS 26+ and systemd-resolved hosts need nothing.
 - **Next needs no `allowedDevOrigins`.** Next 16 allows `**.localhost` origins for dev resources by default (`block-cross-site-dev.js`). A non-`.localhost` TLD would need it.
 - **Next 16's HMR endpoint is `/_next/hmr?id=…`**, not `/_next/webpack-hmr`. This only matters for tests that probe HMR.
-- **Presets don't get names.** basepad's shared services (Postgres, Mailpit) set `proxy = false` anyway. Mailpit's inbox needs `proxy = "mail"` or similar on its daemon, to get a name.
+- **Presets don't get names.** basepad's shared services (Postgres, Mailpit) set `proxy = false` anyway.
 - **Labels:** the worktree label is the worktree's directory name, overridable with `worktree_label` in a gitignored `pitchfork.local.toml`. Two names that fold to the same label are not routed at all.
 
 ## Not chosen: portless

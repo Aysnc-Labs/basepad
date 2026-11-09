@@ -1,9 +1,10 @@
-import { access, realpath } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { copyPaths } from "./clone.ts";
-import { CONFIG_FILE, hasConfig, loadConfig } from "./config.ts";
+import { hasConfig, loadConfig, noConfig } from "./config.ts";
 import { readEnvBlock, removeEnvBlock } from "./envfile.ts";
 import { BasepadError, exec } from "./exec.ts";
+import { exists } from "./files.ts";
 import {
 	checkout,
 	addWorktree as gitAddWorktree,
@@ -18,10 +19,9 @@ import { canListen } from "./ports.ts";
 import { startPostgres } from "./postgres.ts";
 import { ENV_FILES } from "./presets.ts";
 import { confFile } from "./project.ts";
-import type { Project, Records } from "./records.ts";
+import { databasesOf, type Project, type Records, type Worktree } from "./records.ts";
+import { table } from "./table.ts";
 import { bringUp, type Up } from "./up.ts";
-
-type Worktree = NonNullable<Project["worktree"]>;
 
 /** A worktree's name: a git branch name that is also safe in a path, a database and a mail tag. */
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
@@ -110,9 +110,7 @@ export async function start(cwd: string): Promise<string[]> {
 	const result = await withHome(async (home) => {
 		const worktree = home.records.projects[projectDir]?.worktree;
 		if (!worktree && !(await hasConfig(projectDir))) {
-			throw new BasepadError(
-				`No ${CONFIG_FILE} here. Add a service with \`basepad add <service>\`.`,
-			);
+			throw noConfig();
 		}
 		return bringUp(home, projectDir);
 	});
@@ -193,9 +191,7 @@ export async function removeWorktree(options: RemoveOptions): Promise<string[]> 
 				if (stop.code !== 0) lines.push(`Couldn't stop ${service}: ${stop.stderr.trim()}`);
 				else lines.push(`Stopped ${service}.`);
 			}
-			const databases = owned.flatMap(([, s]) =>
-				s.type === "postgres" || s.type === "postgres-neon" ? Object.values(s.databases) : [],
-			);
+			const databases = owned.flatMap(([, s]) => databasesOf(s));
 			if (databases.length > 0) {
 				const server = await startPostgres(home);
 				for (const database of databases) await server.dropDatabase(database);
@@ -276,20 +272,4 @@ function hookContext(worktree: Worktree, up: Pick<Up, "vars" | "project">): Hook
 		mainPath: worktree.mainRoot,
 		vars: { ...up.vars, ...(port === undefined ? {} : { PORT: String(port) }) },
 	};
-}
-
-function table(rows: string[][]): string {
-	const widths = rows[0]?.map((_, i) => Math.max(...rows.map((row) => row[i]?.length ?? 0))) ?? [];
-	return rows
-		.map((row) =>
-			row.map((cell, i) => (i === row.length - 1 ? cell : cell.padEnd(widths[i] ?? 0))).join("  "),
-		)
-		.join("\n");
-}
-
-async function exists(path: string): Promise<boolean> {
-	return access(path).then(
-		() => true,
-		() => false,
-	);
 }

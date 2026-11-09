@@ -98,7 +98,7 @@ LOGFMT=text proxy --auth-backend=postgres \
 import { Pool, neonConfig } from '@neondatabase/serverless';
 import ws from 'ws';
 
-neonConfig.webSocketConstructor = ws;           // as in the spike; Node 22+ has a global WebSocket, untested without this
+neonConfig.webSocketConstructor = ws;           // as in the spike; on Node 22+ the global WebSocket works without `ws`
 neonConfig.useSecureWebSocket = false;          // plain ws://, the proxy has no TLS
 neonConfig.wsProxy = () => 'localhost:4444/v2'; // host:port of --wss, path /v2
 
@@ -110,9 +110,4 @@ new Pool({
 - **`?options=endpoint%3D<id>` is required.** Without TLS there is no SNI, so the proxy can't derive an endpoint ID and fails with `Endpoint ID is not specified … pass the endpoint ID … as a parameter: '?options=endpoint%3D<endpoint-id>'`. Any ID works (`local`). basepad should put it in the `DATABASE_URL` it writes.
 - The host in the connection string must be `localhost`. The proxy rejects IP hosts. No DNS is needed.
 - `pipelineConnect`: the default (`"password"`) works, and so does `false`. The proxy accepts cleartext from the client and does SCRAM itself.
-- Tested with `@neondatabase/serverless` 1.2.0 and `ws` 8.
-
-## Open
-
-- Releases: strip the binaries, publish checksums, and lay the archives out for mise's `github:` backend.
-- Proxy ports: set `--proxy`, `--mgmt` and `--http` explicitly per proxy, so two can coexist.
+- Tested with `@neondatabase/serverless` 1.2.0 and `ws` 8. basepad's `test/neon-app.mjs` connects with Node's global `WebSocket` and no `ws`.

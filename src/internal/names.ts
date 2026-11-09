@@ -10,7 +10,8 @@ import { exec, must, tomlString } from "./exec.ts";
 import { type Home, openHome, withHome } from "./home.ts";
 import { MAILPIT_DAEMON_ID } from "./mailpit.ts";
 import { type Daemon, daemons } from "./mise.ts";
-import type { Project, Records } from "./records.ts";
+import { waitFor } from "./ports.ts";
+import type { Records, Worktree } from "./records.ts";
 import { PITCHFORK_VERSION } from "./versions.ts";
 
 /**
@@ -85,8 +86,6 @@ export function appDaemon(run: string, port: number): string {
 		'proxy = "app"',
 	].join("\n");
 }
-
-type Worktree = NonNullable<Project["worktree"]>;
 
 /**
  * Gives a worktree its label, the middle of its names: its own name, folded to what a host name
@@ -249,38 +248,47 @@ async function resolves(name: string): Promise<boolean> {
 
 /** Waits, briefly, until pitchfork's proxy has a route for `host`: its answer isn't "No route". */
 async function routed(port: number, host: string): Promise<void> {
-	const deadline = Date.now() + 5000;
-	while (Date.now() < deadline) {
-		const answer = await new Promise<boolean>((resolve) => {
-			const req = request(
-				{ host: "127.0.0.1", port, path: "/", headers: { host }, timeout: 2000 },
-				(res) => {
-					let body = "";
-					res.setEncoding("utf8").on("data", (chunk: string) => {
-						body += chunk;
-					});
-					res.on("end", () => resolve(!(res.statusCode === 404 && body.includes("No route for"))));
-				},
-			);
-			req.on("timeout", () => req.destroy());
-			req.on("error", () => resolve(false));
-			req.end();
-		});
-		if (answer) return;
-		await new Promise((r) => setTimeout(r, 250));
-	}
+	await waitFor(
+		async () => {
+			if (!(await answers(port, host))) throw new Error(`No route for ${host} yet.`);
+		},
+		"",
+		5000,
+	).catch(() => {});
+}
+
+function answers(port: number, host: string): Promise<boolean> {
+	return new Promise<boolean>((resolve) => {
+		const req = request(
+			{ host: "127.0.0.1", port, path: "/", headers: { host }, timeout: 2000 },
+			(res) => {
+				let body = "";
+				res.setEncoding("utf8").on("data", (chunk: string) => {
+					body += chunk;
+				});
+				res.on("end", () => resolve(!(res.statusCode === 404 && body.includes("No route for"))));
+			},
+		);
+		req.on("timeout", () => req.destroy());
+		req.on("error", () => resolve(false));
+		req.end();
+	});
 }
 
 /** How long `serve` waits for a dev server to listen: long enough for a cold start. */
 const APP_WAIT_MS = 30_000;
 
-async function listensWithin(port: number, ms: number): Promise<boolean> {
-	const deadline = Date.now() + ms;
-	while (Date.now() < deadline) {
-		if (await listening(port)) return true;
-		await new Promise((r) => setTimeout(r, 250));
-	}
-	return false;
+function listensWithin(port: number, ms: number): Promise<boolean> {
+	return waitFor(
+		async () => {
+			if (!(await listening(port))) throw new Error(`Nothing listens on port ${port}.`);
+		},
+		"",
+		ms,
+	).then(
+		() => true,
+		() => false,
+	);
 }
 
 function listening(port: number): Promise<boolean> {
