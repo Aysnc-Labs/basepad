@@ -12,6 +12,8 @@ export class BasepadError extends Error {}
 export interface ExecOptions {
 	cwd?: string;
 	env?: NodeJS.ProcessEnv;
+	/** Written to the program's stdin, which is otherwise closed. */
+	input?: string;
 }
 
 /** Runs a program to completion and captures its output. Never throws for a non-zero exit. */
@@ -24,14 +26,15 @@ export function exec(
 		const child = spawn(file, args, {
 			cwd: options.cwd,
 			env: options.env ?? process.env,
-			stdio: ["ignore", "pipe", "pipe"],
+			stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
 		});
+		child.stdin?.end(options.input);
 		let stdout = "";
 		let stderr = "";
-		child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+		child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
 			stdout += chunk;
 		});
-		child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+		child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
 			stderr += chunk;
 		});
 		child.on("error", (error: NodeJS.ErrnoException) => {

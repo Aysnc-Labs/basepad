@@ -27,7 +27,7 @@ function recordedPorts(records: Records): Set<number> {
 	return ports;
 }
 
-function canListen(port: number): Promise<boolean> {
+export function canListen(port: number): Promise<boolean> {
 	return new Promise((resolve) => {
 		const server = createServer();
 		server.once("error", () => resolve(false));

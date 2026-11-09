@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -25,6 +25,9 @@ export interface Sandbox {
 	env: NodeJS.ProcessEnv;
 	/** Makes a scratch project: a dir with a trusted `mise.toml`, plus any extra files. */
 	project(name: string, files?: Record<string, string>): Promise<string>;
+	/** A scratch project that is also a git repo, its files committed on `main`. */
+	repo(name: string, files?: Record<string, string>): Promise<string>;
+	git(cwd: string, ...args: string[]): Promise<Result>;
 	basepad(cwd: string, ...args: string[]): Promise<Result>;
 	mise(cwd: string, ...args: string[]): Promise<Result>;
 	/** psql from basepad's Postgres, as a developer would run it. */
@@ -40,8 +43,20 @@ export async function sandbox(): Promise<Sandbox> {
 		await mkdtemp(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "bp-")),
 	);
 	const home = join(root, "home");
+	// `basepad` on PATH, as installed, so a project's hooks can call it.
+	const bin = join(root, "bin");
+	await mkdir(bin);
+	await writeFile(join(bin, "basepad"), `#!/bin/sh\nexec '${process.execPath}' '${cli}' "$@"\n`);
+	await chmod(join(bin, "basepad"), 0o755);
 	const env: NodeJS.ProcessEnv = {
 		...stripMise(process.env),
+		PATH: `${bin}:${process.env.PATH}`,
+		GIT_CONFIG_GLOBAL: "/dev/null",
+		GIT_CONFIG_NOSYSTEM: "1",
+		GIT_AUTHOR_NAME: "basepad",
+		GIT_AUTHOR_EMAIL: "tests@basepad.invalid",
+		GIT_COMMITTER_NAME: "basepad",
+		GIT_COMMITTER_EMAIL: "tests@basepad.invalid",
 		BASEPAD_HOME: home,
 		MISE_STATE_DIR: join(root, "mise-state"),
 		MISE_CONFIG_DIR: join(root, "mise-config"),
@@ -79,6 +94,14 @@ export async function sandbox(): Promise<Sandbox> {
 			await exec("mise", ["trust", "--quiet", dir], dir);
 			return dir;
 		},
+		async repo(name, files = {}) {
+			const dir = await self.project(name, files);
+			await exec("git", ["init", "--quiet", "--initial-branch=main"], dir);
+			await exec("git", ["add", "--all"], dir);
+			await exec("git", ["commit", "--quiet", "--message", "Start"], dir);
+			return dir;
+		},
+		git: (cwd, ...args) => exec("git", args, cwd),
 		basepad: (cwd, ...args) => exec(process.execPath, [cli, ...args], cwd),
 		mise: (cwd, ...args) => exec("mise", args, cwd),
 		psql: (url, sql) =>
