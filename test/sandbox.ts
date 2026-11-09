@@ -144,9 +144,15 @@ export async function sandbox(): Promise<Sandbox> {
 	return self;
 }
 
-/** Drops the parent shell's mise activation, so it can't leak config from the developer's cwd. */
+/**
+ * Drops the parent shell's mise activation, so it can't leak config from the developer's cwd, and
+ * the CI runner's own event, so `basepad changed` sees only the events a test gives it.
+ */
 function stripMise(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-	return Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith("__MISE")));
+	const runner = ["GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH"];
+	return Object.fromEntries(
+		Object.entries(env).filter(([key]) => !key.startsWith("__MISE") && !runner.includes(key)),
+	);
 }
 
 /** The variables in an env file's basepad block. */
