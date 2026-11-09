@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [spec-23]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The mise basepad is tested against. The floor it supports is `min_version` in its configs.
+  MISE_VERSION: 2026.11.2
+
+jobs:
+  macos:
+    name: CLI tests (macOS, as a user)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          version: ${{ env.MISE_VERSION }}
+      - run: npm ci
+      - run: npm run check
+
+  linux-root:
+    name: CLI tests (Linux, as root)
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq curl ca-certificates git xz-utils >/dev/null
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          version: ${{ env.MISE_VERSION }}
+      - run: id -u && npm ci
+      - run: npm run check
