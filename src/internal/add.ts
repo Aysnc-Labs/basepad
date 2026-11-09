@@ -2,7 +2,8 @@ import { realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { writeEnvBlock } from "./envfile.ts";
 import { BasepadError } from "./exec.ts";
-import { openHome } from "./home.ts";
+import { withHome } from "./home.ts";
+import { daemons } from "./mise.ts";
 import { startPostgres } from "./postgres.ts";
 import { envVars, PRESETS, type Preset } from "./presets.ts";
 import { writeProjectConfig } from "./project.ts";
@@ -34,25 +35,32 @@ export async function add(options: AddOptions): Promise<string[]> {
 	}
 
 	const projectDir = await realpath(options.cwd);
-	const home = await openHome();
-	const project = home.records.projects[projectDir] ?? { preset: "next", services: {} };
-	home.records.projects[projectDir] = project;
-	if (options.preset) project.preset = options.preset as Preset;
+	const lines = await withHome(async (home) => {
+		const project = home.records.projects[projectDir] ?? { preset: "next", services: {} };
+		home.records.projects[projectDir] = project;
+		if (options.preset) project.preset = options.preset as Preset;
 
-	const server = await startPostgres(home);
-	const existing = project.services[name];
-	const database = existing?.database ?? databaseName(home.records.projects, projectDir, name);
-	project.services[name] = { type: "postgres", database };
-	await server.ensureDatabase(database);
-	await home.save();
+		const server = await startPostgres(home);
+		const existing = project.services[name];
+		const database = existing?.database ?? databaseName(home.records.projects, projectDir, name);
+		project.services[name] = { type: "postgres", database };
+		await server.ensureDatabase(database);
+		await home.save();
 
-	await writeProjectConfig(projectDir, project, home);
-	const { file, vars } = envVars(project, server);
-	await writeEnvBlock(join(projectDir, file), vars);
-	return [
-		`Added ${name}: database ${database} on the shared Postgres (port ${server.port}).`,
-		`Wrote ${file}.`,
-	];
+		await writeProjectConfig(projectDir, project, home);
+		const { file, vars } = envVars(project, server);
+		await writeEnvBlock(join(projectDir, file), vars);
+		return [
+			`Added ${name}: database ${database} on the shared Postgres (port ${server.port}).`,
+			`Wrote ${file}.`,
+		];
+	});
+	if ((await daemons(projectDir)) === undefined) {
+		lines.push(
+			"This project's mise config isn't trusted yet. Review it, then run `mise trust` so `mise daemons start` can start its services.",
+		);
+	}
+	return lines;
 }
 
 /**

@@ -60,8 +60,8 @@ The state is mise's, as `mise daemons ls` reports it. `mise daemons tui` gives a
 
 ### Presets
 
-| Preset | Env file | Variables |
-|---|---|---|
+| Preset | Env file     | Variables                                                     |
+| ------ | ------------ | ------------------------------------------------------------- |
 | `next` | `.env.local` | `DATABASE_URL`, and `<NAME>_DATABASE_URL` for a named service |
 
 ## How it works

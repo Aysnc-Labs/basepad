@@ -1,6 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { BasepadError } from "./exec.ts";
 import { mise } from "./mise.ts";
 import { loadRecords, type Records, saveRecords } from "./records.ts";
 import { MISE_MIN_VERSION, PITCHFORK_VERSION, POSTGRES_VERSION } from "./versions.ts";
@@ -61,4 +62,52 @@ export async function openHome(): Promise<Home> {
 			await mise(dir, "trust", "--quiet", dir);
 		},
 	};
+}
+
+const LOCK_TIMEOUT_MS = 180_000;
+
+/**
+ * Runs `fn` with the home project to itself, so concurrent basepad commands (parallel worktrees,
+ * agents) never initialise the cluster twice or lose each other's records.
+ */
+export async function withHome<T>(fn: (home: Home) => Promise<T>): Promise<T> {
+	const dir = homeDir();
+	await mkdir(dir, { recursive: true });
+	const lock = join(dir, "basepad.lock");
+	const deadline = Date.now() + LOCK_TIMEOUT_MS;
+	for (;;) {
+		try {
+			const handle = await open(lock, "wx");
+			await handle.writeFile(String(process.pid));
+			await handle.close();
+			break;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+			const holder = Number(await readFile(lock, "utf8").catch(() => ""));
+			if (holder && !alive(holder)) {
+				await rm(lock, { force: true });
+				continue;
+			}
+			if (Date.now() > deadline) {
+				throw new BasepadError(
+					`Another basepad command (pid ${holder || "unknown"}) holds ${lock}.`,
+				);
+			}
+			await new Promise((r) => setTimeout(r, 100));
+		}
+	}
+	try {
+		return await fn(await openHome());
+	} finally {
+		await rm(lock, { force: true });
+	}
+}
+
+function alive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
 }

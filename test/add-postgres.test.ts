@@ -92,4 +92,34 @@ describe("basepad add postgres", () => {
 		const keys = Object.keys(JSON.parse(env.stdout) as Record<string, string>);
 		expect(keys.filter((key) => /^(DB|POSTGRES)_(URL|PORT)$/.test(key))).toEqual([]);
 	});
+
+	test("rewrites a stale block in place, keeping the lines around it", async () => {
+		const before = "FIRST=1\n\n# >>> basepad\nDATABASE_URL=postgres://old\n# <<< basepad\nLAST=2\n";
+		const bar = await box.project("bar", { ".env.local": before });
+		expect((await box.basepad(bar, "add", "postgres")).code).toBe(0);
+
+		const envFile = await readFile(join(bar, ".env.local"), "utf8");
+		expect(envFile.startsWith("FIRST=1\n\n# >>> basepad")).toBe(true);
+		expect(envFile.endsWith("# <<< basepad\nLAST=2\n")).toBe(true);
+		expect(blockOf(envFile).DATABASE_URL).toMatch(/@localhost:\d+\/bar$/);
+	});
+
+	test("two projects adding at once both get their database, and both remember it", async () => {
+		const [one, two] = await Promise.all([box.project("one"), box.project("two")]);
+		const results = await Promise.all([
+			box.basepad(one, "add", "postgres"),
+			box.basepad(two, "add", "postgres"),
+		]);
+		expect(results.map((r) => r.code)).toEqual([0, 0]);
+		for (const [dir, db] of [
+			[one, "one"],
+			[two, "two"],
+		] as const) {
+			const url = blockOf(await readFile(join(dir, ".env.local"), "utf8")).DATABASE_URL as string;
+			expect((await box.psql(url, "select current_database()")).stdout.trim()).toBe(db);
+			expect((await box.basepad(dir, "status")).stdout).toMatch(
+				new RegExp(`^postgres +running .*/${db}$`, "m"),
+			);
+		}
+	});
 });

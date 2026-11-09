@@ -14,7 +14,7 @@ permissions:
 
 env:
   # The mise basepad is tested against. The floor it supports is `min_version` in its configs.
-  MISE_VERSION: 2026.11.2
+  MISE_VERSION: 2026.11.5
 
 jobs:
   macos:
