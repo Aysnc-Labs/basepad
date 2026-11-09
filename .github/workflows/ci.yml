@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [spec-23]
+    branches: [spec-23, agents-cloud-tasks]
   pull_request:
 
 concurrency:
