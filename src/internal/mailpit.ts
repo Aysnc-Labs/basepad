@@ -74,7 +74,8 @@ export async function startMailpit(home: Home): Promise<MailServer> {
 			`run = ${tomlString(`exec ${argv.map(shellQuote).join(" ")}`)}`,
 			`port = ${uiPort}`,
 			`ready_port = ${smtpPort}`,
-			"proxy = false",
+			// The inbox's localhost name: `mail.basepad.localhost`, one for every project.
+			'proxy = "mail"',
 		].join("\n"),
 	});
 	await mise(home.dir, "daemons", "start", MAILPIT_DAEMON);

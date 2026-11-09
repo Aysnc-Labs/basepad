@@ -13,6 +13,7 @@ import {
 } from "./git.ts";
 import { openHome, withHome } from "./home.ts";
 import { HOOKS, type HookContext, runHook } from "./hooks.ts";
+import { labelFile, serve, stopApp, syncHosts } from "./names.ts";
 import { canListen } from "./ports.ts";
 import { startPostgres } from "./postgres.ts";
 import { ENV_FILES } from "./presets.ts";
@@ -93,6 +94,7 @@ export async function addWorktree(options: AddOptions): Promise<string[]> {
 			);
 		}
 	}
+	lines.push(...(await serve(projectDir)));
 	lines.push(
 		`Worktree ${name} is ready at ${root}, its app on port ${result.vars.PORT ?? result.project.app?.port}.`,
 	);
@@ -118,6 +120,7 @@ export async function start(cwd: string): Promise<string[]> {
 	if (worktree && (await runHook(HOOKS.postStart, projectDir, hookContext(worktree, result)))) {
 		result.lines.push(`Ran ${HOOKS.postStart}.`);
 	}
+	result.lines.push(...(await serve(projectDir)));
 	return result.lines;
 }
 
@@ -146,7 +149,11 @@ export async function removeWorktree(options: RemoveOptions): Promise<string[]> 
 		found.map(async ([projectDir]) => {
 			const sub = relative(root, projectDir);
 			const preset = (await exists(projectDir)) ? (await loadConfig(projectDir)).preset : "next";
-			return [join(sub, ENV_FILES[preset]), relative(root, confFile(projectDir))];
+			return [
+				join(sub, ENV_FILES[preset]),
+				relative(root, confFile(projectDir)),
+				relative(root, labelFile(root)),
+			];
 		}),
 	);
 	if (present && !options.force && (await hasChanges(root, ours.flat()))) {
@@ -194,6 +201,7 @@ export async function removeWorktree(options: RemoveOptions): Promise<string[]> 
 				for (const database of databases) await server.dropDatabase(database);
 				lines.push(`Dropped ${databases.join(", ")}.`);
 			}
+			if (await exists(projectDir)) lines.push(...(await stopApp(projectDir)));
 			if (await exists(projectDir)) {
 				const config = await loadConfig(projectDir);
 				await removeEnvBlock(join(projectDir, ENV_FILES[config.preset]));
@@ -201,6 +209,7 @@ export async function removeWorktree(options: RemoveOptions): Promise<string[]> 
 			delete home.records.projects[projectDir];
 			await home.save();
 		}
+		lines.push(...(await syncHosts(home)));
 	});
 
 	await gitRemoveWorktree(here.mainRoot, root);

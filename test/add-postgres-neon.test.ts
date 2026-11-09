@@ -81,9 +81,9 @@ describe.skipIf(process.env.BASEPAD_TEST_SKIP_NEON_PROXY === "1")(
 			const status = await box.basepad(deli, "status");
 			expect(status.code).toBe(0);
 			expect(status.stdout).toMatch(
-				/^postgres-neon +running +\d+ +postgres:\/\/postgres:\*+@localhost:\d+\/deli\?options=endpoint%3Dlocal$/m,
+				/^postgres-neon +running +\d+ +postgres:\/\/postgres:\*+@localhost:\d+\/deli\?options=endpoint%3Dlocal +-$/m,
 			);
-			expect(status.stdout).toMatch(/^neon-proxy +running +\d+ +ws:\/\/localhost:\d+\/v2$/m);
+			expect(status.stdout).toMatch(/^neon-proxy +running +\d+ +ws:\/\/localhost:\d+\/v2 +-$/m);
 		});
 	},
 );
