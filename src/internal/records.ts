@@ -11,14 +11,17 @@ const Service = z.discriminatedUnion("type", [
 		type: z.literal("postgres"),
 		/** Each of the service's databases, by its name in the config, to its name in Postgres. */
 		databases: z.record(z.string(), z.string()),
+		/** A worktree's service that uses main's own (`copy = "shared"`): basepad never drops it. */
+		shared: z.literal(true).optional(),
 	}),
 	/** A database on the shared Postgres, which apps reach through the shared Neon proxy. */
 	z.object({
 		type: z.literal("postgres-neon"),
 		databases: z.record(z.string(), z.string()),
+		shared: z.literal(true).optional(),
 	}),
 	z.object({ type: z.literal("mailpit") }),
-	z.object({ type: z.literal("redis"), port: z.number() }),
+	z.object({ type: z.literal("redis"), port: z.number(), shared: z.literal(true).optional() }),
 ]);
 export type Service = z.infer<typeof Service>;
 
@@ -26,6 +29,17 @@ const Project = z.object({
 	services: z.record(z.string(), Service),
 	/** The app server's port, for the variables that point at the app. */
 	app: z.object({ port: z.number() }).optional(),
+	/** Set when the project is a git worktree that basepad made from another project, its main. */
+	worktree: z
+		.object({
+			name: z.string(),
+			/** Main's project dir, whose data the worktree's services start from. */
+			main: z.string(),
+			/** The worktree's root, and main's: where git checked them out. */
+			root: z.string(),
+			mainRoot: z.string(),
+		})
+		.optional(),
 });
 export type Project = z.infer<typeof Project>;
 

@@ -62,7 +62,7 @@ export async function status(cwd: string): Promise<Status> {
 			case "mailpit": {
 				const daemon = shared.find((d) => d.id === MAILPIT_DAEMON_ID);
 				const server = home.records.mailpit;
-				const tag = mailTag(basename(projectDir));
+				const tag = mailTag(project?.worktree?.name ?? basename(projectDir));
 				rows.push(
 					[
 						service.name,
@@ -82,9 +82,10 @@ export async function status(cwd: string): Promise<Status> {
 			case "redis": {
 				const daemon = ownDaemons.find((d) => d.name === service.name);
 				const recorded = record?.type === "redis" ? record.port : undefined;
+				const shared = record?.type === "redis" && record.shared;
 				rows.push([
 					service.name,
-					recorded === undefined ? "missing" : state(daemon),
+					recorded === undefined ? "missing" : shared ? "shared" : state(daemon),
 					port(recorded),
 					recorded === undefined ? "-" : redisUrl(recorded),
 				]);

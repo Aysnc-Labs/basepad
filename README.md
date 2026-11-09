@@ -2,7 +2,7 @@
 
 Local services for any project, native through [mise](https://mise.jdx.dev): Postgres, Neon's local proxy, Mailpit and Redis, shared across git worktrees, with no Docker. macOS and Linux.
 
-Work in progress: today basepad adds Postgres 18 (with or without Neon's local proxy), Mailpit and Redis to a project, writes their variables into its env file, and reports their status. Worktrees come next.
+Work in progress: today basepad adds Postgres 18 (with or without Neon's local proxy), Mailpit and Redis to a project, writes their variables into its env file, reports their status, and makes git worktrees with their own copies of the project's data.
 
 ## Install
 
@@ -35,6 +35,10 @@ basepad add redis --name cache          # a second Redis, as CACHE_URL
 basepad add postgres --preset laravel   # choose the env file's preset (default: next)
 basepad up                              # apply basepad.toml: start services, create databases, rewrite the env block
 basepad status                          # every service: state, port and URL
+basepad worktree add feat-x             # a git worktree with its own databases, Redis, port and env block
+basepad worktree ls                     # this repo's worktrees: state, ports and databases
+basepad worktree remove feat-x          # undo all of it; the branch stays
+basepad clone node_modules/.cache       # in a worktree: copy paths from main, copy-on-write
 ```
 
 `basepad add`:
@@ -166,7 +170,60 @@ Add a `basepad:post-create` hook, a mise task in your `mise.toml`, for the setup
 run = ["composer install", "php artisan migrate --seed"]
 ```
 
-basepad runs it after it creates a worktree, once worktrees land.
+basepad runs it after it creates a worktree; see [Worktrees](#worktrees).
+
+## Worktrees
+
+`basepad worktree add <name>`, run anywhere in the repo, gives a ready worktree in seconds:
+
+1. `git worktree add`: branch `<name>`, new from main's `HEAD` unless it exists, checked out beside main as `<main>-<name>` (`feat/x` becomes `<main>-feat-x`), or at `--path <dir>`.
+2. Copies the files listed in `.worktreeinclude`, in main's root, that git ignores (`.env` files, caches), as copy-on-write clones where the filesystem supports them (APFS, Btrfs, XFS), else plain copies. It's [Claude Code's convention](https://code.claude.com/docs/en/worktrees): gitignore syntax, and tracked files come with the checkout anyway.
+3. Brings main up, then the worktree, each service as its `copy` strategy says:
+   - **Postgres, `copy`** (the default): `<main's database>_<worktree>`, e.g. `shop_feat_x`, made with `CREATE DATABASE … TEMPLATE` from main's. Postgres refuses a template that anyone is connected to, so when main's database is in use (your dev server, a `psql`), basepad dumps and restores it instead. Main is never interrupted.
+   - **Postgres, `empty`**: `<main's database>_<worktree>`, empty. **`shared`**: main's own.
+   - **Redis, `empty`** (the default): the worktree's own, on a new port. **`shared`**: main's.
+   - **Mailpit**: shared, with the worktree's name as the SMTP username, so its mail is tagged with it.
+4. Picks a free port for the app (from 8000), records it, and writes it as `PORT` (`SERVER_PORT` and `APP_URL` with the `laravel` preset).
+5. Writes the worktree's env block.
+6. Runs the project's `basepad:post-create` task, then `basepad:post-start`.
+
+`basepad up` in a worktree brings it back up and runs `basepad:post-start` again. `basepad worktree remove <name>` runs `basepad:pre-remove`, stops the worktree's own services, drops its own databases (`WITH (FORCE)`), clears its env block and basepad's records of it, and removes the worktree. Its branch stays. It refuses a worktree with uncommitted changes, or whose `basepad:pre-remove` fails, unless you pass `--force`.
+
+```
+$ basepad worktree ls
+WORKTREE  STATE    PORT  REDIS  DATABASES    PATH
+feat-x    serving  8000  63791  shop_feat_x  /Users/me/code/shop-feat-x
+feat-y    ready    8001  63792  shop_feat_y  /Users/me/code/shop-feat-y
+```
+
+`serving` means something listens on the worktree's app port; `missing`, that its directory is gone (`basepad worktree remove` still cleans up after it).
+
+### Hooks
+
+Hooks are mise tasks in your project, so basepad stays stack-agnostic: installs, migrations and caches are yours. basepad runs each one in the worktree's project directory, if it's defined:
+
+| Task                  | When                                                    |
+| --------------------- | ------------------------------------------------------- |
+| `basepad:post-create` | after `worktree add` has made the worktree and its data |
+| `basepad:post-start`  | after `worktree add`, and after `basepad up` in it      |
+| `basepad:pre-remove`  | first thing in `worktree remove`                        |
+
+They see the worktree's env block (every service's URL, under the names your app reads, and `PORT`) and:
+
+| Variable                | Value               |
+| ----------------------- | ------------------- |
+| `BASEPAD_WORKTREE`      | the worktree's name |
+| `BASEPAD_WORKTREE_PATH` | the worktree's root |
+| `BASEPAD_MAIN_PATH`     | main's root         |
+
+Their output goes to stderr. `basepad clone <path>…` copies paths from main into the worktree, at the same place, copy-on-write where it can; paths are relative to where you run it:
+
+```toml
+[tasks."basepad:post-create"]
+run = ["pnpm install --offline --frozen-lockfile", "basepad clone .next/cache"]
+```
+
+An offline install from pnpm's store took about 2 s on a large repo, against 9–10 s to clone `node_modules`, so install rather than clone it.
 
 ## How it works
 
@@ -178,7 +235,7 @@ basepad runs it after it creates a worktree, once worktrees land.
 - **As root** (cloud containers), Postgres runs as the unprivileged system user `basepad`, which basepad creates. mise installs under `/root`, so basepad grants that user traverse-only access (`o+x`) to the directories above Postgres's binaries and data.
 - **No mise variables:** every basepad daemon sets `proxy = false`, and projects reference daemons rather than declaring them, so mise exports no `<NAME>_URL` or `<NAME>_PORT` of its own. basepad's env block is the one source.
 - **Pinned:** the configs basepad writes require mise 2026.10.24 or later and pin pitchfork 2.33.1.
-- **Trust:** basepad trusts only the home project, which it writes. If your project's mise config isn't trusted, `basepad add` still works; review it and run `mise trust` before `mise daemons start`, or for `basepad status` to list your own daemons.
+- **Trust:** basepad trusts only the home project, which it writes. mise trusts a worktree's config when main's is trusted, unless [paranoid mode](https://mise.jdx.dev/paranoid.html) is on. If your project's mise config isn't trusted, `basepad add` still works; review it and run `mise trust` before `mise daemons start`, or for `basepad status` to list your own daemons.
 
 ### A separate basepad
 

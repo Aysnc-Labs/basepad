@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { realpath } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { add } from "./internal/add.ts";
+import { clone } from "./internal/clone.ts";
 import { SERVICE_TYPES } from "./internal/config.ts";
 import { BasepadError } from "./internal/exec.ts";
 import { PRESETS } from "./internal/presets.ts";
 import { status } from "./internal/status.ts";
-import { up } from "./internal/up.ts";
+import { addWorktree, listWorktrees, removeWorktree, start } from "./internal/worktree.ts";
 
 const USAGE = `Usage: basepad <command>
 
@@ -17,6 +17,12 @@ Commands:
                   (services: ${SERVICE_TYPES.join(", ")}; presets: ${PRESETS.join(", ")})
   up              Start this project's services from basepad.toml and rewrite its env block
   status          List this project's services with their state, port and URL
+  worktree add <name> [--path <dir>]
+                  Make a git worktree with its own databases, Redis, port and env block
+  worktree remove <name> [--force]
+                  Run its pre-remove hook, drop its databases, stop its services, remove it
+  worktree ls     List this repo's worktrees with their state, ports and databases
+  clone <path>... Copy paths from main into this worktree (copy-on-write where supported)
 
 Options:
   -h, --help      Show this help
@@ -29,6 +35,8 @@ async function main(argv: string[]): Promise<number> {
 		options: {
 			name: { type: "string" },
 			preset: { type: "string" },
+			path: { type: "string" },
+			force: { type: "boolean" },
 			help: { type: "boolean", short: "h" },
 			version: { type: "boolean", short: "v" },
 		},
@@ -60,7 +68,29 @@ async function main(argv: string[]): Promise<number> {
 		}
 		case "up": {
 			if (rest.length > 0) throw new BasepadError(`\`basepad up\` takes no arguments.\n\n${USAGE}`);
-			for (const line of await up(await realpath(cwd))) console.log(line);
+			for (const line of await start(cwd)) console.log(line);
+			return 0;
+		}
+		case "worktree": {
+			const [sub, name, ...extra] = rest;
+			if (sub === "ls" && name === undefined) {
+				console.log(await listWorktrees(cwd));
+				return 0;
+			}
+			if ((sub === "add" || sub === "remove") && name !== undefined && extra.length === 0) {
+				const lines =
+					sub === "add"
+						? await addWorktree({ cwd, name, path: values.path })
+						: await removeWorktree({ cwd, name, force: values.force });
+				for (const line of lines) console.log(line);
+				return 0;
+			}
+			throw new BasepadError(
+				`\`basepad worktree\` takes add <name>, remove <name> or ls.\n\n${USAGE}`,
+			);
+		}
+		case "clone": {
+			for (const line of await clone(cwd, rest)) console.log(line);
 			return 0;
 		}
 		case "status": {

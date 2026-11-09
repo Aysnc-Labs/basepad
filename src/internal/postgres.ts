@@ -1,7 +1,8 @@
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { must, shellQuote, tomlString } from "./exec.ts";
+import { BasepadError, must, shellQuote, tomlString } from "./exec.ts";
 import { HOME_NAMESPACE, type Home } from "./home.ts";
 import { mise } from "./mise.ts";
 import { freePort, waitFor } from "./ports.ts";
@@ -25,6 +26,14 @@ export interface PostgresServer {
 	url(database: string): string;
 	/** Creates `database` unless it exists. */
 	ensureDatabase(database: string): Promise<void>;
+	hasDatabase(database: string): Promise<boolean>;
+	/**
+	 * Creates `to` as a copy of `from`, without disturbing anyone connected to `from`: a template
+	 * copy when nothing is, else a dump and restore. Says which it did.
+	 */
+	copyDatabase(from: string, to: string): Promise<"template" | "dump">;
+	/** Drops `database` if it exists, closing its connections. */
+	dropDatabase(database: string): Promise<void>;
 }
 
 /**
@@ -112,16 +121,78 @@ export async function startPostgres(home: Home): Promise<PostgresServer> {
 		`Postgres didn't become ready. For its log, run \`mise daemons logs ${POSTGRES_DAEMON}\` in ${home.dir}.`,
 	);
 
+	const hasDatabase = async (database: string): Promise<boolean> =>
+		(await query(`select 1 from pg_database where datname = '${database}'`)).trim() === "1";
 	return {
 		port,
+		hasDatabase,
 		password,
 		query,
 		url: (database) => `postgres://postgres:${password}@localhost:${port}/${database}`,
 		async ensureDatabase(database) {
-			const found = await query(`select 1 from pg_database where datname = '${database}'`);
-			if (found.trim() !== "1") await query(`create database "${database}"`);
+			if (!(await hasDatabase(database))) await query(`create database "${database}"`);
+		},
+		async copyDatabase(from, to) {
+			// Postgres refuses a template that anyone is connected to, after waiting 5 s for them to
+			// leave, so basepad asks first; closing their connections would interrupt main.
+			const busy = await query(`select count(*) from pg_stat_activity where datname = '${from}'`);
+			if (busy.trim() === "0") {
+				try {
+					await query(`create database "${to}" template "${from}"`);
+					return "template";
+				} catch (error) {
+					if (!/being accessed by other users/.test((error as Error).message)) throw error;
+				}
+			}
+			await query(`create database "${to}"`);
+			try {
+				await dumpAndRestore(bin, port, password, from, to);
+			} catch (error) {
+				await query(`drop database if exists "${to}" with (force)`);
+				throw error;
+			}
+			return "dump";
+		},
+		async dropDatabase(database) {
+			await query(`drop database if exists "${database}" with (force)`);
 		},
 	};
+}
+
+/** `pg_dump | pg_restore`, as the superuser: what copies a database that is in use. */
+async function dumpAndRestore(
+	bin: string,
+	port: number,
+	password: string,
+	from: string,
+	to: string,
+): Promise<void> {
+	const env = { ...process.env, PGPASSWORD: password, PGCONNECT_TIMEOUT: "5" };
+	const conn = ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres"];
+	const dump = spawn(join(bin, "pg_dump"), [...conn, "-Fc", "-d", from], {
+		env,
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	const restore = spawn(
+		join(bin, "pg_restore"),
+		[...conn, "--no-owner", "--exit-on-error", "-d", to],
+		{ env, stdio: ["pipe", "ignore", "pipe"] },
+	);
+	dump.stdout.pipe(restore.stdin);
+	const finished = (child: ChildProcess, name: string) =>
+		new Promise<void>((resolve, reject) => {
+			let stderr = "";
+			child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
+				stderr += chunk;
+			});
+			child.on("error", reject);
+			child.on("close", (code) =>
+				code === 0
+					? resolve()
+					: reject(new BasepadError(`${name} ${from} failed (exit ${code}):\n${stderr.trim()}`)),
+			);
+		});
+	await Promise.all([finished(dump, "pg_dump"), finished(restore, "pg_restore")]);
 }
 
 async function initCluster(
