@@ -43,12 +43,11 @@ export async function redisDaemon(home: Home, name: string, port: number): Promi
 		"--dir",
 		dir,
 	];
+	// No `port`: mise would export its own <NAME>_PORT, and basepad writes every variable itself.
+	// The port is in `run`, and `startRedis` checks readiness.
 	return [
 		`[daemons.${name}]`,
 		`run = ${tomlString(`exec ${argv.map(shellQuote).join(" ")}`)}`,
-		`port = ${port}`,
-		`ready_port = ${port}`,
-		"proxy = false",
 	].join("\n");
 }
 

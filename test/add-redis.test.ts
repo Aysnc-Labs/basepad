@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { blockOf, type Sandbox, sandbox } from "./sandbox.ts";
+import { blockOf, daemonExports, type Sandbox, sandbox } from "./sandbox.ts";
 
 let box: Sandbox;
 beforeAll(async () => {
@@ -38,6 +38,7 @@ test("basepad add redis gives each project its own Redis, and a named one its ow
 	const conf = await readFile(join(cafe, ".config/mise/conf.d/basepad.toml"), "utf8");
 	expect(conf).toContain("[daemons.redis]");
 	expect(conf).not.toContain("project =");
+	expect(await daemonExports(box, shop)).toEqual([]);
 
 	const status = await box.basepad(shop, "status");
 	expect(status.stderr).toBe("");

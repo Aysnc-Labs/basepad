@@ -192,6 +192,18 @@ export function blockOf(envFile: string): Record<string, string> {
 }
 
 /**
+ * The `<NAME>_URL`/`<NAME>_PORT` variables mise exports in `dir`. basepad writes every variable
+ * itself, so its daemons export none, except the app daemon's `BASEPAD_APP_URL`/`BASEPAD_APP_PORT`.
+ */
+export async function daemonExports(box: Sandbox, dir: string): Promise<string[]> {
+	const env = await box.mise(dir, "env", "--json");
+	if (env.code !== 0) throw new Error(`mise env failed in ${dir}:\n${env.stderr}`);
+	return Object.keys(JSON.parse(env.stdout) as Record<string, string>).filter(
+		(key) => /_(URL|PORT)$/.test(key) && !/^BASEPAD_APP_(URL|PORT)$/.test(key),
+	);
+}
+
+/**
  * Sends one message through an `smtp://user:pass@host:port` URL, as an app's mailer would:
  * EHLO, AUTH PLAIN with the URL's credentials, then the message.
  */

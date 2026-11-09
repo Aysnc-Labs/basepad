@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { blockOf, type Sandbox, sandbox } from "./sandbox.ts";
+import { blockOf, daemonExports, type Sandbox, sandbox } from "./sandbox.ts";
 
 /** The variables the test hooks write down. */
 const HOOK_VARS =
@@ -110,6 +110,11 @@ describe("basepad worktree add", () => {
 		expect(await readFile(join(wt, "secret.txt"), "utf8")).toBe("from main\n");
 		await expect(access(join(wt, "notes.txt"))).rejects.toThrow();
 		expect((await box.git(wt, "branch", "--show-current")).stdout.trim()).toBe("feat-x");
+	});
+
+	test("leaves mise's own daemon variables out of main's and the worktree's env", async () => {
+		expect(await daemonExports(box, main)).toEqual([]);
+		expect(await daemonExports(box, worktreePath("feat-x"))).toEqual([]);
 	});
 
 	test("copies main's database while a client holds it open, without interrupting it, in budget", async () => {
