@@ -1,8 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BasepadError, must, shellQuote, tomlString } from "./exec.ts";
+import { exists } from "./files.ts";
 import { HOME_NAMESPACE, type Home } from "./home.ts";
 import { mise } from "./mise.ts";
 import { freePort, waitFor } from "./ports.ts";
@@ -222,11 +223,4 @@ async function initCluster(
 	} finally {
 		await rm(pwfile, { force: true });
 	}
-}
-
-async function exists(path: string): Promise<boolean> {
-	return access(path).then(
-		() => true,
-		() => false,
-	);
 }

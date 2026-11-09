@@ -179,6 +179,11 @@ export async function declareService(
 	await writeFile(join(projectDir, CONFIG_FILE), text);
 }
 
+/** The error for a command that needs a `basepad.toml` where there is none. */
+export function noConfig(): BasepadError {
+	return new BasepadError(`No ${CONFIG_FILE} here. Add a service with \`basepad add <service>\`.`);
+}
+
 export async function hasConfig(projectDir: string): Promise<boolean> {
 	return (await readConfigText(projectDir)) !== undefined;
 }
