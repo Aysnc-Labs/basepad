@@ -1,0 +1,1 @@
+{ "name": "neon-proxy-spike", "private": true, "type": "module", "dependencies": { "@neondatabase/serverless": "^1.0.0", "ws": "^8.18.0" } }
