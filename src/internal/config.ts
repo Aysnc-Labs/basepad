@@ -35,6 +35,8 @@ export interface ServiceConfig {
 
 export interface ProjectConfig {
 	preset: Preset;
+	/** The app's dev server, which basepad runs as a daemon on the app's port, under its name. */
+	app?: { run: string };
 	services: ServiceConfig[];
 	/** Variable renames: the name basepad would write, to the name the project wants. */
 	rename: Record<string, string>;
@@ -42,14 +44,26 @@ export interface ProjectConfig {
 
 export const CONFIG_FILE = "basepad.toml";
 
-/** The project's reference to the shared Neon proxy takes this name, so no service can. */
-const RESERVED = NEON_PROXY_DAEMON;
+/**
+ * The app's daemon in a project's conf.d. Prefixed, because mise exports `<DAEMON>_URL` and
+ * `<DAEMON>_PORT` to the project's shell, and a bare `app` would set `APP_URL` over the app's own.
+ */
+export const APP_DAEMON = "basepad-app";
+
+/** The project's reference to the shared Neon proxy, and its app, take these names, so no service can. */
+const RESERVED: Record<string, string> = {
+	[NEON_PROXY_DAEMON]: "basepad's shared Neon proxy",
+	[APP_DAEMON]: "the app's daemon",
+};
 
 const NAME = /^[a-z][a-z0-9_-]*$/;
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const Schema = z.strictObject({
 	preset: z.enum(PRESETS).default("next"),
+	app: z
+		.strictObject({ run: z.string().min(1, "`run` is the command that starts the app") })
+		.optional(),
 	services: z
 		.record(
 			z.string().regex(NAME, "a service name is lowercase letters, digits, `-` and `_`"),
@@ -107,9 +121,9 @@ function parseConfig(text: string): ProjectConfig {
 				`${CONFIG_FILE}: service \`${name}\` is ${type}; only a postgres or postgres-neon service has \`databases\`.`,
 			);
 		}
-		if (name === RESERVED) {
+		if (Object.hasOwn(RESERVED, name)) {
 			throw new BasepadError(
-				`${CONFIG_FILE}: \`${name}\` is the name of basepad's shared Neon proxy; choose another.`,
+				`${CONFIG_FILE}: \`${name}\` is the name of ${RESERVED[name]}; choose another.`,
 			);
 		}
 		return {
@@ -119,7 +133,12 @@ function parseConfig(text: string): ProjectConfig {
 			copy: service.copy ?? (copies[0] as Copy),
 		};
 	});
-	return { preset: parsed.data.preset, services, rename: parsed.data.rename };
+	return {
+		preset: parsed.data.preset,
+		app: parsed.data.app,
+		services,
+		rename: parsed.data.rename,
+	};
 }
 
 /**

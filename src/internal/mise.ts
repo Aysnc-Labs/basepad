@@ -10,6 +10,8 @@ const Daemon = z.looseObject({
 	pid: z.number().nullable().optional(),
 	port: z.number().nullable().optional(),
 	url: z.string().nullable().optional(),
+	/** The daemon's localhost name, when pitchfork's proxy routes it. */
+	host: z.string().nullable().optional(),
 });
 export type Daemon = z.infer<typeof Daemon>;
 

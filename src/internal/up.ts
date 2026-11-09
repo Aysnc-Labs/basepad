@@ -11,6 +11,7 @@ import { BasepadError } from "./exec.ts";
 import { type Home, withHome } from "./home.ts";
 import { MAILPIT_DAEMON, type MailServer, mailTag, startMailpit } from "./mailpit.ts";
 import { daemons } from "./mise.ts";
+import { appDaemon, ensureProxy, labelWorktree } from "./names.ts";
 import { NEON_PROXY_DAEMON, type NeonProxy, startNeonProxy } from "./neon.ts";
 import { freePort } from "./ports.ts";
 import { POSTGRES_DAEMON, type PostgresServer, startPostgres } from "./postgres.ts";
@@ -51,6 +52,9 @@ export async function bringUp(home: Home, projectDir: string): Promise<Up> {
 	const project: Project = home.records.projects[projectDir] ?? { services: {} };
 	home.records.projects[projectDir] = project;
 	const worktree = project.worktree;
+	// Before any daemon starts: pitchfork's supervisor reads its proxy settings once.
+	await ensureProxy(home);
+	if (worktree) await labelWorktree(home, worktree);
 	const lines: string[] = [];
 	const tables: string[] = [];
 	const vars = new Vars();
@@ -141,9 +145,10 @@ export async function bringUp(home: Home, projectDir: string): Promise<Up> {
 		vars.set(NEON_WS_PROXY_VAR, neon.wsProxy, { name: NEON_PROXY_DAEMON });
 		tables.push(referenceTable(NEON_PROXY_DAEMON, home, NEON_PROXY_DAEMON));
 	}
-	if (worktree || needsAppPort(config.preset)) {
+	if (worktree || needsAppPort(config.preset) || config.app) {
 		project.app ??= { port: await freePort(APP_PORT_BASE, home.records) };
 	}
+	if (config.app && project.app) tables.push(appDaemon(config.app.run, project.app.port));
 	await home.save();
 	await writeProjectConfig(projectDir, tables);
 	// After the conf.d file, which turns on mise's daemons for the project.

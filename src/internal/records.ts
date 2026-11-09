@@ -29,6 +29,8 @@ const Project = z.object({
 	services: z.record(z.string(), Service),
 	/** The app server's port, for the variables that point at the app. */
 	app: z.object({ port: z.number() }).optional(),
+	/** The project's localhost names (its app's, the inbox's), for `/etc/hosts` where it's needed. */
+	hosts: z.array(z.string()).optional(),
 	/** Set when the project is a git worktree that basepad made from another project, its main. */
 	worktree: z
 		.object({
@@ -38,6 +40,8 @@ const Project = z.object({
 			/** The worktree's root, and main's: where git checked them out. */
 			root: z.string(),
 			mainRoot: z.string(),
+			/** The middle label of its localhost names (`app.<label>.<project>.localhost`). */
+			label: z.string().optional(),
 		})
 		.optional(),
 });

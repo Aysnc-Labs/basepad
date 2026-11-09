@@ -118,8 +118,8 @@ describe("basepad.toml", () => {
 		]);
 
 		const status = await box.basepad(ledger, "status");
-		expect(status.stdout).toMatch(/^postgres\/app +running .*\/ledger_app$/m);
-		expect(status.stdout).toMatch(/^postgres\/audit +running .*\/ledger_audit$/m);
+		expect(status.stdout).toMatch(/^postgres\/app +running .*\/ledger_app +-$/m);
+		expect(status.stdout).toMatch(/^postgres\/audit +running .*\/ledger_audit +-$/m);
 	});
 
 	test("refuses a copy strategy the service can't use", async () => {

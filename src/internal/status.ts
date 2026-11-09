@@ -1,9 +1,10 @@
 import { access, realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { loadConfig } from "./config.ts";
+import { APP_DAEMON, loadConfig } from "./config.ts";
 import { openHome } from "./home.ts";
 import { MAILPIT_DAEMON_ID, mailTag } from "./mailpit.ts";
 import { type Daemon, daemons } from "./mise.ts";
+import { appOf, nameUrl } from "./names.ts";
 import { NEON_ENDPOINT_OPTIONS, NEON_PROXY_DAEMON, NEON_PROXY_DAEMON_ID } from "./neon.ts";
 import { POSTGRES_DAEMON_ID } from "./postgres.ts";
 import { redisUrl } from "./redis.ts";
@@ -14,8 +15,9 @@ export interface Status {
 }
 
 /**
- * `basepad status`: the project's basepad services, then its own mise daemons, each with
- * mise's state, its port and its URL. Passwords in URLs are masked.
+ * `basepad status`: the project's app and basepad services, then its own mise daemons, each with
+ * mise's state, its port, its URL and, for HTTP services, its localhost name. Passwords in URLs
+ * are masked.
  */
 export async function status(cwd: string): Promise<Status> {
 	const projectDir = await realpath(cwd);
@@ -38,6 +40,18 @@ export async function status(cwd: string): Promise<Status> {
 	const state = (daemon: Daemon | undefined) => daemon?.status ?? "missing";
 	const port = (value: number | undefined) => (value === undefined ? "-" : String(value));
 
+	if (config.app) {
+		const daemon = appOf(ownDaemons, projectDir);
+		const appPort = project?.app?.port;
+		rows.push([
+			"app",
+			state(daemon),
+			port(appPort),
+			appPort === undefined ? "-" : `http://127.0.0.1:${appPort}`,
+			nameUrl(daemon),
+		]);
+	}
+
 	for (const service of config.services) {
 		const record = project?.services[service.name];
 		switch (service.type) {
@@ -55,6 +69,7 @@ export async function status(cwd: string): Promise<Status> {
 						server === undefined || name === undefined
 							? "-"
 							: `postgres://postgres:***@localhost:${server.port}/${name}${options}`,
+						"-",
 					]);
 				}
 				break;
@@ -69,12 +84,14 @@ export async function status(cwd: string): Promise<Status> {
 						record ? state(daemon) : "missing",
 						port(server?.smtpPort),
 						server ? `smtp://${tag}:***@127.0.0.1:${server.smtpPort}` : "-",
+						"-",
 					],
 					[
 						`${service.name}/inbox`,
 						record ? state(daemon) : "missing",
 						port(server?.uiPort),
 						server ? `http://127.0.0.1:${server.uiPort}` : "-",
+						nameUrl(daemon),
 					],
 				);
 				break;
@@ -88,6 +105,7 @@ export async function status(cwd: string): Promise<Status> {
 					recorded === undefined ? "missing" : shared ? "shared" : state(daemon),
 					port(recorded),
 					recorded === undefined ? "-" : redisUrl(recorded),
+					"-",
 				]);
 				break;
 			}
@@ -102,23 +120,27 @@ export async function status(cwd: string): Promise<Status> {
 			wss === undefined ? "missing" : state(daemon),
 			port(wss),
 			wss === undefined ? "-" : `ws://localhost:${wss}/v2`,
+			"-",
 		]);
 	}
 
 	const managed = new Set(config.services.map((s) => s.name));
+	if (config.app) managed.add(APP_DAEMON);
 	for (const daemon of ownDaemons) {
 		if (managed.has(daemon.name)) continue;
 		rows.push([
 			daemon.name,
 			daemon.status,
 			daemon.port == null ? "-" : String(daemon.port),
-			daemon.url ?? "-",
+			// A named daemon's `url` is its name; its raw URL is its port on loopback.
+			daemon.host && daemon.port != null ? `http://127.0.0.1:${daemon.port}` : (daemon.url ?? "-"),
+			nameUrl(daemon),
 		]);
 	}
 
 	if (rows.length === 0)
 		return { table: "No services yet. Add one with `basepad add <service>`.", warnings };
-	return { table: format([["SERVICE", "STATE", "PORT", "URL"], ...rows]), warnings };
+	return { table: format([["SERVICE", "STATE", "PORT", "URL", "NAME"], ...rows]), warnings };
 }
 
 function format(rows: string[][]): string {

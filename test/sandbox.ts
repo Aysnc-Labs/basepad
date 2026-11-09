@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { createConnection } from "node:net";
+import { type AddressInfo, createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -22,6 +22,8 @@ export interface Result {
 export interface Sandbox {
 	root: string;
 	home: string;
+	/** The port this machine's pitchfork proxy serves names on: its own, clear of other lanes. */
+	proxyPort: number;
 	env: NodeJS.ProcessEnv;
 	/** Makes a scratch project: a dir with a trusted `mise.toml`, plus any extra files. */
 	project(name: string, files?: Record<string, string>): Promise<string>;
@@ -98,9 +100,19 @@ export async function sandbox(): Promise<Sandbox> {
 		}
 	};
 
+	// Only the port (and no DNS responder, whose fixed port two supervisors can't share): basepad
+	// turns the proxy on itself, as it would on a fresh machine.
+	const proxyPort = await freeTcpPort();
+	await mkdir(env.PITCHFORK_CONFIG_DIR as string, { recursive: true });
+	await writeFile(
+		join(env.PITCHFORK_CONFIG_DIR as string, "config.toml"),
+		`[settings.proxy]\nport = ${proxyPort}\ndns = false\n`,
+	);
+
 	const self: Sandbox = {
 		root,
 		home,
+		proxyPort,
 		env,
 		async project(name, files = {}) {
 			const dir = join(root, name);
@@ -142,6 +154,18 @@ export async function sandbox(): Promise<Sandbox> {
 		},
 	};
 	return self;
+}
+
+/** A port the OS says is free right now. */
+function freeTcpPort(): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const server = createServer();
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => {
+			const { port } = server.address() as AddressInfo;
+			server.close(() => resolve(port));
+		});
+	});
 }
 
 /**
