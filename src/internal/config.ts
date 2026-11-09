@@ -68,6 +68,8 @@ const Schema = z.strictObject({
 	rename: z
 		.record(z.string(), z.string().regex(ENV_KEY, "a variable name is letters, digits and `_`"))
 		.default({}),
+	/** Which projects a change touches, and what CI runs for each: `ci.ts` reads it. */
+	ci: z.unknown().optional(),
 });
 
 /** The project's `basepad.toml`, or an empty config when it has none. */

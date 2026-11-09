@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { add } from "./internal/add.ts";
+import { changed, ci } from "./internal/ci.ts";
 import { clone } from "./internal/clone.ts";
 import { SERVICE_TYPES } from "./internal/config.ts";
 import { BasepadError } from "./internal/exec.ts";
@@ -23,6 +24,10 @@ Commands:
                   Run its pre-remove hook, drop its databases, stop its services, remove it
   worktree ls     List this repo's worktrees with their state, ports and databases
   clone <path>... Copy paths from main into this worktree (copy-on-write where supported)
+  changed [--base <ref>]
+                  List the projects this change touches, by basepad.toml's [ci] rules
+  ci [<project>...] [--all] [--base <ref>]
+                  Run the checks of the projects this change touches (or the ones named)
 
 Options:
   -h, --help      Show this help
@@ -37,6 +42,8 @@ async function main(argv: string[]): Promise<number> {
 			preset: { type: "string" },
 			path: { type: "string" },
 			force: { type: "boolean" },
+			base: { type: "string" },
+			all: { type: "boolean" },
 			help: { type: "boolean", short: "h" },
 			version: { type: "boolean", short: "v" },
 		},
@@ -93,6 +100,17 @@ async function main(argv: string[]): Promise<number> {
 			for (const line of await clone(cwd, rest)) console.log(line);
 			return 0;
 		}
+		case "changed": {
+			if (rest.length > 0) {
+				throw new BasepadError(`\`basepad changed\` takes no arguments.\n\n${USAGE}`);
+			}
+			const selection = await changed({ cwd, base: values.base });
+			console.error(`basepad: ${selection.summary}`);
+			for (const project of selection.projects) console.log(project);
+			return 0;
+		}
+		case "ci":
+			return ci({ cwd, base: values.base, projects: rest, all: values.all });
 		case "status": {
 			const { table, warnings } = await status(cwd);
 			for (const warning of warnings) console.error(warning);

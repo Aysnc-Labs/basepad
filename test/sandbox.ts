@@ -29,6 +29,12 @@ export interface Sandbox {
 	repo(name: string, files?: Record<string, string>): Promise<string>;
 	git(cwd: string, ...args: string[]): Promise<Result>;
 	basepad(cwd: string, ...args: string[]): Promise<Result>;
+	/** `basepad` with extra environment variables and, optionally, standard input. */
+	basepadWith(
+		options: { env?: NodeJS.ProcessEnv; input?: string },
+		cwd: string,
+		...args: string[]
+	): Promise<Result>;
 	mise(cwd: string, ...args: string[]): Promise<Result>;
 	/** psql from basepad's Postgres, as a developer would run it. */
 	psql(url: string, sql: string): Promise<Result>;
@@ -68,9 +74,17 @@ export async function sandbox(): Promise<Sandbox> {
 		NO_COLOR: "1",
 	};
 
-	const exec = async (file: string, args: string[], cwd: string): Promise<Result> => {
+	const exec = async (
+		file: string,
+		args: string[],
+		cwd: string,
+		extra: NodeJS.ProcessEnv = {},
+		input?: string,
+	): Promise<Result> => {
 		try {
-			const { stdout, stderr } = await run(file, args, { cwd, env, maxBuffer: 16 << 20 });
+			const child = run(file, args, { cwd, env: { ...env, ...extra }, maxBuffer: 16 << 20 });
+			child.child.stdin?.end(input);
+			const { stdout, stderr } = await child;
 			return { code: 0, stdout, stderr };
 		} catch (error) {
 			const e = error as { code?: number; stdout?: string; stderr?: string };
@@ -105,6 +119,8 @@ export async function sandbox(): Promise<Sandbox> {
 		},
 		git: (cwd, ...args) => exec("git", args, cwd),
 		basepad: (cwd, ...args) => exec(process.execPath, [cli, ...args], cwd),
+		basepadWith: (options, cwd, ...args) =>
+			exec(process.execPath, [cli, ...args], cwd, options.env, options.input),
 		mise: (cwd, ...args) => exec("mise", args, cwd),
 		psql: (url, sql) =>
 			exec("mise", ["exec", "postgres@18", "--", "psql", url, "-tAX", "-c", sql], root),
