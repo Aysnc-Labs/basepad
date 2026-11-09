@@ -148,10 +148,10 @@ AUDIT_DATABASE_URL = "LOGS_DATABASE_URL"
 
 Each checkout's app, and the shared Mailpit inbox, answer at a stable localhost name, through [pitchfork's proxy](https://pitchfork.jdx.dev/reference/configuration), in plain HTTP on one port:
 
-| Service           | Main checkout                     | Worktree `feat/x`                        |
-| ----------------- | --------------------------------- | ---------------------------------------- |
-| the app           | `http://app.shop.localhost:8088`  | `http://app.feat-x.shop.localhost:8088`  |
-| the Mailpit inbox | `http://mail.basepad.localhost:8088` | the same: one inbox, mail tagged `feat/x` |
+| Service           | Main checkout                        | Worktree `feat/x`                         |
+| ----------------- | ------------------------------------ | ----------------------------------------- |
+| the app           | `http://app.shop.localhost:8088`     | `http://app.feat-x.shop.localhost:8088`   |
+| the Mailpit inbox | `http://mail.basepad.localhost:8088` | the same: one inbox, mail tagged `feat-x` |
 
 - **The proxy:** basepad turns it on in pitchfork's user config, `~/.config/pitchfork/config.toml` (or `$PITCHFORK_CONFIG_DIR/config.toml`), with `enable = true`, `https = false` and `port = 8088`, unless that file or `/etc/pitchfork/config.toml` already says whether it's on. Settings you already have, such as the port, are kept. A project's own `[settings.proxy]` is ignored by pitchfork. pitchfork's supervisor reads these once: if it was already running without the proxy, basepad says so; restart it with `mise exec pitchfork@2.33.1 -- pitchfork supervisor start --force` (which stops running daemons), then run `basepad up`.
 - **Labels:** `shop` is main's directory name. A worktree's label is its name, lowercased, with anything but letters, digits and `-` turned into `-`, and `-2`, `-3` and so on when another worktree of the repo already has it. basepad writes it as `worktree_label` in the worktree's `pitchfork.local.toml`, so gitignore that file. Two repos whose main directories share a name share names too, and pitchfork routes neither.
