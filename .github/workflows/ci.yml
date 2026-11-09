@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [spec-23, localhost-names]
+    branches: [spec-23]
   pull_request:
 
 concurrency:
