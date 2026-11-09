@@ -2,7 +2,7 @@
 
 Local services for any project, native through [mise](https://mise.jdx.dev): Postgres, Neon's local proxy, Mailpit and Redis, shared across git worktrees, with no Docker. macOS and Linux.
 
-Work in progress: today basepad adds Postgres 18 (with or without Neon's local proxy), Mailpit and Redis to a project, writes their variables into its env file, reports their status, makes git worktrees with their own copies of the project's data, and serves each checkout's app and the mail inbox at stable localhost names.
+Work in progress: today basepad adds Postgres 18 (with or without Neon's local proxy), Mailpit and Redis to a project, writes their variables into its env file, reports their status, makes git worktrees with their own copies of the project's data, serves each checkout's app and the mail inbox at stable localhost names, serves as Claude Code's worktree hooks, starts a cloud session's services, and runs what CI runs for a change.
 
 ## Install
 
@@ -39,6 +39,8 @@ basepad worktree add feat-x             # a git worktree with its own databases,
 basepad worktree ls                     # this repo's worktrees: state, ports and databases
 basepad worktree remove feat-x          # undo all of it; the branch stays
 basepad clone node_modules/.cache       # in a worktree: copy paths from main, copy-on-write
+basepad changed                         # the projects this change touches, by basepad.toml's [ci] rules
+basepad ci                              # run those projects' checks, as CI does
 ```
 
 `basepad add`:
@@ -246,6 +248,137 @@ run = ["pnpm install --offline --frozen-lockfile", "basepad clone .next/cache"]
 ```
 
 An offline install from pnpm's store took about 2 s on a large repo, against 9–10 s to clone `node_modules`, so install rather than clone it.
+
+## Claude Code
+
+basepad can make the worktrees Claude Code works in (`claude --worktree feat-x`, subagents with `isolation: "worktree"`, background sessions), so each one comes with its own databases, Redis, port and env block. It's your choice, per project: wire the [`WorktreeCreate` and `WorktreeRemove` hooks](https://code.claude.com/docs/en/hooks#worktreecreate) in the project's `.claude/settings.json`:
+
+```json
+{
+	"hooks": {
+		"WorktreeCreate": [
+			{ "hooks": [{ "type": "command", "command": "basepad worktree add --claude" }] }
+		],
+		"WorktreeRemove": [
+			{ "hooks": [{ "type": "command", "command": "basepad worktree remove --claude" }] }
+		]
+	}
+}
+```
+
+- `worktree add --claude` reads the hook's input on stdin, makes worktree `name` from the session's `cwd` as `worktree add <name>` does, and prints the worktree's absolute path as the only line on stdout, as Claude Code expects. Everything else, your hooks' output included, goes to stderr. If anything fails, it exits non-zero and Claude Code doesn't start the session there.
+- Claude Code stops applying `.worktreeinclude` once the hook is set; basepad applies it itself.
+- `worktree remove --claude` removes the worktree at the input's `worktree_path`, as `worktree remove --force` does: Claude Code only removes a worktree once it has asked, or found nothing to lose. Then it deletes the worktree's branch, unless the branch has commits that main's checkout doesn't have; basepad keeps that branch and says so, since Claude Code never deletes it.
+- Neither runs for a `git worktree add` you type yourself; use `basepad worktree add` for those.
+
+## Shared tasks
+
+basepad publishes mise tasks every project can include instead of copying: `status`, `changed`, `ci` and `bootstrap`. Add basepad's to your mise config's `[task_config] includes`, pinned to a release tag:
+
+```toml
+[task_config]
+includes = [
+  "mise-tasks", # your own task dir: listing includes replaces mise's defaults, so keep yours here
+  "git::https://github.com/aysnc-labs/basepad.git//tasks?ref=<tag>",
+]
+```
+
+Replace `<tag>` with the release you use. A task of your own with the same name, listed after basepad's, wins. mise caches the clone, so a pinned tag is fetched once. If your project already lists `includes`, add basepad's line to that list: mise uses only the highest-precedence list, never a merge ([task discovery](https://mise.jdx.dev/tasks/task-discovery.html)).
+
+| Task        | Runs                                                                                        |
+| ----------- | ------------------------------------------------------------------------------------------- |
+| `status`    | `basepad status`                                                                            |
+| `changed`   | `basepad changed`: the projects this change touches                                         |
+| `ci`        | `basepad ci`: those projects' checks, exactly as CI runs them                               |
+| `bootstrap` | in a cloud session, the project's tools and services; see [Cloud sessions](#cloud-sessions) |
+
+Each needs `basepad` on `PATH`, for example from the project's own `[tools]`.
+
+### changed and ci
+
+Describe the repo's projects in a `[ci]` table of the `basepad.toml` at the repo's root:
+
+```toml
+[ci]
+all = ["pnpm-lock.yaml", "mise.toml", ".github/**"] # a change here selects every project
+# base = "origin/develop"                           # what a local run compares with
+
+[ci.projects.web]
+paths = ["apps/web", "packages/ui/**"]             # a plain path covers everything under it
+run = "pnpm --filter web check"
+
+[ci.projects.docs]
+paths = ["docs/**/*.md"]
+run = ["pnpm --filter docs build", "pnpm --filter docs test"]
+```
+
+`basepad changed` prints the projects whose `paths` the change touches, one per line in the config's order, or every project when a path in `all` changed. The change is every file that differs from the merge-base of `HEAD` and the base, plus uncommitted and untracked files, counting both sides of a rename. The base is:
+
+1. `--base <ref>`, if given;
+2. in GitHub Actions, the pull request's base, the merge queue's base, or the push's previous commit (`before`);
+3. otherwise `[ci] base`, else origin's default branch (`origin/HEAD`), else `origin/main`, else `main`.
+
+When the base isn't in the clone, a shallow checkout say, it selects every project and says why. Fetch the history in CI:
+
+```yaml
+- uses: actions/checkout@v7
+  with:
+    fetch-depth: 0
+- run: mise run ci
+```
+
+`basepad ci` runs each selected project's `run` commands with `sh`, from the repo's root, one project after another. A project stops at its first failing command; the other projects still run, and `ci` exits non-zero if any failed. `basepad ci web docs` runs the named projects, and `basepad ci --all` runs them all. Locally, `mise run ci` runs what CI would for your branch.
+
+## Cloud sessions
+
+A [Claude Code cloud session](https://code.claude.com/docs/en/cloud-environments) runs as root on a fresh Ubuntu 24.04 VM, keeps the files its setup script writes for about seven days, and keeps no processes. So the setup script installs the tools once, and a `SessionStart` hook starts the services in every session. basepad runs as root: Postgres runs as the system user `basepad`.
+
+1. Commit a setup file, `scripts/cloud-setup.sh`, that installs mise and your tools:
+
+   ```bash
+   #!/usr/bin/env bash
+   # Run by the cloud environment's setup script, as root, before Claude Code starts.
+   set -euo pipefail
+   cd "$(dirname "$0")/.."
+   export PATH="$HOME/.local/bin:$PATH"
+   command -v mise >/dev/null || curl -fsSL https://mise.run | MISE_VERSION=v2026.11.5 sh
+   mise trust --yes
+   mise install
+   mise tasks ls >/dev/null # fetches the shared tasks, so the environment cache keeps them
+   ```
+
+2. In the environment's settings on [claude.ai/code](https://claude.ai/code), make the setup script run only that file, so everything else lives in the repo:
+
+   ```bash
+   bash scripts/cloud-setup.sh
+   ```
+
+3. Start the services from a `SessionStart` hook in the project's `.claude/settings.json`:
+
+   ```json
+   {
+     "hooks": {
+       "SessionStart": [
+         {
+           "matcher": "startup|resume",
+           "hooks": [{ "type": "command", "command": "cd \"$CLAUDE_PROJECT_DIR\" && \"$HOME/.local/bin/mise\" run --quiet bootstrap" }]
+         }
+       ]
+     }
+   }
+   ```
+
+   `bootstrap` does nothing unless `CLAUDE_CODE_REMOTE` is `true`, so the hook is harmless on a laptop. In a cloud session it runs `mise install`, then `basepad up --background`: it returns at once, while basepad starts the services and writes the env block, logging to `logs/up-<project>.log` in basepad's home. Claude sees its one line of output, which says to check `basepad status`.
+
+4. Allow the downloads. This is the one manual step: in the environment's **Network access**, choose **Custom**, keep **Also include default list of common package managers** checked, and add one domain per line:
+
+   ```text
+   mise.run
+   mise.jdx.dev
+   mise-versions.jdx.dev
+   ```
+
+   The default list already covers the rest basepad downloads from: conda-forge (`conda.anaconda.org`, for Postgres and Redis), GitHub releases (`github.com`, `api.github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, for pitchfork, Mailpit and Neon's proxy), Node (`nodejs.org`) and npm (`registry.npmjs.org`). With the default list unchecked, add those too.
 
 ## How it works
 

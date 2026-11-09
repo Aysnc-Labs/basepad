@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="List the projects this change touches, by basepad.toml's [ci] rules (basepad changed)"
+set -euo pipefail
+exec basepad changed "$@"

@@ -31,7 +31,15 @@ export interface Sandbox {
 	repo(name: string, files?: Record<string, string>): Promise<string>;
 	git(cwd: string, ...args: string[]): Promise<Result>;
 	basepad(cwd: string, ...args: string[]): Promise<Result>;
+	/** `basepad` with extra environment variables and, optionally, standard input. */
+	basepadWith(
+		options: { env?: NodeJS.ProcessEnv; input?: string },
+		cwd: string,
+		...args: string[]
+	): Promise<Result>;
 	mise(cwd: string, ...args: string[]): Promise<Result>;
+	/** `mise` with extra environment variables. */
+	miseWith(options: { env?: NodeJS.ProcessEnv }, cwd: string, ...args: string[]): Promise<Result>;
 	/** psql from basepad's Postgres, as a developer would run it. */
 	psql(url: string, sql: string): Promise<Result>;
 	/** Runs one of the test dir's scripts with Node, as an app would run. */
@@ -70,9 +78,17 @@ export async function sandbox(): Promise<Sandbox> {
 		NO_COLOR: "1",
 	};
 
-	const exec = async (file: string, args: string[], cwd: string): Promise<Result> => {
+	const exec = async (
+		file: string,
+		args: string[],
+		cwd: string,
+		extra: NodeJS.ProcessEnv = {},
+		input?: string,
+	): Promise<Result> => {
 		try {
-			const { stdout, stderr } = await run(file, args, { cwd, env, maxBuffer: 16 << 20 });
+			const child = run(file, args, { cwd, env: { ...env, ...extra }, maxBuffer: 16 << 20 });
+			child.child.stdin?.end(input);
+			const { stdout, stderr } = await child;
 			return { code: 0, stdout, stderr };
 		} catch (error) {
 			const e = error as { code?: number; stdout?: string; stderr?: string };
@@ -117,7 +133,10 @@ export async function sandbox(): Promise<Sandbox> {
 		},
 		git: (cwd, ...args) => exec("git", args, cwd),
 		basepad: (cwd, ...args) => exec(process.execPath, [cli, ...args], cwd),
+		basepadWith: (options, cwd, ...args) =>
+			exec(process.execPath, [cli, ...args], cwd, options.env, options.input),
 		mise: (cwd, ...args) => exec("mise", args, cwd),
+		miseWith: (options, cwd, ...args) => exec("mise", args, cwd, options.env),
 		psql: (url, sql) =>
 			exec("mise", ["exec", "postgres@18", "--", "psql", url, "-tAX", "-c", sql], root),
 		redis: (url, ...args) =>
@@ -149,9 +168,15 @@ function freeTcpPort(): Promise<number> {
 	});
 }
 
-/** Drops the parent shell's mise activation, so it can't leak config from the developer's cwd. */
+/**
+ * Drops the parent shell's mise activation, so it can't leak config from the developer's cwd, and
+ * the CI runner's own event, so `basepad changed` sees only the events a test gives it.
+ */
 function stripMise(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-	return Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith("__MISE")));
+	const runner = ["GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH"];
+	return Object.fromEntries(
+		Object.entries(env).filter(([key]) => !key.startsWith("__MISE") && !runner.includes(key)),
+	);
 }
 
 /** The variables in an env file's basepad block. */
