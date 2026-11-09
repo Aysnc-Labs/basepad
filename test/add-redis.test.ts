@@ -41,7 +41,7 @@ test("basepad add redis gives each project its own Redis, and a named one its ow
 
 	const status = await box.basepad(shop, "status");
 	expect(status.stderr).toBe("");
-	expect(status.stdout).toMatch(/^redis +running +\d+ +redis:\/\/127\.0\.0\.1:\d+$/m);
+	expect(status.stdout).toMatch(/^redis +running +\d+ +redis:\/\/127\.0\.0\.1:\d+ +-$/m);
 	expect(status.stdout).toMatch(/^cache +running +\d+ +redis:/m);
 	expect(status.stdout.match(/^redis /gm)).toHaveLength(1);
 });

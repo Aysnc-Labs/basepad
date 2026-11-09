@@ -107,7 +107,7 @@ describe("basepad add postgres", () => {
 			const url = blockOf(await readFile(join(dir, ".env.local"), "utf8")).DATABASE_URL as string;
 			expect((await box.psql(url, "select current_database()")).stdout.trim()).toBe(db);
 			expect((await box.basepad(dir, "status")).stdout).toMatch(
-				new RegExp(`^postgres +running .*/${db}$`, "m"),
+				new RegExp(`^postgres +running .*/${db} +-$`, "m"),
 			);
 		}
 	});

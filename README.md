@@ -2,7 +2,7 @@
 
 Local services for any project, native through [mise](https://mise.jdx.dev): Postgres, Neon's local proxy, Mailpit and Redis, shared across git worktrees, with no Docker. macOS and Linux.
 
-Work in progress: today basepad adds Postgres 18 (with or without Neon's local proxy), Mailpit and Redis to a project, writes their variables into its env file, reports their status, and makes git worktrees with their own copies of the project's data.
+Work in progress: today basepad adds Postgres 18 (with or without Neon's local proxy), Mailpit and Redis to a project, writes their variables into its env file, reports their status, makes git worktrees with their own copies of the project's data, and serves each checkout's app and the mail inbox at stable localhost names.
 
 ## Install
 
@@ -34,7 +34,7 @@ basepad add postgres --name analytics   # a second database, as ANALYTICS_DATABA
 basepad add redis --name cache          # a second Redis, as CACHE_URL
 basepad add postgres --preset laravel   # choose the env file's preset (default: next)
 basepad up                              # apply basepad.toml: start services, create databases, rewrite the env block
-basepad status                          # every service: state, port and URL
+basepad status                          # every service: state, port, URL and localhost name
 basepad worktree add feat-x             # a git worktree with its own databases, Redis, port and env block
 basepad worktree ls                     # this repo's worktrees: state, ports and databases
 basepad worktree remove feat-x          # undo all of it; the branch stays
@@ -64,12 +64,13 @@ Running it again is safe: it keeps the databases and rewrites only the block. Af
 `basepad status` prints basepad's services, then the project's own mise daemons:
 
 ```
-SERVICE        STATE    PORT   URL
-postgres       running  54320  postgres://postgres:***@localhost:54320/shop
-mailpit        running  1025   smtp://shop:***@127.0.0.1:1025
-mailpit/inbox  running  8025   http://127.0.0.1:8025
-redis          running  63790  redis://127.0.0.1:63790
-web            running  4100   https://web.shop.localhost
+SERVICE        STATE    PORT   URL                                            NAME
+app            running  8000   http://127.0.0.1:8000                          http://app.shop.localhost:8088
+postgres       running  54320  postgres://postgres:***@localhost:54320/shop   -
+mailpit        running  1025   smtp://shop:***@127.0.0.1:1025                 -
+mailpit/inbox  running  8025   http://127.0.0.1:8025                          http://mail.basepad.localhost:8088
+redis          running  63790  redis://127.0.0.1:63790                        -
+web            running  4100   http://127.0.0.1:4100                          http://web.shop.localhost:8088
 ```
 
 The state is mise's, as `mise daemons ls` reports it. `mise daemons tui` gives a live view.
@@ -121,6 +122,9 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 ```toml
 preset = "next"                 # next or laravel
 
+[app]
+run = "npx next dev"            # your dev server, run as a daemon; it must listen on $PORT
+
 [services.postgres]             # the service's name; its variables follow it
 databases = ["app", "audit"]    # several databases: APP_DATABASE_URL and AUDIT_DATABASE_URL
 
@@ -138,6 +142,23 @@ AUDIT_DATABASE_URL = "LOGS_DATABASE_URL"
 - **Names:** a service named after its type gets the usual variable (`DATABASE_URL`, `SMTP_URL`, `REDIS_URL`). Any other name gets `<NAME>_URL`, or `<NAME>_DATABASE_URL` for Postgres. A Postgres service with `databases` gets `<DB>_DATABASE_URL` for each.
 - **`copy`:** what each worktree gets of the service: a `copy` of the project's data, an `empty` one of its own, or the project's own, `shared`.
 - **`rename`:** renames any variable basepad writes, after the preset's names.
+- **`[app]`:** optional. basepad runs `run` as the mise daemon `basepad-app` on the app's port, which pitchfork passes as `PORT`, and serves it at the app's localhost name (see [Names](#names)). `basepad up` and `worktree add` start it; `worktree remove` stops it. `basepad-app` is reserved.
+
+## Names
+
+Each checkout's app, and the shared Mailpit inbox, answer at a stable localhost name, through [pitchfork's proxy](https://pitchfork.jdx.dev/reference/configuration), in plain HTTP on one port:
+
+| Service           | Main checkout                        | Worktree `feat/x`                         |
+| ----------------- | ------------------------------------ | ----------------------------------------- |
+| the app           | `http://app.shop.localhost:8088`     | `http://app.feat-x.shop.localhost:8088`   |
+| the Mailpit inbox | `http://mail.basepad.localhost:8088` | the same: one inbox, mail tagged `feat-x` |
+
+- **The proxy:** basepad turns it on in pitchfork's user config, `~/.config/pitchfork/config.toml` (or `$PITCHFORK_CONFIG_DIR/config.toml`), with `enable = true`, `https = false` and `port = 8088`, unless that file or `/etc/pitchfork/config.toml` already says whether it's on. Settings you already have, such as the port, are kept. A project's own `[settings.proxy]` is ignored by pitchfork. pitchfork's supervisor reads these once: if it was already running without the proxy, basepad says so; restart it with `mise exec pitchfork@2.33.1 -- pitchfork supervisor start --force` (which stops running daemons), then run `basepad up`.
+- **Labels:** `shop` is main's directory name. A worktree's label is its name, lowercased, with anything but letters, digits and `-` turned into `-`, and `-2`, `-3` and so on when another worktree of the repo already has it. basepad writes it as `worktree_label` in the worktree's `pitchfork.local.toml`, so gitignore that file. Two repos whose main directories share a name share names too, and pitchfork routes neither.
+- **Your own daemons** with a `port` get names too (`web` above), unless they set `proxy = false`.
+- **Resolving names:** browsers and curl resolve `*.localhost` themselves, and so do macOS and Linux with systemd-resolved. Where the system doesn't (a minimal container), basepad, when it runs as root, writes its names into a marked block of `/etc/hosts`, `# >>> basepad names (<home>)`, and keeps it in step as worktrees come and go. Not as root, it prints the line to add.
+- **Hot reload** goes through the name: the proxy forwards websockets, and Next's dev server already allows `*.localhost` origins, so it needs no `allowedDevOrigins`.
+- **Databases, Redis and SMTP** keep `localhost` or `127.0.0.1` and a port: names cover HTTP services only.
 
 ### Presets
 
@@ -184,10 +205,11 @@ basepad runs it after it creates a worktree; see [Worktrees](#worktrees).
    - **Redis, `empty`** (the default): the worktree's own, on a new port. **`shared`**: main's.
    - **Mailpit**: shared, with the worktree's name as the SMTP username, so its mail is tagged with it.
 4. Picks a free port for the app (from 8000), records it, and writes it as `PORT` (`SERVER_PORT` and `APP_URL` with the `laravel` preset).
-5. Writes the worktree's env block.
+5. Writes the worktree's env block, and its label for [names](#names).
 6. Runs the project's `basepad:post-create` task, then `basepad:post-start`.
+7. Starts the app, with `[app]`, and waits up to 30 s for it to listen and for its name to answer.
 
-`basepad up` in a worktree brings it back up and runs `basepad:post-start` again. `basepad worktree remove <name>` runs `basepad:pre-remove`, stops the worktree's own services, drops its own databases (`WITH (FORCE)`), clears its env block and basepad's records of it, and removes the worktree. Its branch stays. It refuses a worktree with uncommitted changes, or whose `basepad:pre-remove` fails, unless you pass `--force`.
+`basepad up` in a worktree brings it back up and runs `basepad:post-start` again. `basepad worktree remove <name>` runs `basepad:pre-remove`, stops the worktree's app and its own services, drops its own databases (`WITH (FORCE)`), clears its env block and basepad's records of it, and removes the worktree. Its branch stays. It refuses a worktree with uncommitted changes, or whose `basepad:pre-remove` fails, unless you pass `--force`.
 
 ```
 $ basepad worktree ls
@@ -233,7 +255,7 @@ An offline install from pnpm's store took about 2 s on a large repo, against 9â€
 - **Redis 8** comes from mise. Each project runs its own, from its conf.d file, on the first free port from 63790, listening on `127.0.0.1` and keeping nothing on disk.
 - **Neon's proxy** is Neon's own `proxy`, built from Neon's source and released by [aysnc-labs/mise-binaries](https://github.com/aysnc-labs/mise-binaries) as `neon-proxy`, pinned to `neon-proxy-fa50421`. While that repo is private, installing it needs `GITHUB_TOKEN` with read access to it. basepad starts it once Postgres accepts queries, on the first free ports from 54330. It serves plain WebSocket (no TLS, so no certificate to expire), and logs in to the maintenance database `postgres` as the superuser to look up roles, never to an app's database. It reads an allow-list from `neon_control_plane.endpoints` there, which basepad creates and leaves empty: no allow-list. Passwords are SCRAM, Postgres 18's default.
 - **As root** (cloud containers), Postgres runs as the unprivileged system user `basepad`, which basepad creates. mise installs under `/root`, so basepad grants that user traverse-only access (`o+x`) to the directories above Postgres's binaries and data.
-- **No mise variables:** every basepad daemon sets `proxy = false`, and projects reference daemons rather than declaring them, so mise exports no `<NAME>_URL` or `<NAME>_PORT` of its own. basepad's env block is the one source.
+- **mise's variables:** projects reference the shared daemons rather than declaring them, so mise exports no `<NAME>_URL` or `<NAME>_PORT` for them. For a project's own daemons, mise exports `<DAEMON>_PORT` (and `<DAEMON>_URL` when named) into the shell: the app's daemon is `basepad-app`, so it gets `BASEPAD_APP_URL` and `BASEPAD_APP_PORT`, never your `APP_URL`. basepad's env block is the source for your app.
 - **Pinned:** the configs basepad writes require mise 2026.10.24 or later and pin pitchfork 2.33.1.
 - **Trust:** basepad trusts only the home project, which it writes. mise trusts a worktree's config when main's is trusted, unless [paranoid mode](https://mise.jdx.dev/paranoid.html) is on. If your project's mise config isn't trusted, `basepad add` still works; review it and run `mise trust` before `mise daemons start`, or for `basepad status` to list your own daemons.
 

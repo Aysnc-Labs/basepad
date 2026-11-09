@@ -47,8 +47,8 @@ test("basepad add mailpit gives each project an SMTP URL whose mail lands in one
 
 	const status = await box.basepad(shop, "status");
 	expect(status.code).toBe(0);
-	expect(status.stdout).toMatch(/^mailpit +running +\d+ +smtp:\/\/shop:\*+@127\.0\.0\.1:\d+$/m);
-	const inbox = status.stdout.match(/^mailpit\/inbox +running +\d+ +(http:\S+)$/m)?.[1];
+	expect(status.stdout).toMatch(/^mailpit +running +\d+ +smtp:\/\/shop:\*+@127\.0\.0\.1:\d+ +-$/m);
+	const inbox = status.stdout.match(/^mailpit\/inbox +running +\d+ +(http:\S+) +\S+$/m)?.[1];
 	expect(inbox).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 
 	const res = await fetch(`${inbox}/api/v1/messages`);

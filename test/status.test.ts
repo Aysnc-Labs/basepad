@@ -12,7 +12,7 @@ afterAll(async () => {
 /** The rows of `basepad status`, keyed by service, as a developer reads them. */
 function rows(table: string): Record<string, { state: string; port: string; url: string }> {
 	const [header, ...lines] = table.trim().split("\n");
-	expect(header?.split(/\s+/)).toEqual(["SERVICE", "STATE", "PORT", "URL"]);
+	expect(header?.split(/\s+/)).toEqual(["SERVICE", "STATE", "PORT", "URL", "NAME"]);
 	return Object.fromEntries(
 		lines.map((line) => {
 			const [service, state, port, url] = line.split(/\s+/);

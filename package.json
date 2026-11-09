@@ -36,7 +36,9 @@
 		"@biomejs/biome": "2.6.6",
 		"@neondatabase/serverless": "^1.2.0",
 		"@types/node": "^24.19.2",
+		"@types/ws": "^8.18.2",
 		"typescript": "^7.0.2",
-		"vitest": "^5.1.0"
+		"vitest": "^5.1.0",
+		"ws": "^8.22.2"
 	}
 }
