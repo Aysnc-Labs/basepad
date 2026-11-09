@@ -62,3 +62,8 @@ export async function must(
 export function shellQuote(word: string): string {
 	return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
 }
+
+/** A TOML basic string. JSON's escapes are a subset of TOML's. */
+export function tomlString(value: string): string {
+	return JSON.stringify(value);
+}

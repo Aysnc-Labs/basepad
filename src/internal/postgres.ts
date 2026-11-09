@@ -1,10 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
 import { join } from "node:path";
-import { BasepadError, must, shellQuote } from "./exec.ts";
+import { must, shellQuote, tomlString } from "./exec.ts";
 import { HOME_NAMESPACE, type Home } from "./home.ts";
 import { mise } from "./mise.ts";
+import { freePort, waitFor } from "./ports.ts";
 import { serviceUser } from "./service-user.ts";
 import { PITCHFORK_VERSION, POSTGRES_VERSION } from "./versions.ts";
 
@@ -14,7 +14,6 @@ export const POSTGRES_DAEMON_ID = `${HOME_NAMESPACE}/${POSTGRES_DAEMON}`;
 
 /** Clear of Postgres's default 5432, so a Postgres the user already runs keeps its port. */
 const PORT_BASE = 54320;
-const READY_TIMEOUT_MS = 60_000;
 
 export interface PostgresServer {
 	port: number;
@@ -31,7 +30,7 @@ export interface PostgresServer {
 export async function startPostgres(home: Home): Promise<PostgresServer> {
 	if (!home.records.postgres) {
 		home.records.postgres = {
-			port: await freePort(PORT_BASE),
+			port: await freePort(PORT_BASE, home.records),
 			password: randomBytes(18).toString("base64url"),
 		};
 		await home.save();
@@ -68,8 +67,9 @@ export async function startPostgres(home: Home): Promise<PostgresServer> {
 		"-c",
 		"listen_addresses=127.0.0.1",
 	]);
-	await home.configure(
-		[
+	await home.configure(POSTGRES_DAEMON, {
+		tools: { postgres: POSTGRES_VERSION },
+		table: [
 			`[daemons.${POSTGRES_DAEMON}]`,
 			`run = ${tomlString(`exec ${server.map(shellQuote).join(" ")}`)}`,
 			`port = ${port}`,
@@ -77,7 +77,7 @@ export async function startPostgres(home: Home): Promise<PostgresServer> {
 			// basepad writes every variable itself; mise's own <NAME>_URL would point at an HTTP proxy.
 			"proxy = false",
 		].join("\n"),
-	);
+	});
 	await mise(home.dir, "daemons", "start", POSTGRES_DAEMON);
 
 	const query = async (sql: string): Promise<string> =>
@@ -102,7 +102,11 @@ export async function startPostgres(home: Home): Promise<PostgresServer> {
 				env: { ...process.env, PGPASSWORD: password, PGCONNECT_TIMEOUT: "2" },
 			},
 		);
-	await waitReady(query, home.dir);
+	// pitchfork can report a daemon running before it is ready, so basepad checks for itself.
+	await waitFor(
+		() => query("select 1"),
+		`Postgres didn't become ready. For its log, run \`mise daemons logs ${POSTGRES_DAEMON}\` in ${home.dir}.`,
+	);
 
 	return {
 		port,
@@ -143,46 +147,9 @@ async function initCluster(
 	}
 }
 
-/** pitchfork can report a daemon running before it is ready, so basepad checks for itself. */
-async function waitReady(query: (sql: string) => Promise<string>, homeDir: string): Promise<void> {
-	const deadline = Date.now() + READY_TIMEOUT_MS;
-	for (;;) {
-		try {
-			await query("select 1");
-			return;
-		} catch (error) {
-			if (Date.now() > deadline) {
-				throw new BasepadError(
-					`Postgres didn't become ready. For its log, run \`mise daemons logs ${POSTGRES_DAEMON}\` in ${homeDir}.\n${(error as Error).message}`,
-				);
-			}
-			await new Promise((r) => setTimeout(r, 250));
-		}
-	}
-}
-
-async function freePort(from: number): Promise<number> {
-	for (let port = from; port < from + 1000; port++) {
-		if (await canListen(port)) return port;
-	}
-	throw new BasepadError(`No free port from ${from} to ${from + 999}.`);
-}
-
-function canListen(port: number): Promise<boolean> {
-	return new Promise((resolve) => {
-		const server = createServer();
-		server.once("error", () => resolve(false));
-		server.listen(port, "127.0.0.1", () => server.close(() => resolve(true)));
-	});
-}
-
 async function exists(path: string): Promise<boolean> {
 	return access(path).then(
 		() => true,
 		() => false,
 	);
-}
-
-function tomlString(value: string): string {
-	return JSON.stringify(value);
 }

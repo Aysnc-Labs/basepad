@@ -1,16 +1,21 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { add, SERVICES } from "./internal/add.ts";
+import { add } from "./internal/add.ts";
+import { SERVICE_TYPES } from "./internal/config.ts";
 import { BasepadError } from "./internal/exec.ts";
 import { PRESETS } from "./internal/presets.ts";
 import { status } from "./internal/status.ts";
+import { up } from "./internal/up.ts";
 
 const USAGE = `Usage: basepad <command>
 
 Commands:
-  add <service> [--name <name>] [--preset <preset>]
-                  Add a service to this project (services: ${SERVICES.join(", ")}; presets: ${PRESETS.join(", ")})
+  add <service>... [--name <name>] [--preset <preset>]
+                  Add services to this project's basepad.toml and start them
+                  (services: ${SERVICE_TYPES.join(", ")}; presets: ${PRESETS.join(", ")})
+  up              Start this project's services from basepad.toml and rewrite its env block
   status          List this project's services with their state, port and URL
 
 Options:
@@ -43,15 +48,19 @@ async function main(argv: string[]): Promise<number> {
 	const cwd = process.cwd();
 	switch (command) {
 		case "add": {
-			if (rest.length !== 1)
-				throw new BasepadError(`\`basepad add\` takes one service.\n\n${USAGE}`);
+			if (rest.length === 0) throw new BasepadError(`\`basepad add\` needs a service.\n\n${USAGE}`);
 			const lines = await add({
 				cwd,
-				service: rest[0] as string,
+				services: rest,
 				name: values.name,
 				preset: values.preset,
 			});
 			for (const line of lines) console.log(line);
+			return 0;
+		}
+		case "up": {
+			if (rest.length > 0) throw new BasepadError(`\`basepad up\` takes no arguments.\n\n${USAGE}`);
+			for (const line of await up(await realpath(cwd))) console.log(line);
 			return 0;
 		}
 		case "status": {
