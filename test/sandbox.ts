@@ -36,6 +36,8 @@ export interface Sandbox {
 		...args: string[]
 	): Promise<Result>;
 	mise(cwd: string, ...args: string[]): Promise<Result>;
+	/** `mise` with extra environment variables. */
+	miseWith(options: { env?: NodeJS.ProcessEnv }, cwd: string, ...args: string[]): Promise<Result>;
 	/** psql from basepad's Postgres, as a developer would run it. */
 	psql(url: string, sql: string): Promise<Result>;
 	/** Runs one of the test dir's scripts with Node, as an app would run. */
@@ -122,6 +124,7 @@ export async function sandbox(): Promise<Sandbox> {
 		basepadWith: (options, cwd, ...args) =>
 			exec(process.execPath, [cli, ...args], cwd, options.env, options.input),
 		mise: (cwd, ...args) => exec("mise", args, cwd),
+		miseWith: (options, cwd, ...args) => exec("mise", args, cwd, options.env),
 		psql: (url, sql) =>
 			exec("mise", ["exec", "postgres@18", "--", "psql", url, "-tAX", "-c", sql], root),
 		redis: (url, ...args) =>

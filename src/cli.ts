@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { add } from "./internal/add.ts";
+import { upInBackground } from "./internal/background.ts";
 import { changed, ci } from "./internal/ci.ts";
 import { claudeCreate, claudeRemove } from "./internal/claude.ts";
 import { clone } from "./internal/clone.ts";
@@ -17,7 +18,9 @@ Commands:
   add <service>... [--name <name>] [--preset <preset>]
                   Add services to this project's basepad.toml and start them
                   (services: ${SERVICE_TYPES.join(", ")}; presets: ${PRESETS.join(", ")})
-  up              Start this project's services from basepad.toml and rewrite its env block
+  up [--background]
+                  Start this project's services from basepad.toml and rewrite its env block
+                  (--background: return at once, logging to basepad's home)
   status          List this project's services with their state, port and URL
   worktree add <name> [--path <dir>]
                   Make a git worktree with its own databases, Redis, port and env block
@@ -52,6 +55,7 @@ async function main(argv: string[]): Promise<number> {
 			base: { type: "string" },
 			all: { type: "boolean" },
 			claude: { type: "boolean" },
+			background: { type: "boolean" },
 			help: { type: "boolean", short: "h" },
 			version: { type: "boolean", short: "v" },
 		},
@@ -85,7 +89,8 @@ async function main(argv: string[]): Promise<number> {
 		}
 		case "up": {
 			if (rest.length > 0) throw new BasepadError(`\`basepad up\` takes no arguments.\n\n${USAGE}`);
-			for (const line of await start(cwd)) console.log(line);
+			const lines = values.background ? await upInBackground(cwd) : await start(cwd);
+			for (const line of lines) console.log(line);
 			return 0;
 		}
 		case "worktree": {

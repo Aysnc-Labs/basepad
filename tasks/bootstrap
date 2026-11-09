@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="In a cloud session: install the project's tools and start its services in the background"
+# Wire it as a Claude Code SessionStart hook. Outside a cloud session it does nothing, so the same
+# hook is harmless on a laptop. Its stdout becomes context for Claude, so only the outcome goes there.
+set -euo pipefail
+if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
+	echo "basepad: not a cloud session (CLAUDE_CODE_REMOTE isn't true), so there is nothing to start." >&2
+	exit 0
+fi
+mise install --quiet >&2
+exec basepad up --background

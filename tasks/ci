@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Run what CI runs for this change: the changed projects' checks (basepad ci)"
+set -euo pipefail
+exec basepad ci "$@"

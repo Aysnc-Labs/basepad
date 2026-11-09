@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="List this project's services with their state, port and URL (basepad status)"
+set -euo pipefail
+exec basepad status "$@"
