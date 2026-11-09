@@ -233,10 +233,14 @@ basepad can make the worktrees Claude Code works in (`claude --worktree feat-x`,
 
 ```json
 {
-  "hooks": {
-    "WorktreeCreate": [{ "hooks": [{ "type": "command", "command": "basepad worktree add --claude" }] }],
-    "WorktreeRemove": [{ "hooks": [{ "type": "command", "command": "basepad worktree remove --claude" }] }]
-  }
+	"hooks": {
+		"WorktreeCreate": [
+			{ "hooks": [{ "type": "command", "command": "basepad worktree add --claude" }] }
+		],
+		"WorktreeRemove": [
+			{ "hooks": [{ "type": "command", "command": "basepad worktree remove --claude" }] }
+		]
+	}
 }
 ```
 
@@ -259,11 +263,11 @@ includes = [
 
 Replace `<tag>` with the release you use. A task of your own with the same name, listed after basepad's, wins. mise caches the clone, so a pinned tag is fetched once. If your project already lists `includes`, add basepad's line to that list: mise uses only the highest-precedence list, never a merge ([task discovery](https://mise.jdx.dev/tasks/task-discovery.html)).
 
-| Task        | Runs                                                                   |
-| ----------- | ---------------------------------------------------------------------- |
-| `status`    | `basepad status`                                                       |
-| `changed`   | `basepad changed`: the projects this change touches                    |
-| `ci`        | `basepad ci`: those projects' checks, exactly as CI runs them          |
+| Task        | Runs                                                                                        |
+| ----------- | ------------------------------------------------------------------------------------------- |
+| `status`    | `basepad status`                                                                            |
+| `changed`   | `basepad changed`: the projects this change touches                                         |
+| `ci`        | `basepad ci`: those projects' checks, exactly as CI runs them                               |
 | `bootstrap` | in a cloud session, the project's tools and services; see [Cloud sessions](#cloud-sessions) |
 
 Each needs `basepad` on `PATH`, for example from the project's own `[tools]`.
