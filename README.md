@@ -2,8 +2,6 @@
 
 Local services for any project, native through [mise](https://mise.jdx.dev): Postgres, Neon's local proxy, Mailpit and Redis, shared across git worktrees, with no Docker. macOS and Linux.
 
-Work in progress: today basepad adds Postgres 18 (with or without Neon's local proxy), Mailpit and Redis to a project, writes their variables into its env file, reports their status, makes git worktrees with their own copies of the project's data, serves each checkout's app and the mail inbox at stable localhost names, serves as Claude Code's worktree hooks, starts a cloud session's services, and runs what CI runs for a change.
-
 ## Install
 
 basepad needs mise 2026.10.24 or later and Node 24. Once it is published:
@@ -247,7 +245,7 @@ Their output goes to stderr. `basepad clone <path>…` copies paths from main in
 run = ["pnpm install --offline --frozen-lockfile", "basepad clone .next/cache"]
 ```
 
-An offline install from pnpm's store took about 2 s on a large repo, against 9–10 s to clone `node_modules`, so install rather than clone it.
+An offline install from pnpm's store is faster than cloning `node_modules`, so install rather than clone it.
 
 ## Claude Code
 
@@ -401,13 +399,11 @@ export BASEPAD_HOME=/tmp/bp/home MISE_STATE_DIR=/tmp/bp/mise-state MISE_CONFIG_D
 export PITCHFORK_STATE_DIR=/tmp/bp/pf-state PITCHFORK_CONFIG_DIR=/tmp/bp/pf-config PITCHFORK_LOGS_DIR=/tmp/bp/pf-logs
 ```
 
-The tests do exactly this, one temporary machine per test file.
-
 ## Development
 
 ```sh
 mise install && npm ci
-npm run check   # Biome, TypeScript, then the CLI tests
+npm run check
 ```
 
 The tests run the built `basepad` command against real services (Postgres, Mailpit, Redis, mise and pitchfork) in temporary dirs on free ports. CI runs them on macOS as a user and on Ubuntu 24.04 as root. The `postgres-neon` tests download Neon's proxy from aysnc-labs/mise-binaries; while that repo is private, CI needs a `MISE_BINARIES_TOKEN` secret that can read it, and without one it skips those tests with a warning. Locally, export `GITHUB_TOKEN` (for example `GITHUB_TOKEN=$(gh auth token)`) the first time.
