@@ -50,9 +50,14 @@ export async function removeWorktree(mainRoot: string, path: string): Promise<vo
 	if (out.code !== 0) await must("git", ["worktree", "prune"], { cwd: mainRoot });
 }
 
-/** Whether the checkout at `root` has changes git would lose: modified or untracked, not ignored. */
-export async function hasChanges(root: string): Promise<boolean> {
-	return (await must("git", ["status", "--porcelain"], { cwd: root })).trim() !== "";
+/**
+ * Whether the checkout at `root` has changes git would lose (modified or untracked, not ignored),
+ * apart from the `except` paths, relative to `root`.
+ */
+export async function hasChanges(root: string, except: string[] = []): Promise<boolean> {
+	const pathspec = except.map((path) => `:(exclude,literal)${path}`);
+	const out = await must("git", ["status", "--porcelain", "--", ".", ...pathspec], { cwd: root });
+	return out.trim() !== "";
 }
 
 /**

@@ -229,6 +229,19 @@ describe("basepad worktree ls and remove", () => {
 		expect(databases.stdout.split("\n")).toContain("shop_audit");
 		expect((await box.redis(mainVars.CACHE_URL as string, "PING")).stdout.trim()).toBe("PONG");
 	});
+
+	test("remove keeps a worktree with uncommitted work, unless forced", async () => {
+		const wt = worktreePath("feat-y");
+		await writeFile(join(wt, "wip.txt"), "unsaved\n");
+		const refused = await box.basepad(main, "worktree", "remove", "feat-y");
+		expect(refused.code).toBe(1);
+		expect(refused.stderr).toContain("has uncommitted changes");
+		await access(join(wt, "wip.txt"));
+
+		const forced = await box.basepad(main, "worktree", "remove", "feat-y", "--force");
+		expect(forced.code, forced.stderr).toBe(0);
+		await expect(access(wt)).rejects.toThrow();
+	});
 });
 
 /** A psql session on `url` that stays connected, idle, until closed. */

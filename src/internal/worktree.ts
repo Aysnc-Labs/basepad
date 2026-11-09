@@ -1,5 +1,5 @@
 import { access, realpath } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { copyPaths } from "./clone.ts";
 import { CONFIG_FILE, hasConfig, loadConfig } from "./config.ts";
 import { readEnvBlock, removeEnvBlock } from "./envfile.ts";
@@ -16,6 +16,7 @@ import { HOOKS, type HookContext, runHook } from "./hooks.ts";
 import { canListen } from "./ports.ts";
 import { startPostgres } from "./postgres.ts";
 import { ENV_FILES } from "./presets.ts";
+import { confFile } from "./project.ts";
 import type { Project, Records } from "./records.ts";
 import { bringUp, type Up } from "./up.ts";
 
@@ -140,7 +141,15 @@ export async function removeWorktree(options: RemoveOptions): Promise<string[]> 
 	}
 	const root = (found[0] as [string, Project & { worktree: Worktree }])[1].worktree.root;
 	const present = await exists(root);
-	if (present && !options.force && (await hasChanges(root))) {
+	// basepad's own files don't count, committed or not: it rewrites them, and they go with it.
+	const ours = await Promise.all(
+		found.map(async ([projectDir]) => {
+			const sub = relative(root, projectDir);
+			const preset = (await exists(projectDir)) ? (await loadConfig(projectDir)).preset : "next";
+			return [join(sub, ENV_FILES[preset]), relative(root, confFile(projectDir))];
+		}),
+	);
+	if (present && !options.force && (await hasChanges(root, ours.flat()))) {
 		throw new BasepadError(
 			`${root} has uncommitted changes. Commit or stash them, or pass \`--force\` to lose them.`,
 		);
