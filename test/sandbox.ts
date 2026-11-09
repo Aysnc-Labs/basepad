@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -28,6 +29,8 @@ export interface Sandbox {
 	mise(cwd: string, ...args: string[]): Promise<Result>;
 	/** psql from basepad's Postgres, as a developer would run it. */
 	psql(url: string, sql: string): Promise<Result>;
+	/** redis-cli against a Redis URL. */
+	redis(url: string, ...args: string[]): Promise<Result>;
 	dispose(): Promise<void>;
 }
 
@@ -80,6 +83,8 @@ export async function sandbox(): Promise<Sandbox> {
 		mise: (cwd, ...args) => exec("mise", args, cwd),
 		psql: (url, sql) =>
 			exec("mise", ["exec", "postgres@18", "--", "psql", url, "-tAX", "-c", sql], root),
+		redis: (url, ...args) =>
+			exec("mise", ["exec", "redis@8", "--", "redis-cli", "-u", url, ...args], root),
 		async dispose() {
 			// Stops basepad's daemons and this sandbox's supervisor; the user's own are untouched.
 			await exec(
@@ -96,4 +101,80 @@ export async function sandbox(): Promise<Sandbox> {
 /** Drops the parent shell's mise activation, so it can't leak config from the developer's cwd. */
 function stripMise(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	return Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith("__MISE")));
+}
+
+/** The variables in an env file's basepad block. */
+export function blockOf(envFile: string): Record<string, string> {
+	const match = envFile.match(/# >>> basepad[^\n]*\n([\s\S]*?)# <<< basepad\n/);
+	if (!match?.[1]) throw new Error(`no basepad block in:\n${envFile}`);
+	return Object.fromEntries(
+		match[1]
+			.split("\n")
+			.filter((line) => line && !line.startsWith("#"))
+			.map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+	);
+}
+
+/**
+ * Sends one message through an `smtp://user:pass@host:port` URL, as an app's mailer would:
+ * EHLO, AUTH PLAIN with the URL's credentials, then the message.
+ */
+export async function sendMail(
+	url: string,
+	message: { from: string; to: string; subject: string },
+): Promise<void> {
+	const { hostname, port, username, password } = new URL(url);
+	const socket = createConnection({ host: hostname, port: Number(port) });
+	socket.setEncoding("utf8");
+	let buffer = "";
+	const waiting: ((line: string) => void)[] = [];
+	socket.on("data", (chunk: string) => {
+		buffer += chunk;
+		// A reply ends with a line whose code is followed by a space: "250 OK", not "250-AUTH".
+		for (
+			let at = buffer.search(/^\d{3} .*\r\n/m);
+			at !== -1;
+			at = buffer.search(/^\d{3} .*\r\n/m)
+		) {
+			const end = buffer.indexOf("\r\n", at) + 2;
+			const reply = buffer.slice(0, end);
+			buffer = buffer.slice(end);
+			waiting.shift()?.(reply);
+		}
+	});
+	const reply = () => new Promise<string>((resolve) => waiting.push(resolve));
+	const expectReply = async (code: string) => {
+		const got = await reply();
+		if (!got.startsWith(code)) throw new Error(`SMTP: expected ${code}, got ${got}`);
+	};
+	const send = async (line: string, code: string) => {
+		const next = expectReply(code);
+		socket.write(`${line}\r\n`);
+		await next;
+	};
+	try {
+		await expectReply("220");
+		await send("EHLO test.localhost", "250");
+		const auth = Buffer.from(
+			`\0${decodeURIComponent(username)}\0${decodeURIComponent(password)}`,
+		).toString("base64");
+		await send(`AUTH PLAIN ${auth}`, "235");
+		await send(`MAIL FROM:<${message.from}>`, "250");
+		await send(`RCPT TO:<${message.to}>`, "250");
+		await send("DATA", "354");
+		await send(
+			[
+				`From: ${message.from}`,
+				`To: ${message.to}`,
+				`Subject: ${message.subject}`,
+				"",
+				"Sent by basepad's tests.",
+				".",
+			].join("\r\n"),
+			"250",
+		);
+		await send("QUIT", "221");
+	} finally {
+		socket.destroy();
+	}
 }

@@ -5,3 +5,9 @@ export const MISE_MIN_VERSION = "2026.10.24";
 export const PITCHFORK_VERSION = "2.33.1";
 
 export const POSTGRES_VERSION = "18";
+
+/** Mailpit from its GitHub releases, through aqua. */
+export const MAILPIT_TOOL = "aqua:axllent/mailpit";
+export const MAILPIT_VERSION = "1";
+
+export const REDIS_VERSION = "8";

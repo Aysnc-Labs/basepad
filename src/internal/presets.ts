@@ -1,24 +1,46 @@
-import type { PostgresServer } from "./postgres.ts";
-import type { Project } from "./records.ts";
-
 /** A preset picks the framework's env file and its variable names. */
-export const PRESETS = ["next"] as const;
+export const PRESETS = ["next", "laravel"] as const;
 export type Preset = (typeof PRESETS)[number];
 
-const FILES: Record<Preset, string> = { next: ".env.local" };
+export const ENV_FILES: Record<Preset, string> = { next: ".env.local", laravel: ".env" };
 
-/** The env file a project's preset uses, and the variables basepad writes into its block. */
-export function envVars(
-	project: Project,
-	server: PostgresServer,
-): { file: string; vars: Record<string, string> } {
-	const vars: Record<string, string> = {};
-	for (const [name, service] of Object.entries(project.services)) {
-		const key =
-			name === "postgres"
-				? "DATABASE_URL"
-				: `${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_DATABASE_URL`;
-		vars[key] = server.url(service.database);
+/**
+ * The variables a preset writes, from basepad's own (`DATABASE_URL`, `SMTP_URL`, `REDIS_URL`,
+ * `<NAME>_URL` and so on), plus the app's URL when the preset has one.
+ */
+export function presetVars(
+	preset: Preset,
+	vars: Record<string, string>,
+	appPort: number | undefined,
+): Record<string, string> {
+	if (preset === "next") return vars;
+
+	// Laravel reads `.env` itself, not the shell, under the names its config uses.
+	const out: Record<string, string> = {};
+	for (const [key, value] of Object.entries(vars)) {
+		if (key === "DATABASE_URL") {
+			out.DB_CONNECTION = "pgsql";
+			out.DB_URL = value;
+		} else if (key === "SMTP_URL") {
+			const url = new URL(value);
+			out.MAIL_MAILER = "smtp";
+			out.MAIL_HOST = url.hostname;
+			out.MAIL_PORT = url.port;
+			out.MAIL_USERNAME = decodeURIComponent(url.username);
+			out.MAIL_PASSWORD = decodeURIComponent(url.password);
+		} else {
+			out[key] = value;
+		}
 	}
-	return { file: FILES[project.preset], vars };
+	if (appPort !== undefined) {
+		out.APP_URL = `http://localhost:${appPort}`;
+		// `php artisan serve` reads it, so the app is served where APP_URL points.
+		out.SERVER_PORT = String(appPort);
+	}
+	return out;
+}
+
+/** Whether a preset writes the app's URL, so the project needs an app port. */
+export function needsAppPort(preset: Preset): boolean {
+	return preset === "laravel";
 }
