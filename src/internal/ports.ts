@@ -18,6 +18,7 @@ function recordedPorts(records: Records): Set<number> {
 	const ports = new Set<number>();
 	if (records.postgres) ports.add(records.postgres.port);
 	if (records.mailpit) ports.add(records.mailpit.smtpPort).add(records.mailpit.uiPort);
+	if (records.neonProxy) for (const port of Object.values(records.neonProxy)) ports.add(port);
 	for (const project of Object.values(records.projects)) {
 		if (project.app) ports.add(project.app.port);
 		for (const service of Object.values(project.services)) {

@@ -29,6 +29,8 @@ export interface Sandbox {
 	mise(cwd: string, ...args: string[]): Promise<Result>;
 	/** psql from basepad's Postgres, as a developer would run it. */
 	psql(url: string, sql: string): Promise<Result>;
+	/** Runs one of the test dir's scripts with Node, as an app would run. */
+	node(script: string, ...args: string[]): Promise<Result>;
 	/** redis-cli against a Redis URL. */
 	redis(url: string, ...args: string[]): Promise<Result>;
 	dispose(): Promise<void>;
@@ -85,6 +87,8 @@ export async function sandbox(): Promise<Sandbox> {
 			exec("mise", ["exec", "postgres@18", "--", "psql", url, "-tAX", "-c", sql], root),
 		redis: (url, ...args) =>
 			exec("mise", ["exec", "redis@8", "--", "redis-cli", "-u", url, ...args], root),
+		node: (script, ...args) =>
+			exec(process.execPath, [join(import.meta.dirname, script), ...args], root),
 		async dispose() {
 			// Stops basepad's daemons and this sandbox's supervisor; the user's own are untouched.
 			await exec(

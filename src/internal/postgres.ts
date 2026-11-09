@@ -17,6 +17,10 @@ const PORT_BASE = 54320;
 
 export interface PostgresServer {
 	port: number;
+	/** The superuser's password. */
+	password: string;
+	/** Runs SQL in the maintenance database as the superuser, and returns psql's unaligned output. */
+	query(sql: string): Promise<string>;
 	/** A URL for `database`, as an app connects: `localhost`, which needs no DNS. */
 	url(database: string): string;
 	/** Creates `database` unless it exists. */
@@ -110,6 +114,8 @@ export async function startPostgres(home: Home): Promise<PostgresServer> {
 
 	return {
 		port,
+		password,
+		query,
 		url: (database) => `postgres://postgres:${password}@localhost:${port}/${database}`,
 		async ensureDatabase(database) {
 			const found = await query(`select 1 from pg_database where datname = '${database}'`);

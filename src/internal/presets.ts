@@ -40,6 +40,9 @@ export function presetVars(
 	return out;
 }
 
+/** Where Neon's driver finds the proxy (`neonConfig.wsProxy`). One per machine, so it's unprefixed. */
+export const NEON_WS_PROXY_VAR = "NEON_WS_PROXY";
+
 /** Whether a preset writes the app's URL, so the project needs an app port. */
 export function needsAppPort(preset: Preset): boolean {
 	return preset === "laravel";

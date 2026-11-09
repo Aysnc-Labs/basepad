@@ -11,9 +11,10 @@ import { BasepadError } from "./exec.ts";
 import { type Home, withHome } from "./home.ts";
 import { MAILPIT_DAEMON, type MailServer, mailTag, startMailpit } from "./mailpit.ts";
 import { daemons } from "./mise.ts";
+import { NEON_PROXY_DAEMON, type NeonProxy, startNeonProxy } from "./neon.ts";
 import { freePort } from "./ports.ts";
 import { POSTGRES_DAEMON, type PostgresServer, startPostgres } from "./postgres.ts";
-import { ENV_FILES, needsAppPort, presetVars } from "./presets.ts";
+import { ENV_FILES, NEON_WS_PROXY_VAR, needsAppPort, presetVars } from "./presets.ts";
 import { referenceTable, writeProjectConfig } from "./project.ts";
 import type { Project } from "./records.ts";
 import { redisDaemon, redisPort, redisUrl, startRedis } from "./redis.ts";
@@ -40,6 +41,7 @@ export async function up(projectDir: string): Promise<string[]> {
 		const own: { name: string; port: number }[] = [];
 		let postgres: PostgresServer | undefined;
 		let mailpit: MailServer | undefined;
+		let neon: NeonProxy | undefined;
 
 		for (const service of config.services) {
 			switch (service.type) {
@@ -50,6 +52,18 @@ export async function up(projectDir: string): Promise<string[]> {
 					tables.push(referenceTable(service.name, home, POSTGRES_DAEMON));
 					lines.push(
 						`${service.name}: ${databases.map(([, db]) => `database ${db}`).join(", ")} on the shared Postgres (port ${postgres.port}).`,
+					);
+					break;
+				}
+				case "postgres-neon": {
+					postgres ??= await startPostgres(home);
+					// Started once Postgres accepts queries, since it reads its allow-list from there.
+					neon ??= await startNeonProxy(home, postgres);
+					const databases = await ensureDatabases(home, projectDir, project, service, postgres);
+					for (const [key, database] of databases) vars.set(key, neon.url(database), service);
+					tables.push(referenceTable(service.name, home, POSTGRES_DAEMON));
+					lines.push(
+						`${service.name}: ${databases.map(([, db]) => `database ${db}`).join(", ")} on the shared Postgres (port ${postgres.port}), through the shared Neon proxy (${neon.wsProxy}).`,
 					);
 					break;
 				}
@@ -78,6 +92,11 @@ export async function up(projectDir: string): Promise<string[]> {
 			}
 		}
 
+		if (neon) {
+			// One proxy serves every database, so the project gets one variable and one reference.
+			vars.set(NEON_WS_PROXY_VAR, neon.wsProxy, { name: NEON_PROXY_DAEMON });
+			tables.push(referenceTable(NEON_PROXY_DAEMON, home, NEON_PROXY_DAEMON));
+		}
 		if (needsAppPort(config.preset)) {
 			project.app ??= { port: await freePort(APP_PORT_BASE, home.records) };
 		}
@@ -113,7 +132,7 @@ function urlKey(service: ServiceConfig, usual: string): string {
 
 /** A Postgres database's variable: `DATABASE_URL` for the default service, else `<NAME>_DATABASE_URL`. */
 function databaseKey(service: ServiceConfig, database: string): string {
-	if (service.databases === undefined && service.name === "postgres") return "DATABASE_URL";
+	if (service.databases === undefined && service.name === service.type) return "DATABASE_URL";
 	return `${envName(database)}_DATABASE_URL`;
 }
 
@@ -130,8 +149,9 @@ async function ensureDatabases(
 	server: PostgresServer,
 ): Promise<[string, string][]> {
 	const existing = project.services[service.name];
-	const databases = existing?.type === "postgres" ? existing.databases : {};
-	project.services[service.name] = { type: "postgres", databases };
+	const type = service.type as "postgres" | "postgres-neon";
+	const databases = existing?.type === type ? existing.databases : {};
+	project.services[service.name] = { type, databases };
 	const out: [string, string][] = [];
 	for (const database of service.databases ?? [service.name]) {
 		databases[database] ??= databaseName(home, projectDir, service, database);
@@ -152,12 +172,12 @@ function databaseName(
 	service: ServiceConfig,
 	database: string,
 ): string {
-	const plain = service.databases === undefined && service.name === "postgres";
+	const plain = service.databases === undefined && service.name === service.type;
 	const base = sanitise(plain ? basename(projectDir) : `${basename(projectDir)}_${database}`);
 	const taken = new Set(
 		Object.values(home.records.projects).flatMap((p) =>
 			Object.values(p.services).flatMap((s) =>
-				s.type === "postgres" ? Object.values(s.databases) : [],
+				s.type === "postgres" || s.type === "postgres-neon" ? Object.values(s.databases) : [],
 			),
 		),
 	);
@@ -180,7 +200,7 @@ class Vars {
 	readonly all: Record<string, string> = {};
 	private readonly owners = new Map<string, string>();
 
-	set(key: string, value: string, service: ServiceConfig): void {
+	set(key: string, value: string, service: { name: string }): void {
 		const owner = this.owners.get(key);
 		if (owner !== undefined && owner !== service.name) {
 			throw new BasepadError(

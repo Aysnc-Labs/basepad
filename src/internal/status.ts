@@ -4,6 +4,7 @@ import { loadConfig } from "./config.ts";
 import { openHome } from "./home.ts";
 import { MAILPIT_DAEMON_ID, mailTag } from "./mailpit.ts";
 import { type Daemon, daemons } from "./mise.ts";
+import { NEON_ENDPOINT_OPTIONS, NEON_PROXY_DAEMON, NEON_PROXY_DAEMON_ID } from "./neon.ts";
 import { POSTGRES_DAEMON_ID } from "./postgres.ts";
 import { redisUrl } from "./redis.ts";
 
@@ -40,18 +41,20 @@ export async function status(cwd: string): Promise<Status> {
 	for (const service of config.services) {
 		const record = project?.services[service.name];
 		switch (service.type) {
-			case "postgres": {
+			case "postgres":
+			case "postgres-neon": {
 				const daemon = shared.find((d) => d.id === POSTGRES_DAEMON_ID);
 				const server = home.records.postgres;
+				const options = service.type === "postgres-neon" ? `?${NEON_ENDPOINT_OPTIONS}` : "";
 				for (const database of service.databases ?? [service.name]) {
-					const name = record?.type === "postgres" ? record.databases[database] : undefined;
+					const name = record?.type === service.type ? record.databases[database] : undefined;
 					rows.push([
 						service.databases === undefined ? service.name : `${service.name}/${database}`,
 						name === undefined ? "missing" : state(daemon),
 						port(server?.port),
 						server === undefined || name === undefined
 							? "-"
-							: `postgres://postgres:***@localhost:${server.port}/${name}`,
+							: `postgres://postgres:***@localhost:${server.port}/${name}${options}`,
 					]);
 				}
 				break;
@@ -88,6 +91,17 @@ export async function status(cwd: string): Promise<Status> {
 				break;
 			}
 		}
+	}
+
+	if (config.services.some((s) => s.type === "postgres-neon")) {
+		const daemon = shared.find((d) => d.id === NEON_PROXY_DAEMON_ID);
+		const wss = home.records.neonProxy?.wss;
+		rows.push([
+			NEON_PROXY_DAEMON,
+			wss === undefined ? "missing" : state(daemon),
+			port(wss),
+			wss === undefined ? "-" : `ws://localhost:${wss}/v2`,
+		]);
 	}
 
 	const managed = new Set(config.services.map((s) => s.name));

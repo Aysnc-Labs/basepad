@@ -11,3 +11,7 @@ export const MAILPIT_TOOL = "aqua:axllent/mailpit";
 export const MAILPIT_VERSION = "1";
 
 export const REDIS_VERSION = "8";
+
+/** Neon's proxy, built from Neon's source and released by aysnc-labs/mise-binaries. */
+export const NEON_PROXY_TOOL = "github:aysnc-labs/mise-binaries";
+export const NEON_PROXY_VERSION = "neon-proxy-fa50421";
