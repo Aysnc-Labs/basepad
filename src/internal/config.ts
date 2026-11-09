@@ -147,6 +147,10 @@ export async function declareService(
 	await writeFile(join(projectDir, CONFIG_FILE), text);
 }
 
+export async function hasConfig(projectDir: string): Promise<boolean> {
+	return (await readConfigText(projectDir)) !== undefined;
+}
+
 async function readConfigText(projectDir: string): Promise<string | undefined> {
 	try {
 		return await readFile(join(projectDir, CONFIG_FILE), "utf8");

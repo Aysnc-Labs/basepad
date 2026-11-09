@@ -106,9 +106,9 @@ AUDIT_DATABASE_URL = "LOGS_DATABASE_URL"
 
 ### Presets
 
-| Preset    | Env file     | Variables                                                                                                                                                  |
-| --------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `next`    | `.env.local` | basepad's own names                                                                                                                                        |
+| Preset    | Env file     | Variables                                                                                                                                                                                         |
+| --------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `next`    | `.env.local` | basepad's own names                                                                                                                                                                               |
 | `laravel` | `.env`       | `DB_CONNECTION=pgsql` and `DB_URL` for `DATABASE_URL`; `MAIL_MAILER=smtp`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME` and `MAIL_PASSWORD` for `SMTP_URL`; `REDIS_URL`; `APP_URL` and `SERVER_PORT` |
 
 Laravel reads `.env` itself, not the shell, and the last line for a variable wins, so basepad's block, at the end of the file, overrides the defaults above it. `APP_URL` uses a free port basepad picks for the project, from 8000, and `SERVER_PORT` makes `php artisan serve` use it. If you serve the app another way (Herd, say), rename them out of the way:

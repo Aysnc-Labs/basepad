@@ -1,5 +1,11 @@
 import { basename, join } from "node:path";
-import { loadConfig, type ProjectConfig, type ServiceConfig } from "./config.ts";
+import {
+	CONFIG_FILE,
+	hasConfig,
+	loadConfig,
+	type ProjectConfig,
+	type ServiceConfig,
+} from "./config.ts";
 import { writeEnvBlock } from "./envfile.ts";
 import { BasepadError } from "./exec.ts";
 import { type Home, withHome } from "./home.ts";
@@ -22,6 +28,9 @@ const APP_PORT_BASE = 8000;
  */
 export async function up(projectDir: string): Promise<string[]> {
 	const config = await loadConfig(projectDir);
+	if (!(await hasConfig(projectDir))) {
+		throw new BasepadError(`No ${CONFIG_FILE} here. Add a service with \`basepad add <service>\`.`);
+	}
 	return withHome(async (home) => {
 		const project: Project = home.records.projects[projectDir] ?? { services: {} };
 		home.records.projects[projectDir] = project;

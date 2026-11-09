@@ -132,4 +132,13 @@ describe("basepad.toml", () => {
 			'can\'t use `copy = "copy"`. A redis service can use: empty, shared.',
 		);
 	});
+
+	test("basepad up without one says how to start", async () => {
+		const empty = await box.project("empty");
+		const up = await box.basepad(empty, "up");
+		expect(up.code).toBe(1);
+		expect(up.stderr).toContain(
+			"No basepad.toml here. Add a service with `basepad add <service>`.",
+		);
+	});
 });
