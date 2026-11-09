@@ -254,3 +254,34 @@ async function holdOpen(
 	expect(await ask("select 'connected'")).toBe("connected");
 	return { ask, close: () => child.stdin?.end() };
 }
+
+// CI sets this when it can't download Neon's proxy (a private release), and says so in a warning.
+describe.skipIf(process.env.BASEPAD_TEST_SKIP_NEON_PROXY === "1")(
+	"a postgres-neon worktree",
+	() => {
+		test("gets a copy of main's database behind the same proxy, and remove drops it", async () => {
+			const edge = await box.repo("edge", {
+				"basepad.toml": "[services.postgres-neon]\n",
+				".gitignore": ".env.local\n.config/mise/conf.d/\n",
+			});
+			const up = await box.basepad(edge, "up");
+			expect(up.code, up.stderr).toBe(0);
+			const direct = (url: string) => url.replace(/\?.*$/, "");
+			const mainUrl = direct((await varsOf(edge)).DATABASE_URL as string);
+			await box.psql(mainUrl, "create table t (id int); insert into t values (1), (2)");
+
+			const add = await box.basepad(edge, "worktree", "add", "feat-n");
+			expect(add.code, add.stderr).toBe(0);
+			const wt = join(dirname(edge), "edge-feat-n");
+			const vars = await varsOf(wt);
+			expect(vars.NEON_WS_PROXY).toBe((await varsOf(edge)).NEON_WS_PROXY);
+			expect(direct(vars.DATABASE_URL as string)).toMatch(/\/edge_feat_n$/);
+			expect(await count(direct(vars.DATABASE_URL as string), "select count(*) from t")).toBe("2");
+
+			const remove = await box.basepad(edge, "worktree", "remove", "feat-n");
+			expect(remove.code, remove.stderr).toBe(0);
+			const databases = await box.psql(mainUrl, "select datname from pg_database");
+			expect(databases.stdout.split("\n")).not.toContain("edge_feat_n");
+		});
+	},
+);

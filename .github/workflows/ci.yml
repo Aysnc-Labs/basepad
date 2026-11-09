@@ -15,8 +15,10 @@ permissions:
 env:
   # The mise basepad is tested against. The floor it supports is `min_version` in its configs.
   MISE_VERSION: 2026.11.5
-  # mise downloads tools (pitchfork) from GitHub releases; a token avoids anonymous rate limits.
-  GITHUB_TOKEN: ${{ github.token }}
+  # mise downloads tools (pitchfork, Neon's proxy) from GitHub releases; a token avoids anonymous
+  # rate limits. While aysnc-labs/mise-binaries is private, this repo's own token can't read its
+  # releases, so a MISE_BINARIES_TOKEN secret (read access to that repo's contents) is used if set.
+  GITHUB_TOKEN: ${{ secrets.MISE_BINARIES_TOKEN || github.token }}
 
 jobs:
   macos:
@@ -31,6 +33,13 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
       - run: mise trust --quiet && mise install
+      - name: Check access to Neon's proxy release
+        run: |
+          if ! curl -fsS -o /dev/null -H "Authorization: Bearer $GITHUB_TOKEN" \
+              https://api.github.com/repos/aysnc-labs/mise-binaries/releases/tags/neon-proxy-fa50421; then
+            echo "::warning::Can't read aysnc-labs/mise-binaries' release, so the postgres-neon tests are skipped. Add a MISE_BINARIES_TOKEN secret, or make that repo public."
+            echo "BASEPAD_TEST_SKIP_NEON_PROXY=1" >> "$GITHUB_ENV"
+          fi
       - run: npm ci
       - run: npm run check
 
@@ -48,5 +57,12 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
       - run: mise trust --quiet && mise install
+      - name: Check access to Neon's proxy release
+        run: |
+          if ! curl -fsS -o /dev/null -H "Authorization: Bearer $GITHUB_TOKEN" \
+              https://api.github.com/repos/aysnc-labs/mise-binaries/releases/tags/neon-proxy-fa50421; then
+            echo "::warning::Can't read aysnc-labs/mise-binaries' release, so the postgres-neon tests are skipped. Add a MISE_BINARIES_TOKEN secret, or make that repo public."
+            echo "BASEPAD_TEST_SKIP_NEON_PROXY=1" >> "$GITHUB_ENV"
+          fi
       - run: id -u && npm ci
       - run: npm run check

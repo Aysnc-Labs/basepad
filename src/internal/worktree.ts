@@ -178,7 +178,7 @@ export async function removeWorktree(options: RemoveOptions): Promise<string[]> 
 				else lines.push(`Stopped ${service}.`);
 			}
 			const databases = owned.flatMap(([, s]) =>
-				s.type === "postgres" ? Object.values(s.databases) : [],
+				s.type === "postgres" || s.type === "postgres-neon" ? Object.values(s.databases) : [],
 			);
 			if (databases.length > 0) {
 				const server = await startPostgres(home);
@@ -212,7 +212,7 @@ export async function listWorktrees(cwd: string): Promise<string> {
 				? "serving"
 				: "ready";
 		const databases = Object.values(project.services).flatMap((s) =>
-			s.type === "postgres"
+			s.type === "postgres" || s.type === "postgres-neon"
 				? Object.values(s.databases).map((db) => (s.shared ? `${db} (shared)` : db))
 				: [],
 		);

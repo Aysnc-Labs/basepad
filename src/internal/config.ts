@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { parse } from "smol-toml";
 import { z } from "zod";
 import { BasepadError } from "./exec.ts";
+import { NEON_PROXY_DAEMON } from "./neon.ts";
 import { PRESETS, type Preset } from "./presets.ts";
 
 /**
@@ -15,6 +16,8 @@ export type Copy = (typeof COPIES)[number];
 /** The services basepad can add, and the copy strategies each supports, its default first. */
 export const CATALOGUE = {
 	postgres: { copies: ["copy", "empty", "shared"] },
+	/** The shared Postgres, reached through the shared Neon proxy, for Neon's serverless driver. */
+	"postgres-neon": { copies: ["copy", "empty", "shared"] },
 	mailpit: { copies: ["shared"] },
 	redis: { copies: ["empty", "shared"] },
 } as const satisfies Record<string, { copies: readonly Copy[] }>;
@@ -38,6 +41,9 @@ export interface ProjectConfig {
 }
 
 export const CONFIG_FILE = "basepad.toml";
+
+/** The project's reference to the shared Neon proxy takes this name, so no service can. */
+const RESERVED = NEON_PROXY_DAEMON;
 
 const NAME = /^[a-z][a-z0-9_-]*$/;
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -94,9 +100,14 @@ function parseConfig(text: string): ProjectConfig {
 				`${CONFIG_FILE}: service \`${name}\` can't use \`copy = "${service.copy}"\`. A ${type} service can use: ${copies.join(", ")}.`,
 			);
 		}
-		if (service.databases !== undefined && type !== "postgres") {
+		if (service.databases !== undefined && type !== "postgres" && type !== "postgres-neon") {
 			throw new BasepadError(
-				`${CONFIG_FILE}: service \`${name}\` is ${type}; only a postgres service has \`databases\`.`,
+				`${CONFIG_FILE}: service \`${name}\` is ${type}; only a postgres or postgres-neon service has \`databases\`.`,
+			);
+		}
+		if (name === RESERVED) {
+			throw new BasepadError(
+				`${CONFIG_FILE}: \`${name}\` is the name of basepad's shared Neon proxy; choose another.`,
 			);
 		}
 		return {

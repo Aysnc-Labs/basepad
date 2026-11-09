@@ -14,6 +14,12 @@ const Service = z.discriminatedUnion("type", [
 		/** A worktree's service that uses main's own (`copy = "shared"`): basepad never drops it. */
 		shared: z.literal(true).optional(),
 	}),
+	/** A database on the shared Postgres, which apps reach through the shared Neon proxy. */
+	z.object({
+		type: z.literal("postgres-neon"),
+		databases: z.record(z.string(), z.string()),
+		shared: z.literal(true).optional(),
+	}),
 	z.object({ type: z.literal("mailpit") }),
 	z.object({ type: z.literal("redis"), port: z.number(), shared: z.literal(true).optional() }),
 ]);
@@ -46,6 +52,10 @@ const Records = z.object({
 	version: z.literal(1),
 	postgres: z.object({ port: z.number(), password: z.string() }).optional(),
 	mailpit: z.object({ smtpPort: z.number(), uiPort: z.number() }).optional(),
+	/** The shared Neon proxy's listeners. Only `wss` is for apps; the others are set so none clash. */
+	neonProxy: z
+		.object({ wss: z.number(), proxy: z.number(), mgmt: z.number(), http: z.number() })
+		.optional(),
 	daemons: z.record(z.string(), Daemon).default({}),
 	projects: z.record(z.string(), Project),
 });

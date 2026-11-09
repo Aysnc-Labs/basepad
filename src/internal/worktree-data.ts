@@ -10,7 +10,7 @@ type Worktree = NonNullable<Project["worktree"]>;
 const MAX_IDENTIFIER = 63;
 
 /**
- * A worktree's databases for a Postgres service, as its `copy` strategy says: `copy` makes
+ * A worktree's databases for a Postgres service (`postgres` or `postgres-neon`), as its `copy` strategy says: `copy` makes
  * `<main's db>_<worktree>` from main's, `empty` makes it empty, and `shared` uses main's own.
  * Returns each database's config name and its name in Postgres, and records them on `project`.
  */
@@ -22,15 +22,16 @@ export async function worktreeDatabases(
 	server: PostgresServer,
 	lines: string[],
 ): Promise<[string, string][]> {
+	const type = service.type as "postgres" | "postgres-neon";
 	const main = home.records.projects[worktree.main]?.services[service.name];
-	const mainDatabases = main?.type === "postgres" ? main.databases : {};
+	const mainDatabases = main?.type === type ? main.databases : {};
 	const existing = project.services[service.name];
-	const databases = existing?.type === "postgres" ? existing.databases : {};
+	const databases = existing?.type === type ? existing.databases : {};
 	const out: [string, string][] = [];
 
 	if (service.copy === "shared") {
 		project.services[service.name] = {
-			type: "postgres",
+			type,
 			databases: { ...mainDatabases },
 			shared: true,
 		};
@@ -42,7 +43,7 @@ export async function worktreeDatabases(
 		return out;
 	}
 
-	project.services[service.name] = { type: "postgres", databases };
+	project.services[service.name] = { type, databases };
 	for (const database of service.databases ?? [service.name]) {
 		const from = mainDatabases[database];
 		databases[database] ??= worktreeDatabaseName(home, from ?? database, worktree.name);
@@ -98,7 +99,7 @@ function worktreeDatabaseName(home: Home, database: string, worktree: string): s
 	const taken = new Set(
 		Object.values(home.records.projects).flatMap((p) =>
 			Object.values(p.services).flatMap((s) =>
-				s.type === "postgres" ? Object.values(s.databases) : [],
+				s.type === "postgres" || s.type === "postgres-neon" ? Object.values(s.databases) : [],
 			),
 		),
 	);
