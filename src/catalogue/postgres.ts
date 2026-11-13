@@ -333,8 +333,12 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			const name = place.snapshot(label);
 			const { pg, port, sql } = await own(service, place);
 			const found = await snapshotsOf(sql, place);
-			if (!found.some((snapshot) => snapshot.label === label)) {
-				throw new BasepadError(noSnapshot(place, label, found));
+			const snapshot = found.find((snapshot) => snapshot.label === label);
+			if (snapshot === undefined) throw new BasepadError(noSnapshot(place, label, found));
+			if (snapshot.invalid) {
+				throw new BasepadError(
+					`Snapshot \`${label}\` of \`${place.key}\` is invalid, as an interrupted copy or drop leaves a database. \`${place.database}\` is as it was; remove the snapshot with \`basepad db rm ${label}\`.`,
+				);
 			}
 			const swap = {
 				target: place.database,
@@ -555,17 +559,19 @@ async function snapshotsOf(
 ): Promise<Snapshot[]> {
 	const prefix = place.snapshots;
 	const rows = await sql(
-		`select datname || '|' || pg_database_size(oid) from pg_database where datname like ${literal(`${likeEscaped(prefix)}%`)} order by datname`,
+		// An invalid database (`datconnlimit` -2) is what an interrupted copy or drop leaves.
+		`select datname || '|' || pg_database_size(oid) || '|' || (datconnlimit = -2) from pg_database where datname like ${literal(`${likeEscaped(prefix)}%`)} order by datname`,
 	);
 	return rows
 		.split("\n")
 		.filter(Boolean)
 		.map((row) => {
-			const at = row.lastIndexOf("|");
+			const [invalid, bytes, ...name] = row.split("|").reverse();
 			return {
-				label: row.slice(prefix.length, at),
+				label: name.reverse().join("|").slice(prefix.length),
 				database: place.database,
-				bytes: Number(row.slice(at + 1)),
+				bytes: Number(bytes),
+				...(invalid === "true" ? { invalid: true as const } : {}),
 			};
 		});
 }

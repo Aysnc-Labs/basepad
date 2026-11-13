@@ -1066,7 +1066,12 @@ async function dbSnapshots({ cwd, print }: Invocation): Promise<void> {
 	const rows: string[][] = [];
 	for (const { key, service, place, database } of targets) {
 		for (const snapshot of await database.snapshots(service, place)) {
-			rows.push([snapshot.label, key, snapshot.database, size(snapshot.bytes)]);
+			rows.push([
+				snapshot.label,
+				key,
+				snapshot.database,
+				snapshot.invalid ? "invalid" : size(snapshot.bytes),
+			]);
 		}
 	}
 	if (rows.length === 0) {
