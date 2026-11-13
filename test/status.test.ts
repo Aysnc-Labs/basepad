@@ -17,16 +17,17 @@ const twoApps = configFile(`{
 	env: ({ db, cms }) => ({ ".env.local": { DATABASE_URL: db.url, CMS_URL: cms.url } }),
 }`);
 
-test("status lists each app at its domain, stopped", async () => {
+test("before any up, status lists each app at its domain, stopped", async () => {
 	const dir = await box.project("shop", { "basepad.config.ts": twoApps });
 	const out = await box.basepad(dir, "status");
+	const port = `:${box.proxyPort}`;
 	expect(out.stderr).toBe("");
 	expect(out.code).toBe(0);
 	expect(out.stdout).toBe(
 		[
-			"APP  URL                         STATE",
-			"web  https://web.shop.localhost  stopped",
-			"cms  https://cms.shop.localhost  stopped",
+			`APP  URL${" ".repeat(25 + port.length)}STATE`,
+			`web  https://web.shop.localhost${port}  stopped`,
+			`cms  https://cms.shop.localhost${port}  stopped`,
 			"",
 		].join("\n"),
 	);

@@ -1,8 +1,11 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { PITCHFORK_VERSION } from "../src/versions.ts";
 
 const run = promisify(execFile);
 const repo = resolve(import.meta.dirname, "..");
@@ -16,12 +19,18 @@ export interface Result {
 
 /**
  * A machine of its own: basepad's home, mise's state and config, and pitchfork's state live in a
- * temp dir, so a test never sees the user's real setup and never collides with another lane.
+ * temp dir, and basepad's proxy has a free port of its own, so a test never sees the user's real
+ * setup and never collides with another lane. The `PITCHFORK_*` dirs stand for a developer's own
+ * pitchfork, which basepad must leave alone.
  * Tool installs stay in mise's data dir (`MISE_DATA_DIR`, else the user's), so tools download once.
  */
 export interface Sandbox {
 	root: string;
 	env: NodeJS.ProcessEnv;
+	/** The port basepad's HTTPS proxy listens on. */
+	proxyPort: number;
+	/** The certificate authority basepad's proxy signs with, once `up` has run. */
+	ca(): Promise<string>;
 	/**
 	 * Makes a scratch project: a dir holding `files` (paths may have folders), with basepad
 	 * installed in its `node_modules` as `npm install` would, so its config's import resolves.
@@ -53,6 +62,8 @@ export async function sandbox(): Promise<Sandbox> {
 		PITCHFORK_LOGS_DIR: join(root, "pf-logs"),
 		NO_COLOR: "1",
 	};
+	const proxyPort = await freePort();
+	env.BASEPAD_PROXY_PORT = String(proxyPort);
 
 	const exec = async (
 		file: string,
@@ -77,6 +88,8 @@ export async function sandbox(): Promise<Sandbox> {
 	return {
 		root,
 		env,
+		proxyPort,
+		ca: () => readFile(join(root, "home/pitchfork/state/proxy/ca.pem"), "utf8"),
 		async project(name, files = {}) {
 			const dir = join(root, name);
 			await mkdir(dir, { recursive: true });
@@ -94,9 +107,33 @@ export async function sandbox(): Promise<Sandbox> {
 			return exec(file as string, [...via, cli, ...args], cwd, options.env);
 		},
 		async dispose() {
+			// Stop basepad's supervisor and its apps, so nothing outlives the test.
+			const home = join(root, "home/pitchfork");
+			if (existsSync(join(home, "state/sock"))) {
+				const pitchfork = ["exec", `pitchfork@${PITCHFORK_VERSION}`, "--", "pitchfork"];
+				const own = {
+					PITCHFORK_STATE_DIR: join(home, "state"),
+					PITCHFORK_CONFIG_DIR: join(home, "config"),
+					PITCHFORK_LOGS_DIR: join(home, "logs"),
+				};
+				await exec("mise", [...pitchfork, "stop", "--all"], root, own);
+				await exec("mise", [...pitchfork, "supervisor", "stop"], root, own);
+			}
 			await rm(root, { recursive: true, force: true });
 		},
 	};
+}
+
+/** A port nothing listens on right now. */
+function freePort(): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const server = createServer();
+		server.on("error", reject);
+		server.listen(0, "127.0.0.1", () => {
+			const { port } = server.address() as { port: number };
+			server.close(() => resolve(port));
+		});
+	});
 }
 
 /** Drops the parent shell's mise activation, so it can't leak config from the developer's cwd. */

@@ -2,6 +2,31 @@
  * Env files: basepad sets exactly the keys the config names, and nothing else in the file changes.
  */
 
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import type { EnvFiles } from "./index.ts";
+
+/**
+ * Sets each file's keys, paths resolved from `root`, creating a file that is missing. A file whose
+ * keys already read as wanted is not written. Returns the paths it changed.
+ */
+export async function writeEnvFiles(root: string, files: EnvFiles): Promise<string[]> {
+	const changed: string[] = [];
+	for (const [path, keys] of Object.entries(files)) {
+		const file = resolve(root, path);
+		const text = await readFile(file, "utf8").catch((error: NodeJS.ErrnoException) => {
+			if (error.code === "ENOENT") return undefined;
+			throw error;
+		});
+		const next = setKeys(text ?? "", keys);
+		if (next === text) continue;
+		await mkdir(dirname(file), { recursive: true });
+		await writeFile(file, next);
+		changed.push(path);
+	}
+	return changed;
+}
+
 /** One `KEY=value` assignment's start: optional `export`, the key, then `=`. */
 const ASSIGNMENT = /^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_.-]*)(\s*=\s*)/;
 
