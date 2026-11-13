@@ -126,23 +126,36 @@ const AppSchema = z.strictObject({
 	cwd: z.string({ error: "`cwd` must be a folder relative to the config" }).optional(),
 });
 
-const ConfigSchema = z.strictObject({
-	name: label,
-	services: z
-		.record(
-			label,
-			z.discriminatedUnion("kind", [Postgres], {
-				error: "a service must be made by a service function, such as `postgres()`",
-			}),
-		)
-		.optional(),
-	apps: z.record(label, AppSchema).optional(),
-	env: z
-		.custom<Config["env"]>((value) => typeof value === "function", {
-			error: "`env` must be a function from outputs to env files",
-		})
-		.optional(),
-});
+const ConfigSchema = z
+	.strictObject({
+		name: label,
+		services: z
+			.record(
+				label,
+				z.discriminatedUnion("kind", [Postgres], {
+					error: "a service must be made by a service function, such as `postgres()`",
+				}),
+			)
+			.optional(),
+		apps: z.record(label, AppSchema).optional(),
+		env: z
+			.custom<Config["env"]>((value) => typeof value === "function", {
+				error: "`env` must be a function from outputs to env files",
+			})
+			.optional(),
+	})
+	.superRefine((config, ctx) => {
+		// Services and apps share one namespace: `env`'s outputs and the supervisor's daemons.
+		for (const key of Object.keys(config.services ?? {})) {
+			if (config.apps && key in config.apps) {
+				ctx.addIssue({
+					code: "custom",
+					path: ["apps", key],
+					message: "a service has the same key; a key names one service or one app",
+				});
+			}
+		}
+	});
 
 function validate(value: unknown, file: string): Config {
 	const result = ConfigSchema.safeParse(value);

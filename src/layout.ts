@@ -58,7 +58,16 @@ export interface Layout {
 			port: number;
 		}
 	>;
-	services: Record<string, { database: string }>;
+	services: Record<
+		string,
+		{
+			database: string;
+			/** The port the service is first tried on; the next free one is used when it is taken. */
+			port: number;
+			/** The service's data folder in the home. */
+			dir: string;
+		}
+	>;
 	/** The environment's supervisor definitions, generated into the home. */
 	definitions: string;
 }
@@ -73,6 +82,9 @@ const APP_PORT_BASE = 20000;
 /** Each project gets a block of this many starting ports, chosen by its name. */
 const APP_PORT_BLOCK = 20;
 const APP_PORT_BLOCKS = 600;
+/** Service ports are in [15000, 20000): below the apps', clear of common dev ports. */
+const SERVICE_PORT_BASE = 15000;
+const SERVICE_PORTS = 5000;
 
 export function layout(
 	project: Pick<Project, "file" | "name" | "apps" | "services">,
@@ -104,7 +116,11 @@ export function layout(
 				`\`name\` and service \`${key}\` make the database name "${database}", which is ${bytes} bytes; Postgres allows ${IDENTIFIER_MAX}. Shorten \`name\` or the service key.`,
 			);
 		}
-		services[key] = { database };
+		services[key] = {
+			database,
+			port: SERVICE_PORT_BASE + (hash(`${name}.${key}`) % SERVICE_PORTS),
+			dir: join(machine.home, "services", name, key),
+		};
 	}
 	return { apps, services, definitions: join(machine.home, "environments", `${name}.toml`) };
 }

@@ -2,15 +2,16 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { z } from "zod";
+import { kindOf, type Place } from "./catalogue.ts";
 import { CONFIG_FILE, LOCAL_FILE, loadProject, type Project } from "./config.ts";
 import { writeEnvFiles } from "./env-files.ts";
 import { syncHosts } from "./hosts.ts";
-import type { EnvFiles } from "./index.ts";
+import type { EnvFiles, Service, ServiceOutputs } from "./index.ts";
 import { BasepadError, shellQuote } from "./internal/exec.ts";
 import { table } from "./internal/table.ts";
 import { isRootOnLinux, type Layout, layout, type Machine, machine } from "./layout.ts";
 import { setup, trustAsRoot } from "./setup.ts";
-import { type DaemonState, openSupervisor, type Supervisor } from "./supervisor.ts";
+import { type Daemon, type DaemonState, openSupervisor, type Supervisor } from "./supervisor.ts";
 
 export interface Flag {
 	short?: string;
@@ -47,19 +48,23 @@ export const COMMANDS: Record<string, Command> = {
 		run: setup,
 	},
 	up: {
-		summary: "Start this project's apps, set its env files and show their state",
+		summary: "Start this project's services and apps, set its env files and show their state",
 		flags: {
 			detach: { short: "d", description: "Accepted for Docker habits; `up` always returns" },
+			claim: {
+				description:
+					"Make this folder the owner of the project's databases, which another checkout under the same name holds",
+			},
 		},
 		run: up,
 	},
 	down: {
-		summary: "Stop this project's apps; nothing is deleted",
+		summary: "Stop this project's apps and services; nothing is deleted",
 		flags: {},
 		run: down,
 	},
 	status: {
-		summary: "Show each app with its address and state",
+		summary: "Show each app and service with its address and state",
 		flags: {},
 		run: status,
 	},
@@ -154,31 +159,37 @@ const APP_WAIT_MS = 5000;
 /** How many of a failed app's last lines `up` shows. */
 const FAILED_LINES = 20;
 
-async function up({ cwd, print }: Invocation): Promise<void> {
+async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const project = await loadProject(cwd);
+	const here = machine(process.env);
+	// Ports, folders and databases; the URL form waits for the supervisor, which answers on 443.
+	const ports = layout(project, here);
 	const services = Object.keys(project.services);
-	if (services.length > 0) {
+	const apps = Object.keys(project.apps);
+	const supervisor = await openSupervisor(here);
+	const owner = await supervisor.owner(project.name);
+	if (owner !== undefined && owner !== project.root && flags.claim !== true) {
 		throw new BasepadError(
-			`${project.file}: \`basepad up\` does not run services yet; remove ${services.map((s) => `\`${s}\``).join(", ")} from \`services\`.`,
+			`"${project.name}" is the name of the checkout at ${owner}. Two checkouts under one name would share its databases and domains, so basepad stops here.\nIf that checkout moved here, or this one should take over, run \`basepad up --claim\`.`,
 		);
 	}
-	const here = machine(process.env);
-	const supervisor = await openSupervisor(here);
-	const ports = layout(project, here);
+	const daemons: Record<string, Daemon> = {};
+	for (const key of services) {
+		const service = project.services[key] as Service;
+		daemons[key] = await kindOf(service).prepare(service, placeOf(project, ports, here, key));
+	}
+	for (const [key, app] of Object.entries(project.apps)) {
+		daemons[key] = {
+			run: withLocalBins(project, app.cwd, app.run),
+			dir: app.cwd,
+			port: ports.apps[key]?.port,
+		};
+	}
 	await supervisor.register({
 		namespace: project.name,
 		dir: project.root,
 		definitions: ports.definitions,
-		daemons: Object.fromEntries(
-			Object.entries(project.apps).map(([key, app]) => [
-				key,
-				{
-					run: withLocalBins(project, app.cwd, app.run),
-					dir: app.cwd,
-					port: ports.apps[key]?.port,
-				},
-			]),
-		),
+		daemons,
 	});
 	if (isRootOnLinux()) for (const line of await trustAsRoot(supervisor)) print(line);
 	const lay = layout(project, await asked(here, supervisor));
@@ -188,11 +199,25 @@ async function up({ cwd, print }: Invocation): Promise<void> {
 	)) {
 		print(line);
 	}
-	await writeEnvFiles(project.root, envFiles(project, lay));
 	const since = new Date(Date.now() - 1000);
-	const states = await supervisor.start(project.name, Object.keys(project.apps), APP_WAIT_MS);
-	print(appTable(lay, states));
-	const failed = Object.keys(project.apps).filter((key) => states[key] === "failed");
+	const outputs: Record<string, ServiceOutputs | { url: string }> = {};
+	if (services.length > 0) {
+		const states = await supervisor.start(project.name, services, APP_WAIT_MS);
+		const failed = services.filter((key) => states[key] === "failed");
+		if (failed.length > 0)
+			throw new BasepadError(await failures(supervisor, project, failed, since));
+		for (const key of services) {
+			const service = project.services[key] as Service;
+			outputs[key] = await kindOf(service).provision(service, placeOf(project, lay, here, key), {
+				claim: flags.claim === true,
+			});
+		}
+	}
+	for (const [key, app] of Object.entries(lay.apps)) outputs[key] = { url: app.url };
+	await writeEnvFiles(project.root, envFiles(project, outputs));
+	const states = await supervisor.start(project.name, apps, APP_WAIT_MS);
+	print(await stateTables(project, lay, here, states));
+	const failed = apps.filter((key) => states[key] === "failed");
 	if (failed.length > 0) throw new BasepadError(await failures(supervisor, project, failed, since));
 }
 
@@ -201,11 +226,14 @@ async function asked(here: Machine, supervisor: Supervisor): Promise<Machine> {
 	return { ...here, portFree: (await supervisor.standardPort()) === "proxy" };
 }
 
-/** Runs the config's `env` with each app's URL, and checks what it returns. */
-function envFiles(project: Project, lay: Layout): EnvFiles {
-	const outputs = Object.fromEntries(
-		Object.entries(lay.apps).map(([key, app]) => [key, { url: app.url }]),
-	);
+/** Where one of the project's services lives. */
+function placeOf(project: Project, lay: Layout, here: Machine, key: string): Place {
+	const service = lay.services[key] as Layout["services"][string];
+	return { name: project.name, key, owner: project.root, machine: here, ...service };
+}
+
+/** Runs the config's `env` with each service's and app's outputs, and checks what it returns. */
+function envFiles(project: Project, outputs: Record<string, unknown>): EnvFiles {
 	let files: unknown;
 	try {
 		files = project.env(outputs as Parameters<Project["env"]>[0]);
@@ -234,13 +262,32 @@ function withLocalBins(project: Project, dir: string, run: string): string {
 	return `export PATH=${bins.map(shellQuote).join(":")}:"$PATH" && ${run}`;
 }
 
-function appTable(lay: Layout, states: Record<string, DaemonState>): string {
-	const rows = Object.entries(lay.apps).map(([key, app]) => [
-		key,
-		app.url,
-		states[key] ?? "stopped",
-	]);
-	return table([["APP", "URL", "STATE"], ...rows]);
+/** The apps table, then the services table, each when the project has any. */
+async function stateTables(
+	project: Project,
+	lay: Layout,
+	here: Machine,
+	states: Record<string, DaemonState>,
+): Promise<string> {
+	const tables: string[] = [];
+	if (Object.keys(lay.apps).length > 0) {
+		const rows = Object.entries(lay.apps).map(([key, app]) => [
+			key,
+			app.url,
+			states[key] ?? "stopped",
+		]);
+		tables.push(table([["APP", "URL", "STATE"], ...rows]));
+	}
+	const services = Object.entries(project.services);
+	if (services.length > 0) {
+		const rows: string[][] = [];
+		for (const [key, service] of services) {
+			const address = await kindOf(service).address(service, placeOf(project, lay, here, key));
+			rows.push([key, address, states[key] ?? "stopped"]);
+		}
+		tables.push(table([["SERVICE", "ADDRESS", "STATE"], ...rows]));
+	}
+	return tables.join("\n\n");
 }
 
 async function failures(
@@ -267,14 +314,14 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 	const project = await loadProject(cwd);
 	const supervisor = await openSupervisor(machine(process.env));
 	await supervisor.stop(project.name);
-	print(`Stopped ${project.name}'s apps.`);
+	print(`Stopped ${project.name}'s apps and services.`);
 }
 
 async function status({ cwd, print }: Invocation): Promise<void> {
 	const project = await loadProject(cwd);
 	const here = machine(process.env);
-	if (Object.keys(layout(project, here).apps).length === 0) {
-		print(`${project.file} names no apps.`);
+	if (Object.keys(project.apps).length === 0 && Object.keys(project.services).length === 0) {
+		print(`${project.file} names no apps or services.`);
 		return;
 	}
 	const supervisor = await openSupervisor(here);
@@ -284,5 +331,5 @@ async function status({ cwd, print }: Invocation): Promise<void> {
 		project,
 		Object.keys(states).length > 0 ? await asked(here, supervisor) : here,
 	);
-	print(appTable(lay, states));
+	print(await stateTables(project, lay, here, states));
 }

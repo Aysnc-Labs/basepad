@@ -21,9 +21,9 @@ test("--help lists every command and the top flags", async () => {
 			"Commands:",
 			"  init    Write a starter basepad.config.ts in this folder",
 			"  setup   Once per machine: trust basepad's certificate and drop the port from URLs",
-			"  up      Start this project's apps, set its env files and show their state",
-			"  down    Stop this project's apps; nothing is deleted",
-			"  status  Show each app with its address and state",
+			"  up      Start this project's services and apps, set its env files and show their state",
+			"  down    Stop this project's apps and services; nothing is deleted",
+			"  status  Show each app and service with its address and state",
 			"",
 			"Flags:",
 			"  -h, --help     Show this help",
@@ -42,13 +42,23 @@ test("<command> --help shows that command's usage", async () => {
 		[
 			"Usage: basepad status [flags]",
 			"",
-			"Show each app with its address and state.",
+			"Show each app and service with its address and state.",
 			"",
 			"Flags:",
 			"  -h, --help  Show this help",
 			"",
 		].join("\n"),
 	);
+});
+
+test("up's and setup's help show their own flags", async () => {
+	const up = await box.basepad(dir, "up", "--help");
+	expect(up.stdout).toContain(
+		"      --claim   Make this folder the owner of the project's databases, which another checkout under the same name holds\n",
+	);
+	const setup = await box.basepad(dir, "setup", "--help");
+	expect(setup.stdout).toContain("      --dry-run  Print the plan and change nothing\n");
+	expect(setup.stdout).toContain("  -y, --yes      Apply the plan without asking\n");
 });
 
 test("a mistyped command names the nearest and exits non-zero", async () => {

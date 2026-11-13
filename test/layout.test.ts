@@ -23,10 +23,31 @@ test("each app is served at https://<app>.<name>.localhost", () => {
 
 test("a service's database is <name>_<service>, hyphens turned to underscores", () => {
 	const { services } = layout(project("my-shop", [], ["db", "read-model"]), here);
-	expect(services).toEqual({
-		db: { database: "my_shop_db" },
-		"read-model": { database: "my_shop_read_model" },
-	});
+	expect(services.db?.database).toBe("my_shop_db");
+	expect(services["read-model"]?.database).toBe("my_shop_read_model");
+});
+
+test("a service's port comes from the name and key alone, in [15000, 20000)", () => {
+	const port = (name: string, key: string) =>
+		layout(project(name, ["web"], [key]), here).services[key]?.port as number;
+	expect(port("shop", "db")).toBe(
+		layout(project("shop", [], ["db"]), { home: "/x", proxyPort: 1, portFree: true }).services.db
+			?.port,
+	);
+	for (const [name, key] of [
+		["shop", "db"],
+		["blog", "db"],
+		["shop", "cache"],
+	] as const) {
+		expect(port(name, key)).toBeGreaterThanOrEqual(15000);
+		expect(port(name, key)).toBeLessThan(20000);
+	}
+	expect(port("shop", "db")).not.toBe(port("blog", "db"));
+	expect(port("shop", "db")).not.toBe(port("shop", "cache"));
+});
+
+test("a service's data lives in the home, under the name and the key", () => {
+	expect(layout(project("shop", [], ["db"]), here).services.db?.dir).toBe("/h/services/shop/db");
 });
 
 test("a database name of exactly 63 bytes is kept whole", () => {
