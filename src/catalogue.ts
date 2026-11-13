@@ -64,11 +64,12 @@ export interface Kind<S extends ServiceBase, O, N> {
 	 * it gives to `env`. In a worktree it provisions from main's, as the service's `worktree` option
 	 * says (a copy of main's data, empty, or main's own), so main's must be provisioned first. Throws a `BasepadError` when another checkout owns it, unless `claim`, and
 	 * `Stopped` (`internal/ports.ts`) as soon as `stopped` says its daemon is no longer running.
+	 * `print` tells the developer what it did that they would want to know, such as how it copied.
 	 */
 	provision(
 		service: S,
 		place: Place<N>,
-		options: { claim: boolean; stopped: () => Promise<boolean> },
+		options: { claim: boolean; stopped: () => Promise<boolean>; print(line: string): void },
 	): Promise<O>;
 	/** Where a client reaches the service: where it runs, else where it would first be tried. */
 	address(service: S, place: Place<N>): Promise<string>;

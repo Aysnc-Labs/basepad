@@ -224,7 +224,8 @@ export async function openSupervisor(
 		async register({ namespace, label, dir, definitions, daemons }) {
 			await serve();
 			const text = toml(daemons);
-			if ((await readFile(definitions, "utf8").catch(() => "")) !== text) {
+			// Written even when empty (a worktree with no apps): pitchfork refuses a missing file.
+			if ((await readFile(definitions, "utf8").catch(() => undefined)) !== text) {
 				await mkdir(dirname(definitions), { recursive: true });
 				await writeFile(definitions, text);
 			}
