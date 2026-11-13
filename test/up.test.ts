@@ -176,7 +176,12 @@ test("an app that exits on start is reported with its output, and up fails", asy
 	expect(out.stdout).toMatch(/ok +https:\/\/ok\.broken\.localhost:\d+ +running/);
 	expect(out.stderr).toContain("basepad: `bad` exited on start. Its last output:");
 	expect(out.stderr).toContain("boom: DATABASE_URL is not set");
-	expect(out.stderr).toMatch(/pitchfork logs broken\/bad/);
+	// The command it suggests works as printed.
+	const hint = out.stderr.match(/For more, run: (.+)/)?.[1] as string;
+	expect(hint).toMatch(/pitchfork'? logs broken\/bad$/);
+	const logs = await box.run("sh", ["-c", hint]);
+	expect(logs.code).toBe(0);
+	expect(logs.stdout).toContain("boom: DATABASE_URL is not set");
 	await box.basepad(dir, "down");
 });
 

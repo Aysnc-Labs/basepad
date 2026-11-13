@@ -1,11 +1,11 @@
 import { existsSync } from "node:fs";
 import { readdir, realpath, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { z } from "zod";
 import { kindOf, type NamesOf, type Place, type Service, type WorktreeData } from "./catalogue.ts";
 import { readHookInput } from "./claude-hooks.ts";
-import { CONFIG_FILE, findConfig, LABEL, loadProject, type Project } from "./config.ts";
+import { CONFIG_FILE, LABEL, loadProject, type Project } from "./config.ts";
 import { copyEnvFiles, writeEnvFiles } from "./env-files.ts";
 import { dropHosts, syncHosts } from "./hosts.ts";
 import type { EnvFiles } from "./index.ts";
@@ -14,11 +14,13 @@ import { BasepadError, shellQuote } from "./internal/exec.ts";
 import { Stopped } from "./internal/ports.ts";
 import { table } from "./internal/table.ts";
 import {
+	definitionsFile,
 	isRootOnLinux,
 	type Layout,
 	layout,
 	type Machine,
 	machine,
+	namespaceOf,
 	type ServicePlace,
 	servicesHome,
 	suffixOf,
@@ -121,7 +123,7 @@ export const COMMANDS: Record<string, Command> = {
 	"worktree rm": {
 		summary:
 			"Remove a worktree: its apps, databases, registrations and git worktree; its branch stays",
-		args: ["name?"],
+		args: ["worktree?"],
 		flags: {
 			force: { description: "Remove it even with uncommitted changes, which are lost" },
 			claude: {
@@ -225,7 +227,7 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 			dir: app.cwd,
 			port: ports.apps[key]?.port,
 			// So the proxy's start on a first request starts the servers first, wherever they run.
-			depends: services.map((service) => (ports.services[service] as ServicePlace).daemon),
+			depends: Object.values(ports.services).map((place) => place.daemon),
 		};
 	}
 	await supervisor.register({
@@ -532,13 +534,13 @@ async function status({ cwd, print }: Invocation): Promise<void> {
 }
 
 /**
- * Main's project, from main's folder or a worktree's. Reads main's config alone, so a worktree's
- * broken config does not stand in the way.
+ * Main's project, from main's folder or a worktree's, found through git. Reads main's config alone,
+ * so a worktree's broken or missing config does not stand in the way.
  */
 async function mainAt(cwd: string): Promise<Project> {
-	const root = dirname(findConfig(cwd));
-	const checkout = await checkoutOf(root);
-	return loadProject(checkout.suffix === undefined ? root : checkout.main);
+	const here = await realpath(cwd);
+	const checkout = await checkoutOf(here);
+	return loadProject(checkout.suffix === undefined ? here : checkout.main);
 }
 
 /**
@@ -609,7 +611,7 @@ async function worktreeLs({ cwd, print }: Invocation): Promise<void> {
 async function worktreeRm({ cwd, flags, args, print }: Invocation): Promise<void> {
 	if (flags.claude === true) return worktreeRmHook(cwd, args);
 	const [suffix] = args;
-	if (suffix === undefined) throw new BasepadError("Usage: basepad worktree rm <name> [flags]");
+	if (suffix === undefined) throw new BasepadError("Usage: basepad worktree rm <worktree> [flags]");
 	const main = await mainAt(cwd);
 	const tree = (await listWorktrees(main)).find((listed) => listed.suffix === suffix);
 	if (tree === undefined) {
@@ -679,24 +681,37 @@ async function removeEnvironment(
 	root: string,
 	{ here, supervisor }: Context,
 ): Promise<void> {
-	let lay: Layout;
-	try {
-		lay = layout(main, here, suffix);
-	} catch (error) {
-		// A suffix past the limits never had an environment: `up` refused it before making anything.
-		if (error instanceof BasepadError) return;
-		throw error;
-	}
-	await supervisor.unregister(lay);
-	await dropHosts(lay.namespace);
+	// From names alone: main's config may since have made this suffix's names too long.
+	const namespace = namespaceOf(main.name, suffix);
+	await supervisor.unregister({ namespace, definitions: definitionsFile(here, namespace) });
+	await dropHosts(namespace);
+	const lay = layout(main, here);
+	const tree = worktreeLayout(main, here, suffix);
 	for (const [key, service] of Object.entries(main.services)) {
-		const place = { ...placeOf(main, lay, here, key), owner: root };
-		const data = await kindOf(service).worktreeData(service, place);
+		const place = placeOf(main, lay, here, key);
+		// Its data by name or stamp; with no names that fit, by its stamp among every worktree's.
+		const data =
+			tree === undefined
+				? (await kindOf(service).worktreeData(service, place)).filter((d) => d.owner === root)
+				: await kindOf(service).worktreeData(service, {
+						...placeOf(main, tree, here, key),
+						owner: root,
+					});
 		await kindOf(service).dropWorktreeData(
 			service,
 			place,
 			data.map((d) => d.name),
 		);
+	}
+}
+
+/** A worktree's layout, or none when its names are past their limits under main's config. */
+function worktreeLayout(main: Project, here: Machine, suffix: string): Layout | undefined {
+	try {
+		return layout(main, here, suffix);
+	} catch (error) {
+		if (error instanceof BasepadError) return undefined;
+		throw error;
 	}
 }
 
@@ -820,8 +835,7 @@ async function removeLeftovers(main: Project, left: Leftovers, context: Context)
 		);
 	}
 	for (const { namespace } of left.registrations) {
-		const definitions = layout(main, here, suffixOf(main.name, namespace)).definitions;
-		await supervisor.unregister({ namespace, definitions });
+		await supervisor.unregister({ namespace, definitions: definitionsFile(here, namespace) });
 		await dropHosts(namespace);
 	}
 	for (const tree of left.checkouts) await removeCheckout(main, tree.path);
