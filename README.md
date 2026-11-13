@@ -178,6 +178,22 @@ basepad sets exactly the keys `env` returns, in the files it names:
 - Postgres's standard extensions and pgvector are there for `CREATE EXTENSION`. basepad enables none; see [Extensions](#extensions).
 - Data from another Postgres major version is refused, never converted. To change `version`, dump the database first.
 
+### Snapshots: `basepad db`
+
+```sh
+npx basepad db save before-migration   # snapshot this environment's database
+npx basepad db load before-migration   # put it back; the snapshot stays
+npx basepad db snapshots               # label, service, database and size of each
+npx basepad db rm before-migration     # delete one
+```
+
+- They act on the database of the environment you run them in: inside a worktree, the worktree's, never main's. A `shared` service's database is main's, so a worktree refuses it; run the command in main.
+- With no label, `save` and `load` use `default`. Saving a label again replaces its snapshot. A label is lowercase letters, digits and inner hyphens; one that makes the database name past Postgres's 63 bytes is refused, with how much room is left.
+- With one database the service is implied; with several, name it: `--service db` (`-s db`).
+- A snapshot is a database on the same server, `<database>@<label>`, copied as a worktree's is: a file clone where the server offers one, else a template copy. They work while your app runs: its sessions on the database are ended, and it reconnects by itself (see the `Pool` note under Worktrees).
+- `load` drops the database and copies the snapshot in its place. If that copy fails the snapshot is kept: run `load` again.
+- `worktree rm` and `prune` delete a worktree's snapshots with it.
+
 ### Worktrees
 
 A worktree is a second environment of the project, for working on another branch beside main. In main, run:
@@ -263,6 +279,8 @@ Run them anywhere in the project, as `npx basepad <command>`. `basepad --help` l
 | `basepad worktree ls` | Nothing. Lists main's worktrees with their branch and folder. | Anything. |
 | `basepad worktree rm <worktree>` | Stops the worktree's apps, drops its databases, removes its registration and its git worktree. | Its branch, main's data. Uncommitted work: it refuses unless `--force`. |
 | `basepad prune` | After asking: removes what worktrees whose folder is gone left, and the data of services no longer in the config. | Anything you did not say yes to. Main's databases of services still in the config. |
+| `basepad db save [label]`, `db load [label]` | `save` makes a snapshot of this environment's database, replacing one of the same label; `load` replaces the database with it. Ends the database's sessions. | Other environments' databases and snapshots. `load` keeps the snapshot. |
+| `basepad db snapshots`, `db rm <label>` | `snapshots` changes nothing and lists this environment's; `rm` deletes one. | Anything else. |
 | `basepad setup`  | The machine, once: trusts basepad's certificate authority and makes URLs port-free. See [below](#port-free-urls-basepad-setup).                                                        | Any project. A pitchfork setup of your own: it refuses rather than overwrite it.  |
 
 More on `up`:

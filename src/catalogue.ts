@@ -89,6 +89,37 @@ export interface Kind<S extends ServiceBase, O, N> {
 	dropWorktreeData(service: S, place: Place<N>, names: string[]): Promise<void>;
 	/** Where a client reaches the service: where it runs, else where it would first be tried. */
 	address(service: S, place: Place<N>): Promise<string>;
+	/** The `db` commands, for a kind that is a database; absent for one that is not. */
+	database?: Database<S, N>;
+}
+
+/** One snapshot of an environment's database, found on the server by its name. */
+export interface Snapshot {
+	label: string;
+	/** The environment's database it was saved from. */
+	database: string;
+	bytes: number;
+}
+
+/**
+ * What a database kind does for the `db` commands. Each acts on the environment's own database in
+ * `place`, on the running server, and never on another environment's: a worktree's commands leave
+ * main's untouched. Each throws a `BasepadError` when the environment's database is not its own
+ * (a worktree's `shared` service). Clients connected to the database are disconnected and connect
+ * again by themselves.
+ */
+export interface Database<S, N> {
+	/**
+	 * Saves the database as snapshot `label`, replacing one of that label. Throws a `BasepadError`
+	 * when the label makes a name past the kind's limit.
+	 */
+	save(service: S, place: Place<N>, label: string): Promise<void>;
+	/** Replaces the database with snapshot `label`, which stays. Throws when there is none. */
+	load(service: S, place: Place<N>, label: string): Promise<void>;
+	/** The environment's snapshots, by label. */
+	snapshots(service: S, place: Place<N>): Promise<Snapshot[]>;
+	/** Deletes snapshot `label`. Throws when there is none. */
+	remove(service: S, place: Place<N>, label: string): Promise<void>;
 }
 
 /** Every kind, by the name its factory has in a config. */
@@ -113,6 +144,11 @@ export type NamesOf<S extends Service> = ReturnType<Catalogue[S["kind"]]["names"
 /** The kind that provides `service`. */
 export function kindOf<S extends Service>(service: S): Kind<S, OutputsOf<S>, NamesOf<S>> {
 	return CATALOGUE[service.kind] as unknown as Kind<S, OutputsOf<S>, NamesOf<S>>;
+}
+
+/** The `db` commands of `service`'s kind; none when it is not a database. */
+export function databaseOf<S extends Service>(service: S): Database<S, NamesOf<S>> | undefined {
+	return kindOf(service).database;
 }
 
 /** Every kind's schema, for Config. */

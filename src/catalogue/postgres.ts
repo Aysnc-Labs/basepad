@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import type { Kind } from "../catalogue.ts";
+import type { Kind, Place, Snapshot } from "../catalogue.ts";
 import { BasepadError, must, shellQuote } from "../internal/exec.ts";
 import { freePort, waitFor } from "../internal/ports.ts";
 import { serviceUser } from "../internal/service-user.ts";
@@ -253,7 +253,129 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		const port = (await runningPort(place.data)) ?? place.port;
 		return `postgresql://${USER}@${HOST}:${port}/${place.database}`;
 	},
+
+	database: {
+		async save(service, place, label) {
+			const name = snapshotName(place, label);
+			const { pg, port, sql } = await own(service, place);
+			// Replaced, not kept beside: a label names one snapshot.
+			await sql(`drop database if exists ${identifier(name)} with (force)`);
+			await copyDatabase(pg, port, place.database, name);
+			await stamp(sql, name, place.owner);
+		},
+
+		async load(service, place, label) {
+			const name = snapshotName(place, label);
+			const { pg, port, sql } = await own(service, place);
+			const found = await snapshotsOf(sql, place);
+			if (!found.some((snapshot) => snapshot.label === label)) {
+				throw new BasepadError(noSnapshot(place, label, found));
+			}
+			// Its clients are ended with it; they connect again to the copy once it is made.
+			await sql(`drop database ${identifier(place.database)} with (force)`);
+			try {
+				await copyDatabase(pg, port, name, place.database);
+			} catch (error) {
+				if (!(error instanceof BasepadError)) throw error;
+				throw new BasepadError(
+					`${error.message}\n\`${place.database}\` is gone; snapshot \`${label}\` is kept, so run \`basepad db load\` again, or \`basepad up\` for an empty database.`,
+				);
+			}
+			await stamp(sql, place.database, place.owner);
+		},
+
+		async snapshots(service, place) {
+			const { sql } = await own(service, place);
+			return snapshotsOf(sql, place);
+		},
+
+		async remove(service, place, label) {
+			const name = snapshotName(place, label);
+			const { sql } = await own(service, place);
+			const found = await snapshotsOf(sql, place);
+			if (!found.some((snapshot) => snapshot.label === label)) {
+				throw new BasepadError(noSnapshot(place, label, found));
+			}
+			await sql(`drop database ${identifier(name)} with (force)`);
+		},
+	},
 };
+
+/**
+ * A snapshot's database: `<database>@<label>`. No database basepad names has `@`, so a snapshot is
+ * never taken for one, and main's (`<main>@…`) are never among its worktrees' data
+ * (`<main>_<suffix>…`), while a worktree's are, stamped with its folder like its database.
+ */
+function snapshotName(place: Place<PostgresNames>, label: string): string {
+	const name = `${place.database}@${label}`;
+	const bytes = Buffer.byteLength(name);
+	if (bytes > IDENTIFIER_MAX) {
+		const room = IDENTIFIER_MAX - Buffer.byteLength(`${place.database}@`);
+		throw new BasepadError(
+			`snapshot \`${label}\` of \`${place.key}\` makes the database name "${name}", which is ${bytes} bytes; Postgres allows ${IDENTIFIER_MAX}, which leaves ${room > 0 ? `${room} characters` : "no room"} for a label here.`,
+		);
+	}
+	return name;
+}
+
+/**
+ * The running server's SQL, for a service whose database is the environment's own. A worktree's
+ * `shared` service's is main's, which the worktree's commands never touch.
+ */
+async function own(
+	service: PostgresService,
+	place: Place<PostgresNames>,
+): Promise<{ pg: Tool; port: number; sql: (text: string) => Promise<string> }> {
+	if (place.suffix !== undefined && service.worktree === "shared") {
+		throw new BasepadError(
+			`\`${place.key}\` is shared with main in worktrees (\`worktree: "shared"\`), so its database is main's. Run this in main to act on it.`,
+		);
+	}
+	const port = await runningPort(place.data);
+	if (port === undefined) throw new BasepadError(`Postgres for \`${place.key}\` is not running.`);
+	const pg = await installPostgres(service.version, place.machine.home);
+	return { pg, port, sql: (text) => query(pg, port, text) };
+}
+
+/** The environment's snapshots, found by name. */
+async function snapshotsOf(
+	sql: (text: string) => Promise<string>,
+	place: Place<PostgresNames>,
+): Promise<Snapshot[]> {
+	const prefix = `${place.database}@`;
+	const rows = await sql(
+		`select datname || '|' || pg_database_size(oid) from pg_database where datname like ${literal(`${likeEscaped(prefix)}%`)} order by datname`,
+	);
+	return rows
+		.split("\n")
+		.filter(Boolean)
+		.map((row) => {
+			const at = row.lastIndexOf("|");
+			return {
+				label: row.slice(prefix.length, at),
+				database: place.database,
+				bytes: Number(row.slice(at + 1)),
+			};
+		});
+}
+
+function noSnapshot(
+	place: Place<PostgresNames>,
+	label: string,
+	found: { label: string }[],
+): string {
+	const labels = found.map((snapshot) => `\`${snapshot.label}\``).join(", ");
+	return `\`${place.key}\` has no snapshot \`${label}\`. ${found.length === 0 ? "It has none; make one with `basepad db save`." : `Its snapshots: ${labels}.`}`;
+}
+
+/** Marks database `name` as belonging to the checkout at `owner`, as `provision` does. */
+async function stamp(
+	sql: (text: string) => Promise<string>,
+	name: string,
+	owner: string,
+): Promise<void> {
+	await sql(`comment on database ${identifier(name)} is ${literal(owner)}`);
+}
 
 /**
  * Installs Postgres through mise and places pgvector in it. mise's Postgres is conda-forge's, which
