@@ -1,0 +1,98 @@
+import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { afterAll, beforeAll, expect, test } from "vitest";
+import { type Sandbox, sandbox } from "./sandbox.ts";
+
+let box: Sandbox;
+let dir: string;
+beforeAll(async () => {
+	box = await sandbox();
+	dir = await box.project("cli");
+});
+afterAll(() => box.dispose());
+
+test("--help lists every command and the top flags", async () => {
+	const out = await box.basepad(dir, "--help");
+	expect(out.code).toBe(0);
+	expect(out.stdout).toBe(
+		[
+			"Usage: basepad <command> [flags]",
+			"",
+			"Commands:",
+			"  init    Write a starter basepad.config.ts in this folder",
+			"  status  Show each app with its address and state",
+			"",
+			"Flags:",
+			"  -h, --help     Show this help",
+			"  -v, --version  Show basepad's version",
+			"",
+			"Run `basepad <command> --help` for a command's flags.",
+			"",
+		].join("\n"),
+	);
+});
+
+test("<command> --help shows that command's usage", async () => {
+	const out = await box.basepad(dir, "status", "-h");
+	expect(out.code).toBe(0);
+	expect(out.stdout).toBe(
+		[
+			"Usage: basepad status [flags]",
+			"",
+			"Show each app with its address and state.",
+			"",
+			"Flags:",
+			"  -h, --help  Show this help",
+			"",
+		].join("\n"),
+	);
+});
+
+test("a mistyped command names the nearest and exits non-zero", async () => {
+	const out = await box.basepad(dir, "stauts");
+	expect(out.code).toBe(1);
+	expect(out.stderr).toBe(
+		"basepad: Unknown command `stauts`. The nearest is `status`; run `basepad --help` for every command.\n",
+	);
+});
+
+test("a mistyped flag names the nearest and exits non-zero", async () => {
+	const out = await box.basepad(dir, "status", "--hlep");
+	expect(out.code).toBe(1);
+	expect(out.stderr).toBe(
+		"basepad: `basepad status` has no flag `--hlep`. The nearest is `--help`; run `basepad status --help` for its flags.\n",
+	);
+});
+
+/** A fake `mise` alone on PATH, printing `version`. */
+async function fakeMise(version: string): Promise<string> {
+	const bin = join(box.root, `mise-${version}`);
+	await mkdir(bin, { recursive: true });
+	await writeFile(join(bin, "mise"), `#!/bin/sh\necho "${version} macos-arm64 (2026-01-01)"\n`);
+	await chmod(join(bin, "mise"), 0o755);
+	return bin;
+}
+
+test("with no mise on PATH, any command says what to install", async () => {
+	const empty = join(box.root, "empty-bin");
+	await mkdir(empty, { recursive: true });
+	const out = await box.basepadWith({ env: { PATH: empty } }, dir, "--help");
+	expect(out.code).toBe(1);
+	expect(out.stdout).toBe("");
+	expect(out.stderr).toBe(
+		"basepad: basepad needs mise 2026.10.24 or newer, and `mise` is not on PATH. Install it: https://mise.jdx.dev/getting-started.html\n",
+	);
+});
+
+test("with a mise older than the floor, any command says to update it", async () => {
+	const out = await box.basepadWith({ env: { PATH: await fakeMise("2026.10.23") } }, dir, "status");
+	expect(out.code).toBe(1);
+	expect(out.stderr).toBe(
+		"basepad: basepad needs mise 2026.10.24 or newer; this is mise 2026.10.23. Update mise (`mise self-update`, or the way you installed it).\n",
+	);
+});
+
+test("a mise at the floor is accepted", async () => {
+	const out = await box.basepadWith({ env: { PATH: await fakeMise("2026.10.24") } }, dir, "--help");
+	expect(out.code).toBe(0);
+});
