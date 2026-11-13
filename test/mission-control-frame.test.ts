@@ -206,3 +206,13 @@ test("at 100 columns an app's whole URL still shows: the state word gives way, i
 	expect(out).toMatch(/● worker +https:\/\/worker\.worktree-1\.shop\.localhost:7443/);
 	expect(out).not.toMatch(/localhost:744…/);
 });
+
+test("scrolled back, the stream holds still at its line and says how many newer lines wait", () => {
+	const web = lines("shop/web", ...Array.from({ length: 100 }, (_, i) => `line ${i}`));
+	const until = (web[1][50] as LogLine).seq;
+	const out = draw(snap([main], [web]), { ...initialView("shop"), until });
+	expect(out).toMatch(/line 50 +│\n.*╰/);
+	expect(out).not.toContain("line 51");
+	expect(out).toMatch(/LOGS +all +⏸ paused · 49 newer · end for live/);
+	expect(out).toMatch(/PgUp PgDn +scroll/);
+});

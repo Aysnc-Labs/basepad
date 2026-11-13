@@ -72,6 +72,8 @@ export interface View {
 	quit: boolean;
 	/** What the last key did or could not do, shown until the next key. */
 	notice?: string;
+	/** Scrolled back, the stream is paused: the arrival number (`seq`) of the newest line shown. */
+	until?: number;
 }
 
 /**
@@ -123,11 +125,33 @@ const ACTIONS: Record<string, { kind: "start" | "stop" | "restart"; doing: strin
 	r: { kind: "restart", doing: "Restarting" },
 };
 
+/** The parts whose lines the stream shows: the focused one, else all the environment's. */
+export function streamIds(snapshot: Snapshot, view: View): string[] {
+	const parts = partsOf(selectedOf(snapshot, view));
+	const focused = parts.find((part) => part.id === view.focus);
+	return focused === undefined ? parts.map((part) => part.id) : [focused.id];
+}
+
+/** Every line the stream can show, scrolled all the way back, in arrival order. */
+export function streamLines(snapshot: Snapshot, view: View): LogLine[] {
+	return streamIds(snapshot, view)
+		.flatMap((id) => snapshot.logs.get(id) ?? [])
+		.sort((a, b) => a.seq - b.seq);
+}
+
+/** The index of the last line that arrived no later than `seq`; -1 when none did. */
+function indexOf(lines: readonly LogLine[], seq: number): number {
+	let i = lines.length - 1;
+	while (i >= 0 && (lines[i] as LogLine).seq > seq) i--;
+	return i;
+}
+
 /**
- * What a key press does. `key` is a name (`up`, `down`, `left`, `right`, `escape`, `ctrl-c`) or
- * the character typed.
+ * What a key press does. `key` is a name (`up`, `down`, `left`, `right`, `escape`, `ctrl-c`,
+ * `pageup`, `pagedown`, `home`, `end`) or the character typed. `page` is how many log lines the
+ * stream shows: a page up or down moves by that many.
  */
-export function reduce(previous: View, key: string, snapshot: Snapshot): Step {
+export function reduce(previous: View, key: string, snapshot: Snapshot, page = 10): Step {
 	const { notice: _, ...view } = previous;
 	const envs = snapshot.environments;
 	const env = selectedOf(snapshot, view);
@@ -141,8 +165,18 @@ export function reduce(previous: View, key: string, snapshot: Snapshot): Step {
 		const ids = [undefined, ...partsOf(env).map((part) => part.id)];
 		const now = Math.max(0, ids.indexOf(view.focus));
 		const focus = ids[(now + by + ids.length) % ids.length];
-		const { focus: _, ...rest } = view;
+		const { focus: _, until: __, ...rest } = view;
 		return focus === undefined ? rest : { ...rest, focus };
+	};
+	// Scrolling pauses the stream at a line, by its arrival, so new lines do not move it.
+	const scroll = (by: number | "oldest" | "live"): View => {
+		const lines = streamLines(snapshot, view);
+		const { until: _, ...live } = view;
+		const last = lines.length - 1;
+		if (by === "live" || lines.length <= page) return live;
+		const now = view.until === undefined ? last : Math.max(page - 1, indexOf(lines, view.until));
+		const at = by === "oldest" ? page - 1 : Math.max(page - 1, now + by);
+		return at >= last ? live : { ...view, until: (lines[at] as LogLine).seq };
 	};
 	const focused = partsOf(env).find((part) => part.id === view.focus);
 	const action = ACTIONS[key];
@@ -180,6 +214,16 @@ export function reduce(previous: View, key: string, snapshot: Snapshot): Step {
 		case "left":
 		case "h":
 			return { view: step(-1) };
+		case "pageup":
+			return { view: scroll(-page) };
+		case "pagedown":
+			return { view: scroll(page) };
+		case "home":
+		case "g":
+			return { view: scroll("oldest") };
+		case "end":
+		case "G":
+			return { view: scroll("live") };
 		case "escape":
 			return { view: { selected: view.selected, quit: view.quit } };
 		default:

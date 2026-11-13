@@ -8,6 +8,7 @@ import {
 	partsOf,
 	type Snapshot,
 	selectedOf,
+	streamLines,
 	type View,
 } from "./model.ts";
 
@@ -47,12 +48,7 @@ export function frame({ snapshot, view, cols, rows, now, color }: FrameInput): R
 	if (env === undefined) return centred(cols, rows, c.mute, "Reading the supervisor…");
 	const alerts = alertLines(snapshot, cols, c);
 	const keys = footer(cols, c);
-	const body = rows - 3 - keys.length - alerts.length - (alerts.length > 0 ? 1 : 0);
-	const side = Math.min(34, Math.max(24, Math.floor(cols * 0.2)));
-	const right = cols - side - 1;
-	const wanted = partsHeight(env);
-	// The stream keeps at least a third of the body, so a long parts list never hides the logs.
-	const table = Math.min(wanted, Math.max(6, body - Math.max(6, Math.floor(body / 3))));
+	const { body, side, right, table } = sizes(snapshot, env, cols, rows);
 	return h(
 		Box,
 		{ flexDirection: "column", width: cols, height: rows },
@@ -77,6 +73,27 @@ export function frame({ snapshot, view, cols, rows, now, color }: FrameInput): R
 			: line("notice", cols, [run(" "), run(view.notice, c.accent)]),
 		...keys,
 	);
+}
+
+/** Where the frame's pieces go: the body's height, the two columns' widths, the parts' height. */
+function sizes(snapshot: Snapshot, env: EnvironmentView, cols: number, rows: number) {
+	const failed = snapshot.environments.flatMap((e) => e.apps).filter((a) => a.state === "failed");
+	const keys = footer(cols, COLORS).length;
+	const body = rows - 3 - keys - failed.length - (failed.length > 0 ? 1 : 0);
+	const side = Math.min(34, Math.max(24, Math.floor(cols * 0.2)));
+	const right = cols - side - 1;
+	const wanted = partsHeight(env);
+	// The stream keeps at least a third of the body, so a long parts list never hides the logs.
+	const table = Math.min(wanted, Math.max(6, body - Math.max(6, Math.floor(body / 3))));
+	return { body, side, right, table };
+}
+
+/** How many log lines the stream shows: what a page up or down moves by. */
+export function pageOf(snapshot: Snapshot, view: View, cols: number, rows: number): number {
+	const env = selectedOf(snapshot, view);
+	if (env === undefined || cols < MIN_COLS || rows < MIN_ROWS) return 10;
+	const { body, table } = sizes(snapshot, env, cols, rows);
+	return Math.max(1, body - table - 2);
 }
 
 // ── colour ────────────────────────────────────────────────────────────────────────────────────
@@ -345,6 +362,7 @@ const KEYS: [string, string][] = [
 	["↑↓", "environment"],
 	["←→", "app or service"],
 	["esc", "all logs"],
+	["PgUp PgDn", "scroll"],
 	["s", "start"],
 	["x", "stop"],
 	["r", "restart"],
@@ -513,7 +531,11 @@ function stream(
 	const inner = width - 4;
 	const n = Math.max(0, height - 2);
 	const nameWidth = Math.max(...parts.map((p) => [...p.name].length), 3) + 2;
-	const shown = merged(snapshot.logs, ids, n);
+	// Live, only the newest lines of each part are merged; paused, all of them, up to its line.
+	const paused = view.until;
+	const all = paused === undefined ? [] : streamLines(snapshot, view);
+	const upTo = all.filter((l) => l.seq <= (paused as number));
+	const shown = paused === undefined ? merged(snapshot.logs, ids, n) : upTo.slice(-n);
 	const rows = shown.map((l) => {
 		const color = partColor(env, l.id, c);
 		const name = parts.find((part) => part.id === l.id)?.name ?? l.id;
@@ -547,6 +569,12 @@ function stream(
 		[
 			run("LOGS", c.mute, { bold: true }),
 			run(focused === undefined ? "  all" : `  ${focused.name} only`, focused ? c.accent : c.soft),
+			...(paused === undefined
+				? []
+				: [
+						run("  ⏸ paused", c.warn, { bold: true }),
+						run(` · ${all.length - upTo.length} newer · end for live`, c.soft),
+					]),
 		],
 		legend,
 		rows,

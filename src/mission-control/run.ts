@@ -5,7 +5,7 @@ import type { Machine } from "../layout.ts";
 import type { Supervisor } from "../supervisor.ts";
 import { desktopHands, type Hands, perform } from "./act.ts";
 import { type Feed, openFeed } from "./feed.ts";
-import { frame } from "./frame.ts";
+import { frame, pageOf } from "./frame.ts";
 import { initialView, reduce } from "./model.ts";
 
 /**
@@ -79,7 +79,9 @@ function App(props: {
 	}, [listeners]);
 	const snapshot = feed.snapshot();
 	useInput((input, key) => {
-		const { view: next, intent } = reduce(latest.current, keyName(input, key), snapshot);
+		const now = latest.current;
+		const page = pageOf(snapshot, now, columns, rows);
+		const { view: next, intent } = reduce(now, keyName(input, key), snapshot, page);
 		if (next.quit) {
 			exit();
 			return;
@@ -104,6 +106,10 @@ function keyName(input: string, key: Key): string {
 	if (key.leftArrow) return "left";
 	if (key.rightArrow) return "right";
 	if (key.escape) return "escape";
+	if (key.pageUp) return "pageup";
+	if (key.pageDown) return "pagedown";
+	if (key.home) return "home";
+	if (key.end) return "end";
 	return input;
 }
 

@@ -25,8 +25,8 @@ const REFRESH_MS = 1000;
 const CHANGED_MS = 100;
 /** Lines of each part's output from before the view opened. */
 const HISTORY = 200;
-/** Lines kept per part; older ones are dropped. */
-const KEEP = 500;
+/** Lines kept per part, the scrollback; older ones are dropped. */
+const KEEP = 2000;
 
 /**
  * Opens the feed on `main`'s project and its worktrees, as served on `machine` (whose `portFree`

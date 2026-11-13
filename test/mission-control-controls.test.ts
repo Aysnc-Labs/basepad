@@ -103,3 +103,52 @@ test("a service has no page to open: o says so and asks nothing", () => {
 	expect(step.intent).toBeUndefined();
 	expect(step.view.notice).toBe("db is a service, with no page to open; c copies its address.");
 });
+
+/** A main whose web printed `line 0` to `line 99`, and api `api 0` to `api 9` among them. */
+function chatty(): Snapshot {
+	const web = Array.from({ length: 100 }, (_, i) => ({
+		seq: i * 2,
+		id: "shop/web",
+		time: "10:00:00",
+		text: `line ${i}`,
+	}));
+	const api = Array.from({ length: 10 }, (_, i) => ({
+		seq: i * 20 + 1,
+		id: "shop/api",
+		time: "10:00:00",
+		text: `api ${i}`,
+	}));
+	return {
+		...snapshot,
+		logs: new Map([
+			["shop/web", web],
+			["shop/api", api],
+		]),
+	};
+}
+
+const scroll = (keys: string[], from: View = initialView("shop"), logs = chatty()) =>
+	keys.reduce((view, key) => reduce(view, key, logs, 10).view, from);
+
+test("page up pauses the stream a page back from the newest line; page down and end go back to live", () => {
+	// 110 lines, the newest web's line 99 (seq 198); ten lines older is web's line 90 (seq 180).
+	expect(scroll(["pageup"]).until).toBe(180);
+	expect(scroll(["pageup", "pageup"]).until).toBe(161); // api 8
+	expect(scroll(["pageup", "pageup", "pagedown"]).until).toBe(180);
+	expect(scroll(["pageup", "pagedown"]).until).toBeUndefined();
+	expect(scroll(["pageup", "pageup", "end"]).until).toBeUndefined();
+	expect(scroll(["pageup", "G"]).until).toBeUndefined();
+});
+
+test("scrolling stops at the oldest page, and home goes there", () => {
+	const top = scroll(Array(30).fill("pageup"));
+	expect(top.until).toBe(scroll(["home"]).until);
+	// The oldest page ends at the tenth line: line 0, api 0, then lines 1 to 8 (seq 16).
+	expect(top.until).toBe(16);
+});
+
+test("narrowed to one part, scrolling moves through its lines alone", () => {
+	expect(scroll(["right", "pageup"]).until).toBe(178); // web's line 89
+	// api has fewer lines than a page: they all show already, so it stays live.
+	expect(scroll(["right", "right", "pageup"]).until).toBeUndefined();
+});
