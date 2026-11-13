@@ -8,6 +8,7 @@ import {
 	partsOf,
 	type Snapshot,
 	selectedOf,
+	streamLines,
 	type View,
 } from "./model.ts";
 
@@ -46,12 +47,8 @@ export function frame({ snapshot, view, cols, rows, now, color }: FrameInput): R
 	const env = selectedOf(snapshot, view);
 	if (env === undefined) return centred(cols, rows, c.mute, "Reading the supervisor…");
 	const alerts = alertLines(snapshot, cols, c);
-	const body = rows - 4 - alerts.length - (alerts.length > 0 ? 1 : 0);
-	const side = Math.min(34, Math.max(24, Math.floor(cols * 0.2)));
-	const right = cols - side - 1;
-	const wanted = partsHeight(env);
-	// The stream keeps at least a third of the body, so a long parts list never hides the logs.
-	const table = Math.min(wanted, Math.max(6, body - Math.max(6, Math.floor(body / 3))));
+	const keys = footer(cols, c);
+	const { body, side, right, table } = sizes(snapshot, env, cols, rows);
 	return h(
 		Box,
 		{ flexDirection: "column", width: cols, height: rows },
@@ -71,9 +68,32 @@ export function frame({ snapshot, view, cols, rows, now, color }: FrameInput): R
 				stream(env, view, snapshot, right, body - table, c),
 			),
 		),
-		gap("g4"),
-		footer(cols, c),
+		view.notice === undefined
+			? gap("g4")
+			: line("notice", cols, [run(" "), run(view.notice, c.accent)]),
+		...keys,
 	);
+}
+
+/** Where the frame's pieces go: the body's height, the two columns' widths, the parts' height. */
+function sizes(snapshot: Snapshot, env: EnvironmentView, cols: number, rows: number) {
+	const failed = snapshot.environments.flatMap((e) => e.apps).filter((a) => a.state === "failed");
+	const keys = footer(cols, COLORS).length;
+	const body = rows - 3 - keys - failed.length - (failed.length > 0 ? 1 : 0);
+	const side = Math.min(34, Math.max(24, Math.floor(cols * 0.2)));
+	const right = cols - side - 1;
+	const wanted = partsHeight(env);
+	// The stream keeps at least a third of the body, so a long parts list never hides the logs.
+	const table = Math.min(wanted, Math.max(6, body - Math.max(6, Math.floor(body / 3))));
+	return { body, side, right, table };
+}
+
+/** How many log lines the stream shows: what a page up or down moves by. */
+export function pageOf(snapshot: Snapshot, view: View, cols: number, rows: number): number {
+	const env = selectedOf(snapshot, view);
+	if (env === undefined || cols < MIN_COLS || rows < MIN_ROWS) return 10;
+	const { body, table } = sizes(snapshot, env, cols, rows);
+	return Math.max(1, body - table - 2);
 }
 
 // ── colour ────────────────────────────────────────────────────────────────────────────────────
@@ -144,6 +164,8 @@ interface Run {
 	color?: string | undefined;
 	bg?: string | undefined;
 	bold?: boolean;
+	/** Drawn in reverse: a search's matches, which needs no colour. */
+	inverse?: boolean;
 }
 
 const run = (text: string, color?: string, more: Omit<Run, "text" | "color"> = {}): Run => ({
@@ -163,7 +185,11 @@ function line(key: string, width: number, runs: Run[]): ReactElement {
 			Text,
 			{ wrap: "truncate-end" },
 			...runs.map((r, i) =>
-				h(Text, { key: i, color: r.color, backgroundColor: r.bg, bold: r.bold }, r.text),
+				h(
+					Text,
+					{ key: i, color: r.color, backgroundColor: r.bg, bold: r.bold, inverse: r.inverse },
+					r.text,
+				),
 			),
 		),
 	);
@@ -337,20 +363,44 @@ function alertLines(snapshot: Snapshot, cols: number, c: Palette): ReactElement[
 	);
 }
 
-function footer(cols: number, c: Palette): ReactElement {
-	const key = (k: string) => run(` ${k} `, c.text, { bg: c.keyBg, bold: true });
-	return line("footer", cols, [
-		run(" "),
-		key("↑↓"),
-		run(" environment    ", c.mute),
-		key("←→"),
-		run(" app or service    ", c.mute),
-		key("esc"),
-		run(" all logs    ", c.mute),
-		key("q"),
-		run(" close", c.mute),
-		run("  ·  everything keeps running", c.dim),
-	]);
+/** Every key with what it does, as many to a row as fit. */
+const KEYS: [string, string][] = [
+	["↑↓", "environment"],
+	["←→", "app or service"],
+	["s", "start"],
+	["x", "stop"],
+	["r", "restart"],
+	["o", "open"],
+	["c", "copy"],
+	["v", "side by side"],
+	["/", "search"],
+	["n N", "next match"],
+	["PgUp PgDn", "scroll"],
+	["esc", "back"],
+	["q", "close"],
+];
+
+/** The keys, in rows: each key's label stays with its key. */
+function footer(cols: number, c: Palette): ReactElement[] {
+	const rows: Run[][] = [[run(" ")]];
+	for (const [k, label] of KEYS) {
+		const item = [run(` ${k} `, c.text, { bg: c.keyBg, bold: true }), run(` ${label}   `, c.mute)];
+		let last = rows[rows.length - 1] as Run[];
+		if (widthOf(last) + widthOf(item) - 3 >= cols && last.length > 1) {
+			last = [run(" ")];
+			rows.push(last);
+		}
+		last.push(...item);
+	}
+	const last = rows[rows.length - 1] as Run[];
+	const tail = run("·  everything keeps running", c.dim);
+	if (widthOf(last) + widthOf([tail]) <= cols) last.push(tail);
+	// A row's trailing gap would push it past the edge and cut it with `…`.
+	return rows.map((runs, i) => {
+		const end = runs[runs.length - 1] as Run;
+		const trimmed = [...runs.slice(0, -1), { ...end, text: end.text.trimEnd() }];
+		return line(`keys ${i}`, cols, trimmed);
+	});
 }
 
 /** Environments down the left: state glyph and name, the branch whole, the state in words. */
@@ -480,6 +530,110 @@ function partsPanel(
 	);
 }
 
+/** The search in the stream's title: the query being typed, or the one found and how to go on. */
+function searchTitle(view: View, c: Palette): Run[] {
+	const { search } = view;
+	if (search === undefined) return [];
+	if (search.typing) {
+		return [
+			run("  / ", c.accent, { bold: true }),
+			run(`${search.query}▏`, c.text, { bold: true }),
+			run("  enter find · esc cancel", c.mute),
+		];
+	}
+	return [run(`  “${search.query}”`, c.accent, { bold: true }), run("  n older · N newer", c.mute)];
+}
+
+/** `text` with each match of `query` (ignoring case) drawn in reverse. */
+function marked(text: string, query: string, color: string | undefined): Run[] {
+	if (query === "") return [run(text, color)];
+	const runs: Run[] = [];
+	const lower = text.toLowerCase();
+	const q = query.toLowerCase();
+	let from = 0;
+	for (let at = lower.indexOf(q); at >= 0; at = lower.indexOf(q, at + q.length)) {
+		runs.push(
+			run(text.slice(from, at), color),
+			run(text.slice(at, at + q.length), color, { inverse: true }),
+		);
+		from = at + q.length;
+	}
+	runs.push(run(text.slice(from), color));
+	return runs;
+}
+
+/** The narrowest a column of logs side by side gets; fewer columns show when they would be less. */
+const MIN_COLUMN = 28;
+
+/**
+ * The environment's apps' logs in columns, a row at a time: each app's name, then its newest lines
+ * up to `last` (the newest shown, when paused). A search's match is marked in its column.
+ */
+function columns(
+	env: EnvironmentView,
+	snapshot: Snapshot,
+	last: number | undefined,
+	match: number | undefined,
+	search: string,
+	width: number,
+	height: number,
+	c: Palette,
+): ReactElement[] {
+	const fit = Math.max(1, Math.floor((width + 3) / (MIN_COLUMN + 3)));
+	const apps = env.apps.slice(0, fit);
+	if (apps.length === 0) return [];
+	const each = Math.floor((width - 3 * (apps.length - 1)) / apps.length);
+	const bound = last ?? Number.POSITIVE_INFINITY;
+	const cells = apps.map((app) => {
+		const color = partColor(env, app.id, c);
+		const lines = (snapshot.logs.get(app.id) ?? [])
+			.filter((l) => l.seq <= bound)
+			.slice(-(height - 1));
+		return [
+			cut([run("■ ", color), run(app.name, color, { bold: true })], each),
+			...lines.map((l) =>
+				cut(
+					[
+						run(l.time, c.dim),
+						run(search !== "" && l.seq === match ? "›" : " ", c.warn, { bold: true }),
+						...marked(clean(l.text), search, tone(l.text, c)),
+					],
+					each,
+				),
+			),
+		];
+	});
+	const more = env.apps.length - apps.length;
+	const rows: ReactElement[] = [];
+	for (let i = 0; i < height; i++) {
+		const runs = cells.flatMap((cell, k) => [
+			...(k === 0 ? [] : [run(" │ ", c.frame)]),
+			...(cell[i] ?? [run(" ".repeat(each))]),
+		]);
+		if (i === 0 && more > 0) runs.push(run(`  +${more} more: widen the terminal`, c.dim));
+		rows.push(line(`row ${i}`, width, runs));
+	}
+	return rows;
+}
+
+/** `runs` cut to `width` columns with `…`, or padded to it. */
+function cut(runs: Run[], width: number): Run[] {
+	const out: Run[] = [];
+	let left = width;
+	for (const r of runs) {
+		const chars = [...r.text];
+		if (chars.length <= left) {
+			out.push(r);
+			left -= chars.length;
+			continue;
+		}
+		out.push({ ...r, text: `${chars.slice(0, Math.max(0, left - 1)).join("")}…` });
+		return out;
+	}
+	out.push(run(" ".repeat(left)));
+	return out;
+}
+
 /** One merged, colour-coded stream of the environment's parts, or of the focused one alone. */
 function stream(
 	env: EnvironmentView,
@@ -495,16 +649,39 @@ function stream(
 	const inner = width - 4;
 	const n = Math.max(0, height - 2);
 	const nameWidth = Math.max(...parts.map((p) => [...p.name].length), 3) + 2;
-	const shown = merged(snapshot.logs, ids, n);
-	const rows = shown.map((l) => {
-		const color = partColor(env, l.id, c);
-		const name = parts.find((part) => part.id === l.id)?.name ?? l.id;
-		return line(`${l.seq}`, inner, [
-			run(`${l.time}  `, c.dim),
-			...(focused === undefined ? [run("▎", color), run(pad(name, nameWidth), color)] : []),
-			run(clean(l.text), tone(l.text, c)),
-		]);
-	});
+	// Live, only the newest lines of each part are merged; paused, all of them, up to its line.
+	// Paused, the page ends at its line, or fills with the lines after it near the oldest.
+	const paused = view.until;
+	const all = paused === undefined ? [] : streamLines(snapshot, view);
+	const end = Math.max(
+		all.filter((l) => l.seq <= (paused as number)).length,
+		Math.min(n, all.length),
+	);
+	const shown =
+		paused === undefined ? merged(snapshot.logs, ids, n) : all.slice(Math.max(0, end - n), end);
+	const search = view.search !== undefined && !view.search.typing ? view.search.query : "";
+	const rows = view.sideBySide
+		? columns(
+				env,
+				snapshot,
+				paused === undefined ? undefined : shown.at(-1)?.seq,
+				paused,
+				search,
+				inner,
+				n,
+				c,
+			)
+		: shown.map((l) => {
+				const color = partColor(env, l.id, c);
+				const name = parts.find((part) => part.id === l.id)?.name ?? l.id;
+				const match = search !== "" && l.seq === paused;
+				return line(`${l.seq}`, inner, [
+					run(`${l.time} `, c.dim),
+					run(match ? "› " : "  ", c.warn, { bold: true }),
+					...(focused === undefined ? [run("▎", color), run(pad(name, nameWidth), color)] : []),
+					...marked(clean(l.text), search, tone(l.text, c)),
+				]);
+			});
 	if (rows.length === 0) {
 		const idle = env.apps.length > 0 && env.apps.every((p) => p.state === "idle");
 		rows.push(
@@ -525,10 +702,22 @@ function stream(
 		"stream",
 		width,
 		height,
-		focused === undefined ? c.frame : c.focus,
+		focused === undefined || view.sideBySide ? c.frame : c.focus,
 		[
 			run("LOGS", c.mute, { bold: true }),
-			run(focused === undefined ? "  all" : `  ${focused.name} only`, focused ? c.accent : c.soft),
+			view.sideBySide
+				? run("  side by side", c.soft)
+				: run(
+						focused === undefined ? "  all" : `  ${focused.name} only`,
+						focused ? c.accent : c.soft,
+					),
+			...(paused === undefined
+				? []
+				: [
+						run("  ⏸ paused", c.warn, { bold: true }),
+						run(` · ${all.length - end} newer · end for live`, c.soft),
+					]),
+			...searchTitle(view, c),
 		],
 		legend,
 		rows,

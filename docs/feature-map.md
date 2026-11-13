@@ -20,7 +20,7 @@ flowchart LR
   Commands --> Catalogue["catalogue: postgres"]
   Commands --> Supervisor
   Commands -- "up, on a terminal" --> MissionControl["mission control (Ink)"]
-  MissionControl -- "reads states, follows logs" --> Supervisor
+  MissionControl -- "reads states, follows logs; start, stop" --> Supervisor
   MissionControl --> Worktrees
   Commands --> EnvFiles["env files"]
   Supervisor -- "mise exec" --> Pitchfork["pitchfork (isolated)"]
@@ -62,7 +62,7 @@ Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### Mission control
 
-Purpose: the terminal view `up` opens: every environment (main and each worktree) with its branch and a state at a glance, the selected one's apps and services with state and address, and one merged, colour-coded live log stream. Read-only: `q` or Ctrl-C closes it and stops nothing. A pure frame (state to Ink element) and a pure reducer (key to view), behind one feed (git, configs, the supervisor's states and `pitchfork logs --tail`) and one terminal adapter.
+Purpose: the terminal view `up` opens: every environment (main and each worktree) with its branch and a state at a glance, the selected one's apps and services with state and address, and one merged, colour-coded live log stream, or the apps' logs side by side. From it a developer starts, stops and restarts an app, a service or a whole environment, opens an app in the browser, copies an address, and scrolls back and searches the logs. `q` or Ctrl-C closes it and stops nothing. A pure frame (state to Ink element) and a pure reducer (key to view and intent), behind one feed (git, configs, the supervisor's states and `pitchfork logs --tail`), one place that performs intents (`act.ts`: the supervisor, the browser, the clipboard) and one terminal adapter.
 Entry: `basepad up` on a terminal (`-d`, or no terminal, skips it)
 Paths: src/mission-control/, src/supervisor.ts, src/commands.ts
 

@@ -168,9 +168,37 @@ test("focusing one part narrows the stream to its lines, without the name column
 	expect(out).not.toContain("GET / 200 3ms");
 });
 
-test("the keys are on screen", () => {
-	const out = draw(snap([main]));
-	expect(out).toMatch(/↑↓ +environment +←→ +app or service +esc +all logs +q +close/);
+test("every key is on screen, wrapping onto a second row where the terminal is narrow", () => {
+	const keys = [
+		/↑↓ +environment/,
+		/←→ +app or service/,
+		/s +start/,
+		/x +stop/,
+		/r +restart/,
+		/o +open/,
+		/c +copy/,
+		/v +side by side/,
+		/\/ +search/,
+		/n N +next match/,
+		/PgUp PgDn +scroll/,
+		/esc +back/,
+		/q +close/,
+	];
+	for (const [cols, rows] of [
+		[140, 40],
+		[100, 30],
+		[72, 20],
+	] as const) {
+		const out = draw(snap([main]), initialView("shop"), cols, rows);
+		for (const key of keys) expect(out).toMatch(key);
+		expect(out.split("\n").slice(-2).join("\n")).not.toContain("…");
+		expect(out.split("\n")).toHaveLength(rows);
+	}
+});
+
+test("what the last key did shows above the keys", () => {
+	const out = draw(snap([main]), { ...initialView("shop"), notice: "Restarting web…" });
+	expect(out).toMatch(/Restarting web…\n.*environment/);
 });
 
 test("a terminal too small for the layout says how big it must be", () => {
@@ -184,4 +212,50 @@ test("at 100 columns an app's whole URL still shows: the state word gives way, i
 	const out = draw(snap([main, wide]), initialView(ns), 100, 30);
 	expect(out).toMatch(/● worker +https:\/\/worker\.worktree-1\.shop\.localhost:7443/);
 	expect(out).not.toMatch(/localhost:744…/);
+});
+
+test("scrolled back, the stream holds still at its line and says how many newer lines wait", () => {
+	const web = lines("shop/web", ...Array.from({ length: 100 }, (_, i) => `line ${i}`));
+	const until = (web[1][50] as LogLine).seq;
+	const out = draw(snap([main], [web]), { ...initialView("shop"), until });
+	expect(out).toMatch(/line 50 +│\n.*╰/);
+	expect(out).not.toContain("line 51");
+	expect(out).toMatch(/LOGS +all +⏸ paused · 49 newer · end for live/);
+	expect(out).toMatch(/PgUp PgDn +scroll/);
+});
+
+test("a search being typed shows in the stream's title; a found one marks its line", () => {
+	const web = lines("shop/web", "GET / 200", "TypeError: boom", "GET /cart 200", "GET / 200");
+	const typing = draw(snap([main], [web]), {
+		...initialView("shop"),
+		search: { query: "typeerr", typing: true },
+	});
+	expect(typing).toMatch(/LOGS +all +\/ typeerr▏ +enter find · esc cancel/);
+	const until = (web[1][1] as LogLine).seq;
+	const found = draw(snap([main], [web]), {
+		...initialView("shop"),
+		until,
+		search: { query: "typeerr", typing: false },
+	});
+	// Found near the top, the page still fills with the lines after it.
+	expect(found).toMatch(/10:00:00 › ▎web +TypeError: boom +│\n.*GET \/cart 200/);
+	expect(found).toContain("0 newer");
+	expect(found).toMatch(/“typeerr” +n older · N newer/);
+	expect(found).toMatch(/\/ +search/);
+	expect(found).toMatch(/n N +next match/);
+});
+
+test("side by side: a column for each app with its own lines, and services left out", () => {
+	const logs = [
+		lines("shop/web", "GET / 200", "GET /cart 200"),
+		lines("shop/api", "POST /orders 201"),
+		lines("shop/db", "checkpoint complete"),
+	];
+	const out = draw(snap([main], logs), { ...initialView("shop"), sideBySide: true });
+	expect(out).toMatch(/LOGS +side by side/);
+	expect(out).toMatch(/■ web +│ ■ api/);
+	expect(out).toMatch(/10:00:00 GET \/ 200 +│ 10:00:00 POST \/orders 201/);
+	expect(out).toMatch(/10:00:00 GET \/cart 200 +│/);
+	expect(out).not.toContain("checkpoint");
+	expect(out).toMatch(/v +side by side/);
 });

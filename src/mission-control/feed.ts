@@ -14,6 +14,8 @@ import type { EnvironmentView, LogLine, Part, Snapshot } from "./model.ts";
 export interface Feed {
 	/** The latest of everything; cheap, called on every repaint. */
 	snapshot(): Snapshot;
+	/** Reads states again now, as after an action, rather than on the next tick. */
+	refresh(): void;
 	close(): void;
 }
 
@@ -23,8 +25,8 @@ const REFRESH_MS = 1000;
 const CHANGED_MS = 100;
 /** Lines of each part's output from before the view opened. */
 const HISTORY = 200;
-/** Lines kept per part; older ones are dropped. */
-const KEEP = 500;
+/** Lines kept per part, the scrollback; older ones are dropped. */
+const KEEP = 2000;
 
 /**
  * Opens the feed on `main`'s project and its worktrees, as served on `machine` (whose `portFree`
@@ -131,6 +133,9 @@ export async function openFeed(options: {
 			const since = Date.now() - 1000;
 			while (arrivals.length > 0 && (arrivals[0] as number) < since) arrivals.shift();
 			return { project: main.name, environments, logs, rate: arrivals.length };
+		},
+		refresh() {
+			void tick();
 		},
 		close() {
 			closed = true;

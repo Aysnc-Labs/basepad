@@ -26,7 +26,7 @@ const snapshot: Snapshot = {
 };
 
 const press = (keys: string[], from = initialView("shop")) =>
-	keys.reduce((view, key) => reduce(view, key, snapshot), from);
+	keys.reduce((view, key) => reduce(view, key, snapshot).view, from);
 
 test("down and up select the next and previous environment, stopping at the ends", () => {
 	expect(press(["down"]).selected).toBe("shop.worktree-1");
