@@ -3,13 +3,11 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { readEnv, type Sandbox, sandbox } from "./sandbox.ts";
+import { configFile, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
 
 const echo = join(import.meta.dirname, "apps/echo.mjs");
 
-const config = `import { defineConfig, redis } from "@aysnc-labs/basepad";
-
-export default defineConfig({
+const config = configFile(`{
 	name: "t24cache",
 	services: { cache: redis(), ref: redis({ worktree: "shared" }) },
 	apps: { web: { run: ${JSON.stringify(`exec '${process.execPath}' '${echo}'`)} } },
@@ -21,8 +19,7 @@ export default defineConfig({
 			REF_URL: ref.url,
 		},
 	}),
-});
-`;
+}`);
 
 let box: Sandbox;
 let main: string;
