@@ -1,7 +1,9 @@
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { request as httpsRequest } from "node:https";
 import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
 import { connect } from "node:tls";
 import { z } from "zod";
 import { interactive, must, shellQuote } from "./internal/exec.ts";
@@ -48,6 +50,32 @@ export interface Environment {
 	/** Where its generated definitions are written, in basepad's home. */
 	definitions: string;
 	daemons: Record<string, Daemon>;
+}
+
+/**
+ * A daemon as mission control reads it. `idle`: not running, and the proxy starts it on a first
+ * request to its domain (`hold` makes it `stopped`).
+ */
+export interface DaemonInfo {
+	/** `<namespace>/<name>`. */
+	id: string;
+	namespace: string;
+	name: string;
+	state: DaemonState | "idle";
+	pid?: number;
+	/** The port it listens on. */
+	port?: number;
+	/** Why it failed, as pitchfork says (`exit code 1`). */
+	error?: string;
+}
+
+/** One line a daemon printed, stamped by the supervisor to the second. */
+export interface LogEntry {
+	/** The daemon's id. */
+	id: string;
+	/** `HH:MM:SS`, local time. */
+	time: string;
+	text: string;
 }
 
 /** What answers on the machine's port 443: basepad's proxy, something else, or nothing. */
@@ -112,6 +140,14 @@ export interface Supervisor {
 	logs(namespace: string, name: string, since: Date, lines: number): Promise<string[]>;
 	/** The shell command a developer runs to see a daemon's whole log. */
 	logsCommand(namespace: string, name: string): string;
+	/** Every daemon in every namespace, with its state; none while no supervisor runs. */
+	daemons(): Promise<DaemonInfo[]>;
+	/**
+	 * Follows the daemons' output until the returned function is called: first each one's last
+	 * `history` lines, oldest first across them all, then each new line as it is printed, including
+	 * from a daemon that starts later. Only reads; stopping it affects no daemon.
+	 */
+	follow(ids: string[], history: number, line: (entry: LogEntry) => void): () => void;
 }
 
 /**
@@ -348,6 +384,75 @@ export async function openSupervisor(
 			return out.split("\n").filter((line) => line !== "");
 		},
 
+		async daemons() {
+			if (!running()) return [];
+			const listed = z.array(Listed).parse(JSON.parse(await run("list", "--json")));
+			return Promise.all(
+				listed.map(async (daemon): Promise<DaemonInfo> => {
+					const state = await stateOf(daemon);
+					const port = daemon.active_port ?? daemon.port?.[0];
+					return {
+						id: daemon.id,
+						namespace: daemon.namespace ?? daemon.id.slice(0, daemon.id.lastIndexOf("/")),
+						name: daemon.name,
+						state: state === "stopped" && !daemon.disabled ? "idle" : state,
+						...(daemon.pid == null ? {} : { pid: daemon.pid }),
+						...(port === undefined || port === null ? {} : { port }),
+						...(daemon.error == null ? {} : { error: daemon.error }),
+					};
+				}),
+			);
+		},
+
+		follow(ids, history, line) {
+			if (ids.length === 0) return () => {};
+			let stopped = false;
+			// One process follows them all from now. `-n` with several ids counts lines over all of
+			// them, so a chatty daemon would push out a crashed one's: each one's history is its own.
+			const tail = spawn(pitchfork, ["logs", ...ids, "--tail", "-n", "0"], {
+				cwd: machine.home,
+				env,
+				stdio: ["ignore", "pipe", "ignore"],
+			});
+			const kill = () => tail.kill();
+			process.once("exit", kill);
+			const live: (LogEntry & { stamp: string })[] = [];
+			let replayed = false;
+			createInterface({ input: tail.stdout }).on("line", (text) => {
+				const entry = parseLogLine(text, ids);
+				if (entry === undefined || stopped) return;
+				if (replayed) line(entry);
+				else live.push(entry);
+			});
+			Promise.all(
+				ids.map((id) =>
+					run("logs", id, "-n", String(history), "--no-pager").then(
+						(out) =>
+							out
+								.split("\n")
+								.map((text) => parseLogLine(text, [id]))
+								.filter((entry) => entry !== undefined),
+						() => [],
+					),
+				),
+			).then((lists) => {
+				if (stopped) return;
+				// A stable sort: each daemon's own lines stay in order within a second.
+				const past = lists.flat().sort((a, b) => a.stamp.localeCompare(b.stamp));
+				// A line printed while both ran is in each; the history's copy is kept.
+				const key = (e: { id: string; stamp: string; text: string }) =>
+					`${e.id}\0${e.stamp}\0${e.text}`;
+				const seen = new Set(past.map(key));
+				for (const entry of [...past, ...live.filter((e) => !seen.has(key(e)))]) line(entry);
+				replayed = true;
+			});
+			return () => {
+				stopped = true;
+				process.off("exit", kill);
+				kill();
+			};
+		},
+
 		logsCommand(namespace, name) {
 			// basepad's own pitchfork binary, so the command needs no mise and no PATH.
 			return `PITCHFORK_LOGS_DIR=${shellQuote(dirs.PITCHFORK_LOGS_DIR)} ${shellQuote(pitchfork)} logs ${daemonId(namespace, name)}`;
@@ -437,10 +542,35 @@ async function probeStandardPort(ca: string): Promise<StandardPort> {
 	});
 }
 
+/**
+ * One of pitchfork's log lines, `MM-DD HH:MM:SS [<id>] message`; with a single id given, without
+ * the `[<id>]`. `stamp` sorts lines by time.
+ */
+function parseLogLine(text: string, ids: string[]): (LogEntry & { stamp: string }) | undefined {
+	const tagged = /^(\d\d-\d\d) (\d\d:\d\d:\d\d) \[([^\]]+)\] ?(.*)$/.exec(text);
+	if (tagged !== null && ids.includes(tagged[3] as string)) {
+		const [, day, time, id, message] = tagged as unknown as string[];
+		return {
+			id: id as string,
+			time: time as string,
+			text: message as string,
+			stamp: `${day} ${time}`,
+		};
+	}
+	const [only] = ids;
+	const plain = /^(\d\d-\d\d) (\d\d:\d\d:\d\d) ?(.*)$/.exec(text);
+	if (plain === null || only === undefined || ids.length > 1) return undefined;
+	const [, day, time, message] = plain as unknown as string[];
+	return { id: only, time: time as string, text: message as string, stamp: `${day} ${time}` };
+}
+
 /** One entry of `pitchfork list --json`; only what basepad reads. */
 const Listed = z.looseObject({
 	id: z.string(),
+	namespace: z.string().optional(),
 	name: z.string(),
+	pid: z.number().nullable().optional(),
+	error: z.string().nullable().optional(),
 	status: z.string(),
 	disabled: z.boolean().optional(),
 	active_port: z.number().nullable().optional(),
