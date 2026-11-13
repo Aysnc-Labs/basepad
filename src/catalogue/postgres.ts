@@ -256,41 +256,43 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		return outputs;
 	},
 
-	async worktreeData(service, place) {
-		const port = await serverPort(place.data);
-		if (port === undefined) return [];
-		const pg = await installPostgres(service.version, place.machine.home);
-		const rows = await query(
-			pg,
-			port,
-			`select datname || '|' || coalesce(shobj_description(oid, 'pg_database'), '') from pg_database where datname like ${literal(`${likeEscaped(place.main)}\\_%`)}`,
-		);
-		const all = rows
-			.split("\n")
-			.filter(Boolean)
-			.map((row) => {
-				const at = row.indexOf("|");
-				return { name: row.slice(0, at), owner: row.slice(at + 1) };
-			})
-			.filter((data) => data.name !== place.main);
-		if (place.suffix === undefined) return all;
-		// By name only while unstamped: one stamped elsewhere is another checkout's worktree's.
-		return all.filter(
-			(data) => data.owner === place.owner || (data.owner === "" && data.name === place.database),
-		);
-	},
+	worktreeData: {
+		async list(service, place) {
+			const port = await serverPort(place.data);
+			if (port === undefined) return [];
+			const pg = await installPostgres(service.version, place.machine.home);
+			const rows = await query(
+				pg,
+				port,
+				`select datname || '|' || coalesce(shobj_description(oid, 'pg_database'), '') from pg_database where datname like ${literal(`${likeEscaped(place.main)}\\_%`)}`,
+			);
+			const all = rows
+				.split("\n")
+				.filter(Boolean)
+				.map((row) => {
+					const at = row.indexOf("|");
+					return { name: row.slice(0, at), owner: row.slice(at + 1) };
+				})
+				.filter((data) => data.name !== place.main);
+			if (place.suffix === undefined) return all;
+			// By name only while unstamped: one stamped elsewhere is another checkout's worktree's.
+			return all.filter(
+				(data) => data.owner === place.owner || (data.owner === "" && data.name === place.database),
+			);
+		},
 
-	async dropWorktreeData(service, place, names) {
-		if (names.includes(place.main)) {
-			throw new BasepadError(`\`${place.main}\` is main's database, which basepad never drops.`);
-		}
-		const port = await serverPort(place.data);
-		if (port === undefined || names.length === 0) return;
-		const pg = await installPostgres(service.version, place.machine.home);
-		for (const name of names) {
-			// A worktree's app may still hold it open; its sessions end with it.
-			await query(pg, port, `drop database if exists ${identifier(name)} with (force)`);
-		}
+		async drop(service, place, names) {
+			if (names.includes(place.main)) {
+				throw new BasepadError(`\`${place.main}\` is main's database, which basepad never drops.`);
+			}
+			const port = await serverPort(place.data);
+			if (port === undefined || names.length === 0) return;
+			const pg = await installPostgres(service.version, place.machine.home);
+			for (const name of names) {
+				// A worktree's app may still hold it open; its sessions end with it.
+				await query(pg, port, `drop database if exists ${identifier(name)} with (force)`);
+			}
+		},
 	},
 
 	async address(_service, place) {

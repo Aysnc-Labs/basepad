@@ -113,13 +113,6 @@ export const mailpitKind: Kind<MailpitService, MailpitOutputs, MailpitNames> = {
 		};
 	},
 
-	// One inbox for the project: a worktree has no data of its own.
-	async worktreeData() {
-		return [];
-	},
-
-	async dropWorktreeData() {},
-
 	async address(_service, place) {
 		return webOf(place).url;
 	},

@@ -125,26 +125,28 @@ export const redisKind: Kind<RedisService, RedisOutputs, RedisNames> = {
 		return outputs(port);
 	},
 
-	async worktreeData(_service, place) {
-		if (!existsSync(place.worktrees)) return [];
-		const all = [];
-		for (const name of await readdir(place.worktrees)) {
-			const owner = await readFile(join(place.worktrees, name, OWNER), "utf8").catch(() => "");
-			all.push({ name, owner });
-		}
-		if (place.suffix === undefined) return all;
-		return all.filter(
-			(data) => data.owner === place.owner || (data.owner === "" && data.name === place.suffix),
-		);
-	},
-
-	async dropWorktreeData(_service, place, names) {
-		for (const name of names) {
-			if (name === "" || name.includes("/") || name === "." || name === "..") {
-				throw new BasepadError(`\`${name}\` is no worktree's Redis.`);
+	worktreeData: {
+		async list(_service, place) {
+			if (!existsSync(place.worktrees)) return [];
+			const all = [];
+			for (const name of await readdir(place.worktrees)) {
+				const owner = await readFile(join(place.worktrees, name, OWNER), "utf8").catch(() => "");
+				all.push({ name, owner });
 			}
-			await rm(join(place.worktrees, name), { recursive: true, force: true });
-		}
+			if (place.suffix === undefined) return all;
+			return all.filter(
+				(data) => data.owner === place.owner || (data.owner === "" && data.name === place.suffix),
+			);
+		},
+
+		async drop(_service, place, names) {
+			for (const name of names) {
+				if (name === "" || name.includes("/") || name === "." || name === "..") {
+					throw new BasepadError(`\`${name}\` is no worktree's Redis.`);
+				}
+				await rm(join(place.worktrees, name), { recursive: true, force: true });
+			}
+		},
 	},
 
 	async address(_service, place) {
