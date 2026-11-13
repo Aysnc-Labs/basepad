@@ -1,5 +1,8 @@
 name: Release
 
+# On every push to main: open or update the "Version Packages" PR while changesets are pending;
+# once it is merged, publish the new version to npm, tag it and make a GitHub release.
+
 on:
   push:
     branches: [main]
@@ -7,38 +10,61 @@ on:
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
-  contents: write
-  pull-requests: write
-  # npm trusted publishing (OIDC); also signs provenance.
-  id-token: write
-
-env:
-  # The same mise as CI; it installs the node and pnpm in mise.toml.
-  MISE_VERSION: 2026.11.5
+  contents: read
 
 jobs:
-  release:
-    name: Version or publish
+  mode:
+    name: Select mode
     runs-on: ubuntu-24.04
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
     steps:
       - uses: actions/checkout@v7
-      - name: Install mise
-        # mise's own installer, which falls back to mise's mirror when a GitHub download fails.
-        run: |
-          curl -fsSL https://mise.run | MISE_VERSION="v$MISE_VERSION" MISE_QUIET=1 sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
-      - run: mise trust --quiet && mise install
-        env:
-          # mise downloads tools from GitHub releases; a token avoids anonymous rate limits.
-          GITHUB_TOKEN: ${{ github.token }}
-      # The PR's CI already ran the full check; `prepare` builds dist.
-      - run: pnpm install --frozen-lockfile
-      - uses: changesets/action@v1
+      # Installs mise and the tools in mise.toml (node, pnpm).
+      - uses: jdx/mise-action@v5
         with:
-          version: pnpm changeset version
-          publish: pnpm changeset publish
-          title: Version Packages
-          commit: Version Packages
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No cache in a release workflow: a restored cache could put someone else's files in the release.
+          cache: false
+      - run: pnpm install --frozen-lockfile
+      - id: mode
+        uses: changesets/action/select-mode@v2
+
+  version:
+    name: Version Packages PR
+    needs: mode
+    if: needs.mode.outputs.mode == 'version'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          cache: false
+      - run: pnpm install --frozen-lockfile
+      - uses: changesets/action/version@v2
+        with:
+          script: pnpm changeset version
+
+  publish:
+    name: Publish to npm
+    needs: mode
+    if: needs.mode.outputs.mode == 'publish'
+    runs-on: ubuntu-24.04
+    permissions:
+      # Tags and GitHub releases.
+      contents: write
+      # npm trusted publishing (OIDC); also signs provenance.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          cache: false
+      # `prepare` builds dist.
+      - run: pnpm install --frozen-lockfile
+      - uses: changesets/action/publish@v2
+        with:
+          script: pnpm changeset publish
+          create-github-releases: true

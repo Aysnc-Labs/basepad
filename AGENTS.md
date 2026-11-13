@@ -11,6 +11,7 @@
 - Export `MISE_DATA_DIR` and `MISE_CACHE_DIR` to a temp dir before `pnpm test` to keep tool installs out of your own mise.
 - Give each test file's project its own `name`: a service's port comes from it.
 - Outside a container, run `basepad setup` only with `--dry-run`: it changes the trust store and asks for `sudo`.
+- A change users of the npm package would notice carries a changeset (`pnpm changeset`; patch fix, minor feature, major break): its summary becomes the CHANGELOG line and the version bump. Tests, docs and CI-only changes need none.
 
 ## Agent skills
 

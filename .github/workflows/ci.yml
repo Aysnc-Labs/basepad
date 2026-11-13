@@ -24,13 +24,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Install mise
-        # mise's own installer, which falls back to mise's mirror when a GitHub download fails.
-        run: |
-          curl -fsSL https://mise.run | MISE_VERSION="v$MISE_VERSION" MISE_QUIET=1 sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
-      - run: mise trust --quiet && mise install
+      # Installs mise and the tools in mise.toml (node, pnpm).
+      - uses: jdx/mise-action@v5
+        with:
+          version: ${{ env.MISE_VERSION }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
 
@@ -48,12 +45,9 @@ jobs:
       - uses: actions/checkout@v7
       # The checkout is owned by the runner's user, not root; git refuses it otherwise.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install mise
-        # mise's own installer, which falls back to mise's mirror when a GitHub download fails.
-        run: |
-          curl -fsSL https://mise.run | MISE_VERSION="v$MISE_VERSION" MISE_QUIET=1 sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
-      - run: mise trust --quiet && mise install
+      # Installs mise and the tools in mise.toml (node, pnpm).
+      - uses: jdx/mise-action@v5
+        with:
+          version: ${{ env.MISE_VERSION }}
       - run: id -u && pnpm install --frozen-lockfile
       - run: pnpm check
