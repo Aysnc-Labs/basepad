@@ -1,6 +1,6 @@
 ---
-status: accepted
----
+
+## status: accepted
 
 # The config file is the only way a project talks to basepad
 
