@@ -63,7 +63,10 @@ async function mainIntact(): Promise<void> {
 	}
 }
 
-/** `basepad` on a terminal of its own, typing `input`. */
+/**
+ * `basepad` on a terminal of its own, typing `input` once it asks. Typed any earlier, macOS's
+ * `script` sends it, and an end of input, before basepad reads the terminal, which loses the answer.
+ */
 function onTerminal(cwd: string, input: string, ...args: string[]): Promise<Result> {
 	const command = [process.execPath, join(import.meta.dirname, "../dist/launcher.js"), ...args]
 		.map((arg) => `'${arg}'`)
@@ -76,7 +79,12 @@ function onTerminal(cwd: string, input: string, ...args: string[]): Promise<Resu
 		const child = execFile(file, argv, { env: box.env }, (error, stdout, stderr) =>
 			resolve({ code: error ? Number(error.code ?? 1) : 0, stdout, stderr }),
 		);
-		child.stdin?.end(input);
+		let typed = false;
+		child.stdout?.on("data", (chunk: Buffer) => {
+			if (typed || !chunk.toString().includes("[y/N]")) return;
+			typed = true;
+			child.stdin?.end(input);
+		});
 	});
 }
 

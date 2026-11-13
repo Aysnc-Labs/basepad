@@ -451,11 +451,14 @@ type Listed = z.infer<typeof Listed>;
 /** pitchfork's statuses of a daemon that is up or on its way up. */
 const LIVE = new Set(["running", "waiting", "restarting"]);
 
-/** A daemon with a port is running once something listens there; until then it is starting. */
+/**
+ * A daemon with a port is running once something listens there; until then it is starting.
+ * pitchfork finds `active_port` some time after the daemon is ready, so until then the port it
+ * gave the daemon stands in: else an app that just answered its first request reads as starting.
+ */
 async function stateOf(daemon: Listed): Promise<DaemonState> {
 	if (daemon.status === "running") {
-		const port = daemon.active_port ?? undefined;
-		if (port === undefined && (daemon.port ?? []).length > 0) return "starting";
+		const port = daemon.active_port ?? daemon.port?.[0];
 		return port === undefined || (await listening(port)) ? "running" : "starting";
 	}
 	if (LIVE.has(daemon.status)) return "starting";
