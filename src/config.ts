@@ -19,7 +19,7 @@ export interface Project {
 	name: string;
 	services: Record<string, Service>;
 	/** Each app with its folder made absolute. */
-	apps: Record<string, Required<App>>;
+	apps: Record<string, Required<Omit<App, "port">> & Pick<App, "port">>;
 	env: (outputs: Outputs<Record<string, Service>, Record<string, App>>) => EnvFiles;
 	/** How worktrees are named, and where they are checked out when the config says. */
 	worktrees: {
@@ -66,7 +66,11 @@ export async function loadProject(cwd: string): Promise<Project> {
 		apps: Object.fromEntries(
 			Object.entries(config.apps ?? {}).map(([key, app]) => [
 				key,
-				{ run: app.run, cwd: resolve(root, app.cwd ?? ".") },
+				{
+					run: app.run,
+					cwd: resolve(root, app.cwd ?? "."),
+					...(app.port === false ? { port: false as const } : {}),
+				},
 			]),
 		),
 		env: (config.env as Project["env"] | undefined) ?? (() => ({})),
@@ -154,6 +158,9 @@ const label = z
 const AppSchema = z.strictObject({
 	run: z.string({ error: "`run` must be a command" }).min(1, "`run` must be a command"),
 	cwd: z.string({ error: "`cwd` must be a folder relative to the config" }).optional(),
+	port: z
+		.literal(false, { error: "`port` can only be `false`, for an app that listens on nothing" })
+		.optional(),
 });
 
 const ConfigSchema = z

@@ -27,20 +27,28 @@ export async function setup({ flags, print }: Invocation): Promise<void> {
 			"Warning: something other than basepad's proxy answers on port 443 (Herd, Valet, or a pitchfork of your own?). Redirecting 443 sends this machine's own traffic for that port to basepad instead.",
 		);
 	}
+	const mac = process.platform === "darwin" && !root;
+	const macPlan = mac ? await planForMac(here, supervisor) : undefined;
 	const plan = root
 		? [
 				"trust basepad's CA in the system trust store",
 				"the proxy listens on port 443 itself, so no redirect is needed",
 			]
-		: await supervisor.proxySetupPlan();
+		: (macPlan?.steps ?? (await supervisor.proxySetupPlan()));
 	if (stores.length > 0) plan.push(await nssStep(stores));
+	if (plan.length === 0) {
+		print("basepad setup: nothing to do; basepad's CA is already trusted.");
+		return;
+	}
 	print("basepad setup will:");
 	for (const step of plan) print(`  ${step}`);
-	print(
-		`Then app URLs drop the port: https://<app>.<name>.localhost. URLs carry :${here.proxyPort} until then.`,
-	);
+	if (!mac) {
+		print(
+			`Then app URLs drop the port: https://<app>.<name>.localhost. URLs carry :${here.proxyPort} until then.`,
+		);
+	}
 
-	const clash = root ? undefined : await ownPitchforkSetup(here, supervisor);
+	const clash = root ? undefined : await ownPitchforkSetup(supervisor);
 	if (clash) throw new BasepadError(`Nothing was changed: ${clash}`);
 	if (flags["dry-run"]) {
 		print("Dry run: nothing was changed.");
@@ -49,7 +57,15 @@ export async function setup({ flags, print }: Invocation): Promise<void> {
 	if (!root && !flags.yes && !(await consent())) return;
 
 	if (root) await supervisor.trust();
-	else {
+	else if (macPlan !== undefined) {
+		if (macPlan.removeRedirect) {
+			const code = await supervisor.proxyUndo();
+			if (code !== 0)
+				throw new BasepadError(`pitchfork's proxy setup --undo failed (exit ${code}).`);
+		}
+		// Undo takes the CA's trust away too.
+		if (!macPlan.trusted || macPlan.removeRedirect) await supervisor.trust();
+	} else {
 		const code = await supervisor.proxySetup();
 		if (code !== 0) throw new BasepadError(`pitchfork's proxy setup failed (exit ${code}).`);
 	}
@@ -59,7 +75,11 @@ export async function setup({ flags, print }: Invocation): Promise<void> {
 		print("Run `basepad up` in each project to write the port-free URLs into its env files.");
 	} else {
 		print(
-			`Port 443 does not reach basepad's proxy yet, so URLs keep :${here.proxyPort}. Run \`basepad setup\` again${process.platform === "darwin" ? " (a restart can drop the redirect)" : ""}.`,
+			mac
+				? here.forwards443
+					? `Something else answers on port 443 (Herd, Valet?), so URLs keep :${here.proxyPort}.`
+					: `BASEPAD_PROXY_PORT is set, so URLs keep :${here.proxyPort}.`
+				: `Port 443 does not reach basepad's proxy yet, so URLs keep :${here.proxyPort}. Run \`basepad setup\` again.`,
 		);
 	}
 }
@@ -98,21 +118,12 @@ export async function trustAsRoot(supervisor: Supervisor): Promise<string[]> {
 }
 
 /**
- * A setup of a developer's own pitchfork that basepad's would overwrite: pitchfork writes one pf
- * anchor on macOS and one CA file on Linux, whichever pitchfork runs it. Returns why, or nothing.
+ * A setup of a developer's own pitchfork that basepad's would overwrite: on Linux pitchfork writes
+ * one CA file, whichever pitchfork runs it. Returns why, or nothing.
  */
-async function ownPitchforkSetup(
-	here: Machine,
-	supervisor: Supervisor,
-): Promise<string | undefined> {
-	if (process.platform === "darwin") {
-		const anchor = "/etc/pf.anchors/pitchfork";
-		const rules = await readFile(anchor, "utf8").catch(() => undefined);
-		if (rules !== undefined && !new RegExp(`port ${here.proxyPort}\\s*$`, "m").test(rules)) {
-			return `${anchor} redirects port 443 for a pitchfork of your own, and basepad's setup would replace it. Undo that one first (\`pitchfork proxy setup --undo\`), or keep the port in basepad's URLs.`;
-		}
-		return undefined;
-	}
+async function ownPitchforkSetup(supervisor: Supervisor): Promise<string | undefined> {
+	// On macOS basepad writes no pf rule, so it replaces nothing of a pitchfork of the developer's.
+	if (process.platform === "darwin") return undefined;
 	const ours = await readFile(supervisor.ca, "utf8").catch(() => "");
 	for (const dir of LINUX_CA_DIRS) {
 		const installed = await readFile(join(dir, "pitchfork-proxy.crt"), "utf8").catch(
@@ -123,6 +134,38 @@ async function ownPitchforkSetup(
 		}
 	}
 	return undefined;
+}
+
+/** pitchfork's pf rule on macOS, which redirects port 443. */
+const PF_ANCHOR = "/etc/pf.anchors/pitchfork";
+
+/**
+ * macOS: trust the CA in the login keychain, nothing else. Port 443 is the forwarder's
+ * (src/forward.ts), not pf's: pf turns off iCloud Private Relay. A pf redirect an earlier basepad
+ * setup added (to basepad's proxy port) is removed.
+ */
+async function planForMac(
+	here: Machine,
+	supervisor: Supervisor,
+): Promise<{ steps: string[]; trusted: boolean; removeRedirect: boolean }> {
+	const rules = await readFile(PF_ANCHOR, "utf8").catch(() => undefined);
+	const removeRedirect =
+		rules !== undefined && new RegExp(`port ${here.proxyPort}\\s*$`, "m").test(rules);
+	const trusted = (await supervisor.proxySetupPlan()).some((line) =>
+		line.includes("is already trusted"),
+	);
+	const steps: string[] = [];
+	if (removeRedirect) {
+		steps.push(
+			"[sudo] remove the pf redirect of port 443 an earlier basepad setup added: it turns off iCloud Private Relay",
+		);
+	}
+	if (!trusted || removeRedirect) {
+		steps.push(
+			`trust basepad's CA at ${supervisor.ca} in your login keychain (macOS asks for Touch ID or your password)`,
+		);
+	}
+	return { steps, trusted, removeRedirect };
 }
 
 /** Where pitchfork puts its CA on each Linux family. */

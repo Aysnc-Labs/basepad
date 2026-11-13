@@ -105,6 +105,26 @@ test("a service has no page to open: o says so and asks nothing", () => {
 	expect(step.view.notice).toBe("db is a service, with no page to open; c copies its address.");
 });
 
+test("an app with no port has no address: o and c say so, and with none selected take the first app that has one", () => {
+	const queue = part("jobs/queue", { address: undefined });
+	const jobs: Snapshot = {
+		...snapshot,
+		environments: [{ ...env("jobs", ["web"]), apps: [queue, part("jobs/web")] }],
+	};
+	const keys = (pressed: string[]) => {
+		let step = { view: initialView("jobs") } as ReturnType<typeof reduce>;
+		for (const key of pressed) step = reduce(step.view, key, jobs);
+		return step;
+	};
+	for (const key of ["o", "c"]) {
+		const step = keys(["right", key]);
+		expect(step.intent).toBeUndefined();
+		expect(step.view.notice).toBe("queue listens on nothing, so it has no address.");
+	}
+	expect(keys(["o"]).intent).toEqual({ kind: "open", url: "https://web.shop.localhost" });
+	expect(keys(["c"]).intent).toEqual({ kind: "copy", text: "https://web.shop.localhost" });
+});
+
 /** A main whose web printed `line 0` to `line 99`, and api `api 0` to `api 9` among them. */
 function chatty(): Snapshot {
 	const web = Array.from({ length: 100 }, (_, i) => ({

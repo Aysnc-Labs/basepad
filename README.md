@@ -90,7 +90,7 @@ The URL carries the proxy's port, and its certificate is signed by basepad's own
 curl --cacert ~/.basepad/pitchfork/state/proxy/ca.pem https://web.shop.localhost:7443
 ```
 
-To open it in a browser with no port and no warning, run [`basepad setup`](#port-free-urls-basepad-setup) once on the machine.
+That's Linux as a user. On macOS, URLs have no port from the first `up`: `https://web.shop.localhost`. To open it in a browser with no warning, run [`basepad setup`](#port-free-urls-basepad-setup) once on the machine.
 
 ```sh
 npx basepad status   # each app and service, with its address and state
@@ -113,6 +113,7 @@ export default defineConfig({
 		web: { run: "next dev" }, // https://web.shop.localhost
 		cms: { run: "npm run dev", cwd: "apps/cms" }, // https://cms.shop.localhost
 		backend: { run: "php artisan serve --port=$PORT", cwd: "backend" },
+		queue: { run: "php artisan queue:listen", cwd: "backend", port: false }, // no domain
 	},
 	env: ({ db, cms, backend }) => ({
 		".env.local": { DATABASE_URL: db.url, CMS_URL: cms.url },
@@ -130,7 +131,7 @@ export default defineConfig({
 | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`     | yes      | The project's one key: a lowercase DNS label (letters, digits, hyphens). Every database and domain is built from it.                      |
 | `services` | no       | The services basepad provides, by key: Postgres, `postgres()` or `postgres({ version: 17 })` (18 is the default), and [Mailpit](#mailpit), `mailpit()`. |
-| `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config.              |
+| `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config, and `port: false` for one that listens on nothing. |
 | `env`      | no       | A function from every service's and app's outputs to the env files to write: each file's path, relative to the config, to its keys.       |
 | `worktrees` | no      | How [worktrees](#worktrees) are made: `prefix` (default `worktree`) names them `<prefix>-<n>`; `dir`, relative to the config, is where they are checked out (default `<repository>/../<name>.worktrees`); `clone` lists untracked paths copied from main, such as `node_modules`; `setup` lists shell commands run once in each new worktree. |
 
@@ -153,7 +154,7 @@ A service gives:
 
 Mailpit gives `url` (`smtp://main:basepad@127.0.0.1:<port>`; a worktree's user is its suffix), `host`, `port`, `user`, `password` (`basepad`, a placeholder: any is accepted) and `inbox` (`https://<key>.<name>.localhost`).
 
-An app gives `url`: `https://<key>.<name>.localhost`, with the proxy's port (`:7443`) until `basepad setup` has been run. An app's port isn't given: it changes from run to run.
+An app gives `url`: `https://<key>.<name>.localhost`, with the proxy's port (`:7443`) while port 443 doesn't reach the proxy (Linux as a user, until `basepad setup`). An app's port isn't given: it changes from run to run.
 
 ### Env files
 
@@ -170,6 +171,7 @@ basepad sets exactly the keys `env` returns, in the files it names:
 - Each app runs from its `cwd` (the config's folder by default), through `sh`, with its own and the project's `node_modules/.bin` first on `PATH`, as `npm run` does. So `next dev` works without `npx`.
 - Each app is given a free port as `PORT`, and must listen on it.
 - Each app answers at `https://<key>.<name>.localhost`, through pitchfork's proxy. Hot reload and WebSockets work through it.
+- An app with `port: false`, such as a queue worker, gets no `PORT`, no domain and no `url` in `env`. It is running as soon as it starts, and starts whenever another of the environment's apps does, so a worktree's first request starts it too.
 - Processes basepad starts trust its certificate authority through `NODE_EXTRA_CA_CERTS`, so one Node app can fetch another by its URL. Other runtimes need their own setting, such as `SSL_CERT_FILE` or `REQUESTS_CA_BUNDLE`, pointed at `~/.basepad/pitchfork/state/proxy/ca.pem`.
 
 ### Postgres
@@ -326,7 +328,7 @@ npx basepad down && rm -rf ~/.basepad/services/shop
 
 ## Port-free URLs: `basepad setup`
 
-Without setup, everything works, with the port in each URL (`https://web.shop.localhost:7443`) and a certificate your browser doesn't trust. Once per machine:
+Without setup, everything works, with a certificate your browser doesn't trust, and on Linux as a user the port in each URL (`https://web.shop.localhost:7443`). Once per machine:
 
 ```sh
 npx basepad setup
@@ -334,10 +336,10 @@ npx basepad setup
 
 It prints its plan, then asks before it changes anything. Steps marked `[sudo]` ask for your password.
 
-- **macOS:** trusts basepad's certificate authority, and redirects port 443 to the proxy's port with a pf rule.
+- **macOS:** trusts basepad's certificate authority in your login keychain; macOS asks for Touch ID or your password, and nothing needs `sudo`. URLs are port-free without setup: `up` starts a small forwarder on port 443, which macOS lets any user take, that passes connections from this Mac to the proxy and closes any from the network. basepad doesn't use pf, which redirects ports but turns off iCloud Private Relay; setup removes a pf redirect an earlier basepad setup added. Setting `BASEPAD_PROXY_PORT` turns the forwarder off.
 - **Linux:** trusts the certificate authority in the system store and in Chrome's and Firefox's own stores, and redirects port 443 with iptables.
 
-Then run `basepad up` in each project, so its env files get the port-free URLs. When something else answers on port 443 (Herd, Valet), setup warns you first. A restart can drop the redirect; run `setup` again if URLs get their port back.
+Then run `basepad up` in each project, so its env files get the port-free URLs. When something else answers on port 443 (Herd, Valet), setup warns you first, and on macOS the forwarder leaves it alone and URLs keep their port. On Linux a restart can drop the redirect; run `setup` again if URLs get their port back.
 
 `--dry-run` prints the plan and changes nothing. `--yes` applies it without asking, and is needed when there's no terminal to ask on.
 
