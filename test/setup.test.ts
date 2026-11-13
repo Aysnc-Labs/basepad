@@ -84,6 +84,7 @@ test("one app fetches another by its HTTPS domain from server-side code", async 
 	expect(up.code).toBe(0);
 	const api = `https://api.pair.localhost${suffix()}`;
 	expect(up.stdout).toContain(`api  ${api}  running`);
+	expect(up.stdout).toContain(`web  https://web.pair.localhost${suffix()}  running`);
 	expect(await readFile(join(dir, ".env"), "utf8")).toBe(`API_URL=${api}\n`);
 
 	const reply = await get(`https://web.pair.localhost${suffix()}`);
@@ -105,7 +106,17 @@ async function get(url: string): Promise<unknown> {
 				res.setEncoding("utf8").on("data", (chunk: string) => {
 					body += chunk;
 				});
-				res.on("end", () => resolve(JSON.parse(body)));
+				res.on("end", () => {
+					try {
+						resolve(JSON.parse(body));
+					} catch {
+						reject(
+							new Error(
+								`${url}: ${res.statusCode} ${body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")}`,
+							),
+						);
+					}
+				});
 			},
 		);
 		req.setTimeout(10_000, () => req.destroy(new Error(`${url}: timed out`)));

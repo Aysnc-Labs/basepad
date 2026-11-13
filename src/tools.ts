@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { BasepadError, exec, must } from "./internal/exec.ts";
+import { BasepadError, must } from "./internal/exec.ts";
 
 /** A tool mise has installed: where it lives and where its programs are. */
 export interface Tool {
@@ -18,9 +18,9 @@ export interface Tool {
 export async function install(tool: string, version: string, cwd: string): Promise<Tool> {
 	const spec = `${tool}@${version}`;
 	await mkdir(cwd, { recursive: true });
-	if ((await exec("mise", ["where", spec], { cwd })).code !== 0) {
-		await must("mise", ["install", "--quiet", spec], { cwd });
-	}
+	// Always, not only when `mise where` fails: `where` answers for an install still in progress
+	// (another basepad installing at the same moment), and `install` waits on mise's lock for it.
+	await must("mise", ["install", "--quiet", spec], { cwd });
 	const dir = (await must("mise", ["where", spec], { cwd })).trim();
 	const paths = (await must("mise", ["bin-paths", spec], { cwd })).split("\n").filter(Boolean);
 	return {
