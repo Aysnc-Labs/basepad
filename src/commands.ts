@@ -1,14 +1,21 @@
 import { join } from "node:path";
 import { z } from "zod";
-import { kindOf, type Place } from "./catalogue.ts";
+import { kindOf, type NamesOf, type Place, type Service } from "./catalogue.ts";
 import { CONFIG_FILE, loadProject, type Project } from "./config.ts";
 import { writeEnvFiles } from "./env-files.ts";
 import { syncHosts } from "./hosts.ts";
-import type { EnvFiles, Service, ServiceOutputs } from "./index.ts";
+import type { EnvFiles } from "./index.ts";
 import { init } from "./init.ts";
 import { BasepadError, shellQuote } from "./internal/exec.ts";
 import { table } from "./internal/table.ts";
-import { isRootOnLinux, type Layout, layout, type Machine, machine } from "./layout.ts";
+import {
+	isRootOnLinux,
+	type Layout,
+	layout,
+	type Machine,
+	machine,
+	type ServicePlace,
+} from "./layout.ts";
 import { setup, trustAsRoot } from "./setup.ts";
 import { type Daemon, type DaemonState, openSupervisor, type Supervisor } from "./supervisor.ts";
 
@@ -115,7 +122,7 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 		print(line);
 	}
 	const since = new Date(Date.now() - 1000);
-	const outputs: Record<string, ServiceOutputs | { url: string }> = {};
+	const outputs: Record<string, unknown> = {};
 	if (services.length > 0) {
 		const states = await supervisor.start(project.name, services, APP_WAIT_MS);
 		const failed = services.filter((key) => states[key] === "failed");
@@ -142,8 +149,13 @@ async function machineWithPortFree(here: Machine, supervisor: Supervisor): Promi
 }
 
 /** Where one of the project's services lives. */
-function placeOf(project: Project, lay: Layout, here: Machine, key: string): Place {
-	const service = lay.services[key] as Layout["services"][string];
+function placeOf(
+	project: Project,
+	lay: Layout,
+	here: Machine,
+	key: string,
+): Place<NamesOf<Service>> {
+	const service = lay.services[key] as ServicePlace;
 	return { name: project.name, key, owner: project.root, machine: here, ...service };
 }
 

@@ -3,7 +3,8 @@ import { registerHooks } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
-import type { App, Config, EnvFiles, Outputs, Service } from "./index.ts";
+import { FACTORIES, SCHEMAS, type Service } from "./catalogue.ts";
+import type { App, Config, EnvFiles, Outputs } from "./index.ts";
 import { BasepadError } from "./internal/exec.ts";
 
 export const CONFIG_FILE = "basepad.config.ts";
@@ -116,11 +117,6 @@ const label = z
 	.string({ error: "must be a string" })
 	.regex(LABEL, "must be a lowercase DNS label (letters, digits and inner hyphens)");
 
-const Postgres = z.strictObject({
-	kind: z.literal("postgres"),
-	version: z.union([z.literal(17), z.literal(18)], { error: "Postgres version must be 17 or 18" }),
-});
-
 const AppSchema = z.strictObject({
 	run: z.string({ error: "`run` must be a command" }).min(1, "`run` must be a command"),
 	cwd: z.string({ error: "`cwd` must be a folder relative to the config" }).optional(),
@@ -132,8 +128,9 @@ const ConfigSchema = z
 		services: z
 			.record(
 				label,
-				z.discriminatedUnion("kind", [Postgres], {
-					error: "a service must be made by a service function, such as `postgres()`",
+				// Each kind's schema is a strict object with a literal `kind`, as a discriminated union needs.
+				z.discriminatedUnion("kind", SCHEMAS as unknown as [z.ZodObject], {
+					error: `a service must be made by a service function, such as ${FACTORIES.join(" or ")}`,
 				}),
 			)
 			.optional(),
