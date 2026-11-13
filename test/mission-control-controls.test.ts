@@ -191,3 +191,14 @@ test("escape steps back one layer at a time: the search, then the pause, then th
 	expect(scroll(["escape"], paused).until).toBeUndefined();
 	expect(scroll(["escape", "escape"], paused).focus).toBeUndefined();
 });
+
+test("v shows the apps' logs side by side and back; it stays on across environments and escape", () => {
+	expect(scroll(["v"]).sideBySide).toBe(true);
+	expect(scroll(["v", "v"]).sideBySide).toBeUndefined();
+	expect(scroll(["v", "down", "right", "escape"]).sideBySide).toBe(true);
+});
+
+test("side by side, scrolling and search move through every app's lines, whatever is selected", () => {
+	// web and api together, as in the merged stream, but never db's.
+	expect(scroll(["v", "right", "right", "pageup"]).until).toBe(180);
+});

@@ -367,15 +367,16 @@ function alertLines(snapshot: Snapshot, cols: number, c: Palette): ReactElement[
 const KEYS: [string, string][] = [
 	["↑↓", "environment"],
 	["←→", "app or service"],
-	["esc", "all logs"],
-	["PgUp PgDn", "scroll"],
-	["/", "search"],
-	["n N", "next match"],
 	["s", "start"],
 	["x", "stop"],
 	["r", "restart"],
 	["o", "open"],
 	["c", "copy"],
+	["v", "side by side"],
+	["/", "search"],
+	["n N", "next match"],
+	["PgUp PgDn", "scroll"],
+	["esc", "back"],
 	["q", "close"],
 ];
 
@@ -385,7 +386,7 @@ function footer(cols: number, c: Palette): ReactElement[] {
 	for (const [k, label] of KEYS) {
 		const item = [run(` ${k} `, c.text, { bg: c.keyBg, bold: true }), run(` ${label}   `, c.mute)];
 		let last = rows[rows.length - 1] as Run[];
-		if (widthOf(last) + widthOf(item) - 3 > cols && last.length > 1) {
+		if (widthOf(last) + widthOf(item) - 3 >= cols && last.length > 1) {
 			last = [run(" ")];
 			rows.push(last);
 		}
@@ -556,6 +557,78 @@ function marked(text: string, query: string, color: string | undefined): Run[] {
 	return runs;
 }
 
+/** The narrowest a column of logs side by side gets; fewer columns show when they would be less. */
+const MIN_COLUMN = 28;
+
+/**
+ * The environment's apps' logs in columns, a row at a time: each app's name, then its newest lines
+ * up to `last` (the newest shown, when paused). A search's match is marked in its column.
+ */
+function columns(
+	env: EnvironmentView,
+	snapshot: Snapshot,
+	last: number | undefined,
+	match: number | undefined,
+	search: string,
+	width: number,
+	height: number,
+	c: Palette,
+): ReactElement[] {
+	const fit = Math.max(1, Math.floor((width + 3) / (MIN_COLUMN + 3)));
+	const apps = env.apps.slice(0, fit);
+	if (apps.length === 0) return [];
+	const each = Math.floor((width - 3 * (apps.length - 1)) / apps.length);
+	const bound = last ?? Number.POSITIVE_INFINITY;
+	const cells = apps.map((app) => {
+		const color = partColor(env, app.id, c);
+		const lines = (snapshot.logs.get(app.id) ?? [])
+			.filter((l) => l.seq <= bound)
+			.slice(-(height - 1));
+		return [
+			cut([run("■ ", color), run(app.name, color, { bold: true })], each),
+			...lines.map((l) =>
+				cut(
+					[
+						run(l.time, c.dim),
+						run(search !== "" && l.seq === match ? "›" : " ", c.warn, { bold: true }),
+						...marked(clean(l.text), search, tone(l.text, c)),
+					],
+					each,
+				),
+			),
+		];
+	});
+	const more = env.apps.length - apps.length;
+	const rows: ReactElement[] = [];
+	for (let i = 0; i < height; i++) {
+		const runs = cells.flatMap((cell, k) => [
+			...(k === 0 ? [] : [run(" │ ", c.frame)]),
+			...(cell[i] ?? [run(" ".repeat(each))]),
+		]);
+		if (i === 0 && more > 0) runs.push(run(`  +${more} more: widen the terminal`, c.dim));
+		rows.push(line(`row ${i}`, width, runs));
+	}
+	return rows;
+}
+
+/** `runs` cut to `width` columns with `…`, or padded to it. */
+function cut(runs: Run[], width: number): Run[] {
+	const out: Run[] = [];
+	let left = width;
+	for (const r of runs) {
+		const chars = [...r.text];
+		if (chars.length <= left) {
+			out.push(r);
+			left -= chars.length;
+			continue;
+		}
+		out.push({ ...r, text: `${chars.slice(0, Math.max(0, left - 1)).join("")}…` });
+		return out;
+	}
+	out.push(run(" ".repeat(left)));
+	return out;
+}
+
 /** One merged, colour-coded stream of the environment's parts, or of the focused one alone. */
 function stream(
 	env: EnvironmentView,
@@ -582,17 +655,28 @@ function stream(
 	const shown =
 		paused === undefined ? merged(snapshot.logs, ids, n) : all.slice(Math.max(0, end - n), end);
 	const search = view.search !== undefined && !view.search.typing ? view.search.query : "";
-	const rows = shown.map((l) => {
-		const color = partColor(env, l.id, c);
-		const name = parts.find((part) => part.id === l.id)?.name ?? l.id;
-		const match = search !== "" && l.seq === paused;
-		return line(`${l.seq}`, inner, [
-			run(`${l.time} `, c.dim),
-			run(match ? "› " : "  ", c.warn, { bold: true }),
-			...(focused === undefined ? [run("▎", color), run(pad(name, nameWidth), color)] : []),
-			...marked(clean(l.text), search, tone(l.text, c)),
-		]);
-	});
+	const rows = view.sideBySide
+		? columns(
+				env,
+				snapshot,
+				paused === undefined ? undefined : shown.at(-1)?.seq,
+				paused,
+				search,
+				inner,
+				n,
+				c,
+			)
+		: shown.map((l) => {
+				const color = partColor(env, l.id, c);
+				const name = parts.find((part) => part.id === l.id)?.name ?? l.id;
+				const match = search !== "" && l.seq === paused;
+				return line(`${l.seq}`, inner, [
+					run(`${l.time} `, c.dim),
+					run(match ? "› " : "  ", c.warn, { bold: true }),
+					...(focused === undefined ? [run("▎", color), run(pad(name, nameWidth), color)] : []),
+					...marked(clean(l.text), search, tone(l.text, c)),
+				]);
+			});
 	if (rows.length === 0) {
 		const idle = env.apps.length > 0 && env.apps.every((p) => p.state === "idle");
 		rows.push(
@@ -613,10 +697,15 @@ function stream(
 		"stream",
 		width,
 		height,
-		focused === undefined ? c.frame : c.focus,
+		focused === undefined || view.sideBySide ? c.frame : c.focus,
 		[
 			run("LOGS", c.mute, { bold: true }),
-			run(focused === undefined ? "  all" : `  ${focused.name} only`, focused ? c.accent : c.soft),
+			view.sideBySide
+				? run("  side by side", c.soft)
+				: run(
+						focused === undefined ? "  all" : `  ${focused.name} only`,
+						focused ? c.accent : c.soft,
+					),
 			...(paused === undefined
 				? []
 				: [

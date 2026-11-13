@@ -177,6 +177,11 @@ test("every key is on screen, wrapping onto a second row where the terminal is n
 		/r +restart/,
 		/o +open/,
 		/c +copy/,
+		/v +side by side/,
+		/\/ +search/,
+		/n N +next match/,
+		/PgUp PgDn +scroll/,
+		/esc +back/,
 		/q +close/,
 	];
 	for (const [cols, rows] of [
@@ -234,5 +239,21 @@ test("a search being typed shows in the stream's title; a found one marks its li
 	expect(found).toMatch(/10:00:00 › ▎web +TypeError: boom +│\n.*GET \/cart 200/);
 	expect(found).toContain("0 newer");
 	expect(found).toMatch(/“typeerr” +n older · N newer/);
-	expect(found).toMatch(/\/ +search +n N +next match/);
+	expect(found).toMatch(/\/ +search/);
+	expect(found).toMatch(/n N +next match/);
+});
+
+test("side by side: a column for each app with its own lines, and services left out", () => {
+	const logs = [
+		lines("shop/web", "GET / 200", "GET /cart 200"),
+		lines("shop/api", "POST /orders 201"),
+		lines("shop/db", "checkpoint complete"),
+	];
+	const out = draw(snap([main], logs), { ...initialView("shop"), sideBySide: true });
+	expect(out).toMatch(/LOGS +side by side/);
+	expect(out).toMatch(/■ web +│ ■ api/);
+	expect(out).toMatch(/10:00:00 GET \/ 200 +│ 10:00:00 POST \/orders 201/);
+	expect(out).toMatch(/10:00:00 GET \/cart 200 +│/);
+	expect(out).not.toContain("checkpoint");
+	expect(out).toMatch(/v +side by side/);
 });

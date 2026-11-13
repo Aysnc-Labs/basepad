@@ -76,6 +76,8 @@ export interface View {
 	until?: number;
 	/** A search of the stream: while `typing`, keys go to the query; after, `until` is its match. */
 	search?: { query: string; typing: boolean };
+	/** The apps' logs in columns side by side, rather than merged into one stream. */
+	sideBySide?: true;
 }
 
 /**
@@ -127,9 +129,14 @@ const ACTIONS: Record<string, { kind: "start" | "stop" | "restart"; doing: strin
 	r: { kind: "restart", doing: "Restarting" },
 };
 
-/** The parts whose lines the stream shows: the focused one, else all the environment's. */
+/**
+ * The parts whose lines the stream shows: side by side, the environment's apps; else the focused
+ * part, or all the environment's.
+ */
 export function streamIds(snapshot: Snapshot, view: View): string[] {
-	const parts = partsOf(selectedOf(snapshot, view));
+	const env = selectedOf(snapshot, view);
+	if (view.sideBySide) return (env?.apps ?? []).map((app) => app.id);
+	const parts = partsOf(env);
 	const focused = parts.find((part) => part.id === view.focus);
 	return focused === undefined ? parts.map((part) => part.id) : [focused.id];
 }
@@ -161,7 +168,12 @@ export function reduce(previous: View, key: string, snapshot: Snapshot, page = 1
 	const at = env === undefined ? 0 : envs.indexOf(env);
 	const select = (i: number): View => {
 		const next = envs[Math.max(0, Math.min(envs.length - 1, i))];
-		return next === undefined ? view : { selected: next.namespace, quit: false };
+		if (next === undefined) return view;
+		return {
+			selected: next.namespace,
+			quit: false,
+			...(view.sideBySide ? { sideBySide: true } : {}),
+		};
 	};
 	// Focus steps through "all" (none), then each part in order, and round again.
 	const step = (by: 1 | -1): View => {
@@ -227,6 +239,10 @@ export function reduce(previous: View, key: string, snapshot: Snapshot, page = 1
 		case "end":
 		case "G":
 			return { view: scroll("live") };
+		case "v": {
+			const { sideBySide, until: _, ...rest } = view;
+			return { view: sideBySide ? rest : { ...rest, sideBySide: true } };
+		}
 		case "/":
 			return { view: { ...view, search: { query: "", typing: true } } };
 		case "n":
@@ -238,7 +254,8 @@ export function reduce(previous: View, key: string, snapshot: Snapshot, page = 1
 			// One layer at a time: the search or the pause, then the focus.
 			const { until, search, ...rest } = view;
 			if (until !== undefined || search !== undefined) return { view: rest };
-			return { view: { selected: view.selected, quit: view.quit } };
+			const { focus: _, ...all } = rest;
+			return { view: all };
 		}
 		default:
 			return { view };
