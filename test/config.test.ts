@@ -71,6 +71,11 @@ describe("errors name the file and key, with no stack", () => {
 			`{ name: "shop", services: { db: postgres({ version: 16 as 17 }) } }`,
 			"`services.db.version`: Postgres version must be 17 or 18",
 		],
+		[
+			"a key that is both a service and an app",
+			`{ name: "shop", services: { db: postgres() }, apps: { db: { run: "x" } } }`,
+			"`apps.db`: a service has the same key; a key names one service or one app",
+		],
 	];
 	test.each(invalid)("%s", async (_, body, reason) => {
 		const dir = await scratch({ "basepad.config.ts": configFile(body) });
