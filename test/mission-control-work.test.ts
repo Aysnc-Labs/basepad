@@ -37,9 +37,13 @@ function basepad(body: string): { command: string[]; dir: string; go: string } {
 }
 
 /** `takeWork` again until `done` says what it read is what the test waits for. */
-async function until(dir: string, done: (work: Awaited<ReturnType<typeof takeWork>>) => boolean) {
+async function until(
+	dir: string,
+	done: (work: Awaited<ReturnType<typeof takeWork>>) => boolean,
+	worktrees?: () => Promise<string[]>,
+) {
 	for (let i = 0; i < 250; i++) {
-		const work = await takeWork(dir);
+		const work = await takeWork(dir, worktrees);
 		if (done(work)) return work;
 		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
@@ -149,6 +153,29 @@ test("one whose process was killed partway says so, with its last line", async (
 		"Could not add a worktree: it stopped partway. Its last line: ran worktree add",
 	]);
 	expect(existsSync(dir) && readdirSync(dir)).toEqual([]);
+});
+
+test("an addition killed after it made its worktree names it and how to remove it", async () => {
+	const { command, dir } = basepad(`process.kill(process.ppid, "SIGKILL");`);
+	await startWork({ dir, command, cwd: tmpdir(), order: { kind: "add" }, before: ["shop-1"] });
+	const worktrees = async () => ["shop-1", "shop-2"];
+	expect((await until(dir, (w) => w.finished.length > 0, worktrees)).finished).toEqual([
+		"Could not add a worktree: it stopped partway, leaving shop-2; run `basepad worktree rm shop-2` to remove it. Its last line: ran worktree add",
+	]);
+});
+
+test("a removal killed partway names how to finish it", async () => {
+	const { command, dir } = basepad(`process.kill(process.ppid, "SIGKILL");`);
+	const order = {
+		kind: "remove",
+		suffix: "shop-2",
+		namespace: "shop.shop-2",
+		force: true,
+	} as const;
+	await startWork({ dir, command, cwd: tmpdir(), order });
+	expect((await until(dir, (w) => w.finished.length > 0)).finished).toEqual([
+		"Could not remove shop-2: it stopped partway; run `basepad worktree rm shop-2 --force` to finish it. Its last line: ran worktree rm shop-2 --force",
+	]);
 });
 
 /**

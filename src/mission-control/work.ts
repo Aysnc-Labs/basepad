@@ -22,6 +22,8 @@ interface Record {
 	title: string;
 	namespace?: string;
 	before?: string[];
+	/** A removal's `basepad worktree rm` arguments, so one stopped partway can say how to finish. */
+	args?: string[];
 }
 
 /**
@@ -60,7 +62,7 @@ export async function startWork(options: {
 	const record: Record =
 		order.kind === "add"
 			? { kind: "add", title: "Adding a worktree", ...(before ? { before } : {}) }
-			: { kind: "remove", title: `Removing ${order.suffix}`, namespace: order.namespace };
+			: { kind: "remove", title: `Removing ${order.suffix}`, namespace: order.namespace, args };
 	// The record first, and never written again: a fast job taken meanwhile is not made again.
 	await writeFile(`${base}.json`, JSON.stringify(record));
 	// The shell outlives the view with the command, and writes the exit code once it ends.
@@ -86,9 +88,13 @@ export async function startWork(options: {
 /**
  * The work in `dir`: what runs, oldest first, with the last line each printed; and what has
  * finished, as what to tell the developer. Each finished one is told once: its files go as it is read.
- * Files a view left without a record are swept untold once a minute old.
+ * Files a view left without a record are swept untold once a minute old. `worktrees`, the names of
+ * the worktrees there now, names the one an addition stopped partway left.
  */
-export async function takeWork(dir: string): Promise<{ running: Running[]; finished: string[] }> {
+export async function takeWork(
+	dir: string,
+	worktrees?: () => Promise<string[]>,
+): Promise<{ running: Running[]; finished: string[] }> {
 	const names = await readdir(dir).catch(() => [] as string[]);
 	const running: Running[] = [];
 	const finished: string[] = [];
@@ -114,7 +120,8 @@ export async function takeWork(dir: string): Promise<{ running: Running[]; finis
 		const code = await exitOf(base);
 		if (code === "" && (await underWay(base))) {
 			const last = lines(await readFile(`${base}.log`, "utf8").catch(() => "")).at(-1);
-			running.push({ ...record, ...(last === undefined ? {} : { line: last }) });
+			const { args: _, ...work } = record;
+			running.push({ ...work, ...(last === undefined ? {} : { line: last }) });
 			continue;
 		}
 		// Taken by renaming its record: of views reading at once, only the one that renames it tells it.
@@ -124,7 +131,9 @@ export async function takeWork(dir: string): Promise<{ running: Running[]; finis
 		);
 		if (!taken) continue;
 		const output = lines(await readFile(`${base}.log`, "utf8").catch(() => ""));
-		finished.push(outcome(record, await exitOf(base), output));
+		const ended = await exitOf(base);
+		const left = ended === "" ? await leftBy(record, worktrees) : undefined;
+		finished.push(outcome(record, ended, output, left));
 		await Promise.all(
 			[".taken", ".log", ".exit", ".pid"].map((ext) => rm(`${base}${ext}`, { force: true })),
 		);
@@ -177,13 +186,35 @@ function alive(pid: number): boolean {
 	}
 }
 
-/** How finished work ended, from its exit code (none when killed) and its output. */
-function outcome(record: Record, code: string, output: string[]): string {
+/** The worktree an addition stopped partway left: the one new since it began, if just one is. */
+async function leftBy(
+	record: Record,
+	worktrees: (() => Promise<string[]>) | undefined,
+): Promise<string | undefined> {
+	const { before } = record;
+	if (record.kind !== "add" || before === undefined || worktrees === undefined) return undefined;
+	const made = (await worktrees().catch(() => [])).filter((name) => !before.includes(name));
+	return made.length === 1 ? made[0] : undefined;
+}
+
+/**
+ * How finished work ended, from its exit code (none when killed) and its output. One stopped
+ * partway says how to clear what it left: a removal's own command, or an addition's worktree `left`.
+ */
+function outcome(record: Record, code: string, output: string[], left?: string): string {
 	const what =
 		record.kind === "add" ? "add a worktree" : `remove ${record.title.slice("Removing ".length)}`;
 	const last = output.at(-1) ?? "";
 	if (code === "0") return last;
-	if (code === "") return `Could not ${what}: it stopped partway. Its last line: ${last}`;
+	if (code === "") {
+		const next =
+			left !== undefined
+				? `, leaving ${left}; run \`basepad worktree rm ${left}\` to remove it`
+				: record.args !== undefined
+					? `; run \`basepad ${record.args.join(" ")}\` to finish it`
+					: "";
+		return `Could not ${what}: it stopped partway${next}. Its last line: ${last}`;
+	}
 	// The command says why it failed last, after `basepad: `.
 	const from = output.findLastIndex((l) => l.startsWith("basepad: "));
 	const message =
