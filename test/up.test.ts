@@ -172,7 +172,8 @@ test("an app that exits on start is reported with its output, and up fails", asy
 	});
 	const out = await box.basepad(dir, "up");
 	expect(out.code).toBe(1);
-	expect(out.stdout).toMatch(/bad +https:\/\/bad\.broken\.localhost:\d+ +failed/);
+	// basepad's stderr as the message, so a failure shows why.
+	expect(out.stdout, out.stderr).toMatch(/bad +https:\/\/bad\.broken\.localhost:\d+ +failed/);
 	expect(out.stdout).toMatch(/ok +https:\/\/ok\.broken\.localhost:\d+ +running/);
 	expect(out.stderr).toContain("basepad: `bad` exited on start. Its last output:");
 	expect(out.stderr).toContain("boom: DATABASE_URL is not set");

@@ -65,16 +65,20 @@ async function mainIntact(): Promise<void> {
 
 /**
  * `basepad` on a terminal of its own, typing `input` once it asks. Input stays open until basepad
- * exits: macOS's `script` ends the session, and so basepad, at the end of its input.
+ * exits. On macOS, Python's `pty`: macOS's `script` fails on Node's stdin, a socket there.
  */
 function onTerminal(cwd: string, input: string, ...args: string[]): Promise<Result> {
 	const command = [process.execPath, join(import.meta.dirname, "../dist/launcher.js"), ...args]
 		.map((arg) => `'${arg}'`)
 		.join(" ");
+	const shell = `cd '${cwd}' && ${command}`;
 	const [file, argv] =
 		process.platform === "darwin"
-			? ["script", ["-q", "/dev/null", "sh", "-c", `cd '${cwd}' && ${command}`]]
-			: ["script", ["-qec", `cd '${cwd}' && ${command}`, "/dev/null"]];
+			? [
+					"python3",
+					["-c", "import pty, sys; sys.exit(pty.spawn(sys.argv[1:]) >> 8)", "sh", "-c", shell],
+				]
+			: ["script", ["-qec", shell, "/dev/null"]];
 	return new Promise((resolve) => {
 		const child = execFile(file, argv, { env: box.env }, (error, stdout, stderr) =>
 			resolve({ code: error ? Number(error.code ?? 1) : 0, stdout, stderr }),
