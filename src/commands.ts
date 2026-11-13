@@ -250,13 +250,14 @@ interface Context {
 /**
  * Makes an environment ready to start its apps: registers its definitions, starts its services
  * (main's, in a worktree, and its own servers) and provisions them, and writes its env files.
- * Starts no app. A worktree needs main ready first. With `worktreeServers: "later"`, a worktree's
- * own servers are left to its first start, and its env files say where they will listen.
+ * Starts no app. A worktree needs main ready first. Main's servers always start: every
+ * environment's services need them. Of a worktree's own servers, those `start` picks (all by
+ * default); the rest are left to its first start, and its env files say where they will listen.
  */
 async function ready(
 	environment: Environment,
 	context: Context,
-	{ worktreeServers = "now" }: { worktreeServers?: "now" | "later" } = {},
+	{ start = () => true }: { start?: (key: string) => boolean } = {},
 ): Promise<Layout> {
 	const { project, suffix, main } = environment;
 	const { here, supervisor, print } = context;
@@ -315,8 +316,7 @@ async function ready(
 	const outputs: Record<string, unknown> = {};
 	const own = ownServers(lay);
 	const runsIn = (key: string) => (own.includes(key) ? lay.namespace : lay.mainNamespace);
-	const later = suffix !== undefined && worktreeServers === "later";
-	const started = services.filter((key) => !later || !own.includes(key));
+	const started = services.filter((key) => runsIn(key) === lay.mainNamespace || start(key));
 	for (const namespace of new Set(started.map(runsIn))) {
 		const keys = started.filter((key) => runsIn(key) === namespace);
 		const hosts = Object.fromEntries(
@@ -442,9 +442,8 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 		const { project } = environment;
 		for (const note of await clonePaths(main.root, project.root, project.worktrees.clone))
 			say(note);
-		lay = await ready(environment, context, {
-			worktreeServers: flags.start === true ? "now" : "later",
-		});
+		// Its own servers with its apps: now with `--start`, else on their first start.
+		lay = await ready(environment, context, { start: () => flags.start === true });
 	} catch (error) {
 		if (!(error instanceof BasepadError)) throw error;
 		throw new BasepadError(
@@ -942,28 +941,31 @@ interface DatabaseTarget {
 }
 
 /**
- * The environment `cwd` is in, made ready as `up` makes it (main's servers started, its database
- * there), without starting apps or a worktree's own servers; with its database services by key.
+ * The environment `cwd` is in, made ready as `up` makes it, without starting apps, with the
+ * database services `which` picks from its database services' keys. Of a worktree's own servers,
+ * only those picked start.
  */
 async function databasesAt(
 	cwd: string,
 	print: Invocation["print"],
-): Promise<{ project: Project; targets: DatabaseTarget[] }> {
+	which: (project: Project, keys: string[]) => string[],
+): Promise<DatabaseTarget[]> {
 	const environment = await environmentAt(cwd);
 	const { project } = environment;
-	const context = await open(environment, {}, print);
-	// A worktree's own servers hold no database: left to its first start.
-	const lay = await ready(environment, context, { worktreeServers: "later" });
-	const targets: DatabaseTarget[] = [];
-	for (const [key, service] of Object.entries(project.services)) {
-		const { database } = kindOf(service);
-		if (database === undefined) continue;
-		targets.push({ key, service, place: placeOf(project, lay, context.here, key), database });
-	}
-	if (targets.length === 0) {
+	const keys = Object.keys(project.services).filter(
+		(key) => kindOf(project.services[key] as Service).database !== undefined,
+	);
+	if (keys.length === 0) {
 		throw new BasepadError(`${project.file} names no database service.`);
 	}
-	return { project, targets };
+	const picked = which(project, keys);
+	const context = await open(environment, {}, print);
+	const lay = await ready(environment, context, { start: (key) => picked.includes(key) });
+	return picked.map((key) => {
+		const service = project.services[key] as Service;
+		const database = kindOf(service).database as Database<Service, NamesOf<Service>>;
+		return { key, service, place: placeOf(project, lay, context.here, key), database };
+	});
 }
 
 /**
@@ -971,24 +973,25 @@ async function databasesAt(
  * several and no `--service`, says which there are.
  */
 async function databaseAt({ cwd, flags, print }: Invocation): Promise<DatabaseTarget> {
-	const { project, targets } = await databasesAt(cwd, print);
-	const keys = targets.map((target) => `\`${target.key}\``).join(", ");
-	const wanted = flags.service;
-	if (typeof wanted === "string") {
-		const target = targets.find((t) => t.key === wanted);
-		if (target === undefined) {
+	const [target] = await databasesAt(cwd, print, (project, keys) => {
+		const names = keys.map((key) => `\`${key}\``).join(", ");
+		const wanted = flags.service;
+		if (typeof wanted === "string") {
+			if (!keys.includes(wanted)) {
+				throw new BasepadError(
+					`${project.file} has no database service \`${wanted}\`. Its databases: ${names}.`,
+				);
+			}
+			return [wanted];
+		}
+		if (keys.length > 1) {
 			throw new BasepadError(
-				`${project.file} has no database service \`${wanted}\`. Its databases: ${keys}.`,
+				`${project.file} has several databases: ${names}. Name one with \`--service <key>\`.`,
 			);
 		}
-		return target;
-	}
-	if (targets.length > 1) {
-		throw new BasepadError(
-			`${project.file} has several databases: ${keys}. Name one with \`--service <key>\`.`,
-		);
-	}
-	return targets[0] as DatabaseTarget;
+		return keys;
+	});
+	return target as DatabaseTarget;
 }
 
 /** A snapshot label given, or the default; a lowercase DNS label, as suffixes are. */
@@ -1025,7 +1028,7 @@ async function dbRm(invocation: Invocation): Promise<void> {
 
 /** Every database's snapshots in the environment. */
 async function dbSnapshots({ cwd, print }: Invocation): Promise<void> {
-	const { targets } = await databasesAt(cwd, print);
+	const targets = await databasesAt(cwd, print, (_, keys) => keys);
 	const rows: string[][] = [];
 	for (const { key, service, place, database } of targets) {
 		for (const snapshot of await database.snapshots(service, place)) {
