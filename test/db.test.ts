@@ -144,6 +144,20 @@ test("load or rm of a label with no snapshot fails, naming the ones there are, a
 	expect(await rows(main)).toBe(before);
 }, 120_000);
 
+test("a load whose copy fails leaves the database as it was, the snapshot kept and nothing beside", async () => {
+	await ok(main, "db", "save", "broken");
+	await sql(main, "insert into items values ('unsaved')");
+	const before = await rows(main);
+	// Marked invalid, as an interrupted drop leaves a database: no route can copy it.
+	await sql(main, "update pg_database set datconnlimit = -2 where datname = 't26snap_db@broken'");
+	const result = await box.basepad(main, "db", "load", "broken");
+	expect(result.code).toBe(1);
+	expect(result.stderr).toContain("`t26snap_db` is as it was");
+	expect(await rows(main)).toBe(before);
+	expect(await sql(main, "select count(*) from pg_database where datname like '%~%'")).toBe("0");
+	await sql(main, 'drop database "t26snap_db@broken"');
+}, 120_000);
+
 test("a label that would make a name too long, or is no label, is rejected before anything is saved", async () => {
 	const long = "x".repeat(60);
 	const tooLong = await box.basepad(main, "db", "save", long);

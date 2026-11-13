@@ -199,7 +199,7 @@ test("an import that fails leaves the database as it was, and nothing beside it"
 	expect(result.stderr).toContain("`t27io_db` is as it was");
 	expect(result.stderr).toContain('relation "nowhere" does not exist');
 	expect(await rows(main)).toBe(before);
-	expect(await sql(main, "select count(*) from pg_database where datname like '%~import'")).toBe(
+	expect(await sql(main, "select count(*) from pg_database where datname like '%~%'")).toBe(
 		"0",
 	);
 

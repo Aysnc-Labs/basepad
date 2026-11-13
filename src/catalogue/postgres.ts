@@ -69,6 +69,19 @@ export interface PostgresNames {
 	main: string;
 	/** The server's data folder, in the service's folder. */
 	data: string;
+	/**
+	 * Snapshot `label`'s database: `<database>@<label>`. No database basepad names has `@`, so a
+	 * snapshot is never taken for one, and main's (`<main>@…`) are never among its worktrees' data
+	 * (`<main>_<suffix>…`), while a worktree's are, stamped with its folder like its database.
+	 * Throws a `BasepadError`, with the room left for a label, when the name is past Postgres's limit.
+	 */
+	snapshot(label: string): string;
+	/**
+	 * Where the `db` commands make a database before it replaces the environment's or one of its
+	 * snapshots: `<database>~new`, never a snapshot (`@`) or a worktree's (`_`). Throws a
+	 * `BasepadError` when the name is past Postgres's limit.
+	 */
+	staging(): string;
 }
 
 /** Postgres silently truncates identifiers past this many bytes. */
@@ -101,7 +114,36 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 				`service \`${key}\` makes a worktree's database name "${database}", which is ${bytes} bytes; Postgres allows ${IDENTIFIER_MAX}.`,
 			);
 		}
-		return { database, main, data: join(dir, "data") };
+		// Checked when used, not here: a label is the command's input, and a database that fits
+		// stays usable even when it leaves no room for these.
+		const named = (name: string, what: string, room: string) => {
+			const bytes = Buffer.byteLength(name);
+			if (bytes > IDENTIFIER_MAX) {
+				throw new BasepadError(
+					`${what} of \`${key}\` makes the database name "${name}", which is ${bytes} bytes; Postgres allows ${IDENTIFIER_MAX}${room}`,
+				);
+			}
+			return name;
+		};
+		return {
+			database,
+			main,
+			data: join(dir, "data"),
+			snapshot: (label) => {
+				const room = IDENTIFIER_MAX - Buffer.byteLength(`${database}@`);
+				return named(
+					`${database}@${label}`,
+					`snapshot \`${label}\``,
+					`, which leaves ${room > 0 ? `${room} characters` : "no room"} for a label here.`,
+				);
+			},
+			staging: () =>
+				named(
+					`${database}~new`,
+					"A replacement",
+					". The `db` commands make a database there before it replaces another; shorten `name` or the service key.",
+				),
+		};
 	},
 
 	async prepare(service, place) {
@@ -257,32 +299,43 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 
 	database: {
 		async save(service, place, label) {
-			const name = snapshotName(place, label);
+			const name = place.snapshot(label);
 			const { pg, port, sql } = await own(service, place);
-			// Replaced, not kept beside: a label names one snapshot.
-			await sql(`drop database if exists ${identifier(name)} with (force)`);
-			await copyDatabase(pg, port, place.database, name);
-			await stamp(sql, name, place.owner);
+			// A label names one snapshot: one there is replaced, and kept should the copy fail.
+			await replace(
+				sql,
+				{ target: name, staging: place.staging(), owner: place.owner },
+				async (staging) => {
+					try {
+						await copyDatabase(pg, port, place.database, staging);
+					} catch (error) {
+						if (!(error instanceof BasepadError)) throw error;
+						throw new BasepadError(
+							`Could not save snapshot \`${label}\`; any snapshot \`${label}\` there was is kept.\n${error.message}`,
+						);
+					}
+				},
+			);
 		},
 
 		async load(service, place, label) {
-			const name = snapshotName(place, label);
+			const name = place.snapshot(label);
 			const { pg, port, sql } = await own(service, place);
 			const found = await snapshotsOf(sql, place);
 			if (!found.some((snapshot) => snapshot.label === label)) {
 				throw new BasepadError(noSnapshot(place, label, found));
 			}
-			// Its clients are ended with it; they connect again to the copy once it is made.
-			await sql(`drop database ${identifier(place.database)} with (force)`);
-			try {
-				await copyDatabase(pg, port, name, place.database);
-			} catch (error) {
-				if (!(error instanceof BasepadError)) throw error;
-				throw new BasepadError(
-					`${error.message}\n\`${place.database}\` is gone; snapshot \`${label}\` is kept, so run \`basepad db load\` again, or \`basepad up\` for an empty database.`,
-				);
-			}
-			await stamp(sql, place.database, place.owner);
+			const swap = { target: place.database, staging: place.staging(), owner: place.owner };
+			await replace(sql, swap, async (staging) => {
+				try {
+					await copyDatabase(pg, port, name, staging);
+				} catch (error) {
+					if (!(error instanceof BasepadError)) throw error;
+					throw new BasepadError(
+						`Could not load snapshot \`${label}\`; \`${place.database}\` is as it was.\n${error.message}`,
+					);
+				}
+			});
 		},
 
 		async snapshots(service, place) {
@@ -291,7 +344,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		},
 
 		async remove(service, place, label) {
-			const name = snapshotName(place, label);
+			const name = place.snapshot(label);
 			const { sql } = await own(service, place);
 			const found = await snapshotsOf(sql, place);
 			if (!found.some((snapshot) => snapshot.label === label)) {
@@ -303,24 +356,20 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		async import(service, place, source, confirm) {
 			const { pg, port, sql } = await own(service, place);
 			const from = await sourceOf(source);
-			const beside = importName(place);
+			// Named before asking, so a name past the limit is refused first.
+			const swap = { target: place.database, staging: place.staging(), owner: place.owner };
 			await confirm(place.database);
-			// Left by an import that was interrupted.
-			await sql(`drop database if exists ${identifier(beside)} with (force)`);
-			await sql(`create database ${identifier(beside)}`);
-			try {
-				await restore(pg, port, beside, from);
-			} catch (error) {
-				await sql(`drop database if exists ${identifier(beside)} with (force)`);
-				if (!(error instanceof BasepadError)) throw error;
-				throw new BasepadError(
-					`Could not import ${from.description}; \`${place.database}\` is as it was.\n${error.message}${from.format === "plain" ? "\nA plain SQL file must load as is: one with other roles' owners or grants needs `pg_dump --no-owner --no-privileges`, or use a custom-format dump." : ""}`,
-				);
-			}
-			// Its clients are ended with it; they connect again to the import once it is renamed.
-			await sql(`drop database if exists ${identifier(place.database)} with (force)`);
-			await sql(`alter database ${identifier(beside)} rename to ${identifier(place.database)}`);
-			await stamp(sql, place.database, place.owner);
+			await replace(sql, swap, async (staging) => {
+				await sql(`create database ${identifier(staging)}`);
+				try {
+					await restore(pg, port, staging, from);
+				} catch (error) {
+					if (!(error instanceof BasepadError)) throw error;
+					throw new BasepadError(
+						`Could not import ${from.description}; \`${place.database}\` is as it was.\n${error.message}${from.format === "plain" ? "\nA plain SQL file must load as is: one with other roles' owners or grants needs `pg_dump --no-owner --no-privileges`, or use a custom-format dump." : ""}`,
+					);
+				}
+			});
 			return from.description;
 		},
 
@@ -401,21 +450,6 @@ async function sourceOf(source: string): Promise<Source> {
 	}
 }
 
-/**
- * The database an import loads into before it takes the environment's database's place:
- * `<database>~import`, never a snapshot (`@`) or a worktree's (`_`) of this environment.
- */
-function importName(place: Place<PostgresNames>): string {
-	const name = `${place.database}~import`;
-	const bytes = Buffer.byteLength(name);
-	if (bytes > IDENTIFIER_MAX) {
-		throw new BasepadError(
-			`An import of \`${place.key}\` loads into "${name}" first, which is ${bytes} bytes; Postgres allows ${IDENTIFIER_MAX}. Shorten \`name\` or the service key.`,
-		);
-	}
-	return name;
-}
-
 /** Loads `from` into the empty database `to`, stopping at the first error. */
 async function restore(pg: Tool, port: number, to: string, from: Source): Promise<void> {
 	const into = connection(port, to);
@@ -467,23 +501,6 @@ function toStdout(file: string, args: string[]): Promise<void> {
 }
 
 /**
- * A snapshot's database: `<database>@<label>`. No database basepad names has `@`, so a snapshot is
- * never taken for one, and main's (`<main>@…`) are never among its worktrees' data
- * (`<main>_<suffix>…`), while a worktree's are, stamped with its folder like its database.
- */
-function snapshotName(place: Place<PostgresNames>, label: string): string {
-	const name = `${place.database}@${label}`;
-	const bytes = Buffer.byteLength(name);
-	if (bytes > IDENTIFIER_MAX) {
-		const room = IDENTIFIER_MAX - Buffer.byteLength(`${place.database}@`);
-		throw new BasepadError(
-			`snapshot \`${label}\` of \`${place.key}\` makes the database name "${name}", which is ${bytes} bytes; Postgres allows ${IDENTIFIER_MAX}, which leaves ${room > 0 ? `${room} characters` : "no room"} for a label here.`,
-		);
-	}
-	return name;
-}
-
-/**
  * The running server's SQL, for a service whose database is the environment's own. A worktree's
  * `shared` service's is main's, which the worktree's commands never touch.
  */
@@ -507,7 +524,8 @@ async function snapshotsOf(
 	sql: (text: string) => Promise<string>,
 	place: Place<PostgresNames>,
 ): Promise<Snapshot[]> {
-	const prefix = `${place.database}@`;
+	// What every snapshot's name starts with.
+	const prefix = place.snapshot("");
 	const rows = await sql(
 		`select datname || '|' || pg_database_size(oid) from pg_database where datname like ${literal(`${likeEscaped(prefix)}%`)} order by datname`,
 	);
@@ -531,6 +549,31 @@ function noSnapshot(
 ): string {
 	const labels = found.map((snapshot) => `\`${snapshot.label}\``).join(", ");
 	return `\`${place.key}\` has no snapshot \`${label}\`. ${found.length === 0 ? "It has none; make one with `basepad db save`." : `Its snapshots: ${labels}.`}`;
+}
+
+/**
+ * Replaces database `target` with one `fill` makes at `staging`, beside it: the one way the `db`
+ * commands replace a database. Only once `fill` has finished is `target` dropped, its sessions
+ * ended (`with (force)` keeps new ones out until it is gone), and the new one renamed to it, open,
+ * and stamped with `owner`. A `fill` that fails leaves `target` as it was, and nothing
+ * beside it. Its clients connect again by themselves, to the new one.
+ */
+async function replace(
+	sql: (text: string) => Promise<string>,
+	{ target, staging, owner }: { target: string; staging: string; owner: string },
+	fill: (staging: string) => Promise<void>,
+): Promise<void> {
+	// Left by a replacement that was interrupted.
+	await sql(`drop database if exists ${identifier(staging)} with (force)`);
+	try {
+		await fill(staging);
+	} catch (error) {
+		await sql(`drop database if exists ${identifier(staging)} with (force)`);
+		throw error;
+	}
+	await sql(`drop database if exists ${identifier(target)} with (force)`);
+	await sql(`alter database ${identifier(staging)} rename to ${identifier(target)}`);
+	await stamp(sql, target, owner);
 }
 
 /** Marks database `name` as belonging to the checkout at `owner`, as `provision` does. */
