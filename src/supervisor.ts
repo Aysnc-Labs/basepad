@@ -22,6 +22,8 @@ export interface Daemon {
 	dir: string;
 	/** The port it is first offered as `PORT`; a taken one is passed over. Gives it a domain. */
 	port?: number;
+	/** The signal that stops it, sent to its process group; pitchfork's default is SIGTERM. */
+	stopSignal?: "SIGINT";
 }
 
 /** A daemon's state, as `status` shows it. */
@@ -293,6 +295,9 @@ function toml(daemons: Record<string, Daemon>): string {
 			];
 			if (daemon.port !== undefined) {
 				lines.push(`port = { expect = [${daemon.port}], bump = true }`);
+			}
+			if (daemon.stopSignal !== undefined) {
+				lines.push(`stop_signal = ${JSON.stringify(daemon.stopSignal)}`);
 			}
 			return `${lines.join("\n")}\n`;
 		})

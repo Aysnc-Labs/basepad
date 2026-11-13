@@ -64,7 +64,12 @@ export const postgres: Kind<PostgresService> = {
 			"-c",
 			"unix_socket_directories=",
 		]);
-		return { run: `exec ${server.map(shellQuote).join(" ")}`, dir: place.dir };
+		return {
+			run: `exec ${server.map(shellQuote).join(" ")}`,
+			dir: place.dir,
+			// Fast shutdown: SIGTERM's smart shutdown would wait for every app's connections to close.
+			stopSignal: "SIGINT",
+		};
 	},
 
 	async provision(service, place, { claim }) {

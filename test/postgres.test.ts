@@ -104,6 +104,17 @@ test("rows written before down are there after up, and down stops the server", a
 	expect(await sql(shop, "select body from notes")).toBe("kept");
 });
 
+test("down stops the server promptly while a client is connected", async () => {
+	const url = (await env(shop, ".env.local")).DATABASE_URL as string;
+	const client = box.psql([url], "select pg_sleep(60)");
+	await new Promise((resolve) => setTimeout(resolve, 1000));
+	const started = Date.now();
+	expect((await box.basepad(shop, "down")).code).toBe(0);
+	expect(Date.now() - started).toBeLessThan(5000);
+	expect((await client).code).not.toBe(0);
+	expect((await box.basepad(shop, "up")).code).toBe(0);
+});
+
 test("a second checkout under the same name is refused, naming the owner and --claim", async () => {
 	const copy = await box.project("copy", { "basepad.config.ts": config });
 	const out = await box.basepad(copy, "up");

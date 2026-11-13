@@ -30,7 +30,16 @@ export async function serviceUser(): Promise<ServiceUser> {
 	const uid = Number((await must("id", ["-u", NAME])).trim());
 	const gid = Number((await must("id", ["-g", NAME])).trim());
 	return {
-		wrap: (argv) => ["runuser", "-u", NAME, "--", ...argv],
+		// setpriv execs the program itself, so the supervisor's pid is the server's and its stop
+		// signal reaches the server directly; runuser would stay in between.
+		wrap: (argv) => [
+			"setpriv",
+			`--reuid=${uid}`,
+			`--regid=${gid}`,
+			"--clear-groups",
+			"--",
+			...argv,
+		],
 		async grant({ traverse, owned }) {
 			// mise installs under /root (0700), so the service user can't even reach Postgres's binaries.
 			// o+x on each ancestor grants passing through, without listing or reading anything.
