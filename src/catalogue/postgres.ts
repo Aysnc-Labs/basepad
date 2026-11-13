@@ -152,7 +152,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		};
 	},
 
-	async provision(service, place, { claim, stopped }) {
+	async provision(service, place, { claim, stopped, print }) {
 		const pg = await installPostgres(service.version, place.machine.home);
 		const { data } = place;
 		const port = await waitFor(
@@ -178,9 +178,15 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		};
 		// A shared worktree database is main's, which main provisions and stamps.
 		if (place.suffix !== undefined && service.worktree === "shared") return outputs;
-		const exists = (await sql(`select 1 from pg_database where datname = ${literal(db)}`)) === "1";
+		const open = await sql(`select datallowconn from pg_database where datname = ${literal(db)}`);
+		const exists = open !== "";
+		// Left closed by a copy that was interrupted.
+		if (open === "f") await sql(`alter database ${identifier(db)} allow_connections true`);
 		if (!exists && place.suffix !== undefined && service.worktree === "copy") {
-			await copyDatabase(sql, place.main, db);
+			const start = performance.now();
+			const route = await copyDatabase(pg, port, place.main, db);
+			const seconds = ((performance.now() - start) / 1000).toFixed(1);
+			print(`Copied main's \`${place.key}\` by ${route} in ${seconds} s.`);
 		} else if (!exists) {
 			await sql(`create database ${identifier(db)}`);
 		}
@@ -283,17 +289,70 @@ async function installPostgres(version: PostgresVersion, home: string): Promise<
 	return pg;
 }
 
+/** How a database was copied, fastest first. */
+type Route = "file clone" | "template copy" | "dump and restore";
+
 /**
- * Makes `to` a copy of `from`, rows, schema and extensions. A copy has no comment, so it carries no
- * owner's stamp. The one way basepad copies a database: a template copy, which needs `from` to have
- * no other session.
+ * Makes `to` a copy of `from`, rows, schema and extensions, while `from`'s clients stay connected,
+ * and says how. A copy has no comment, so it carries no owner's stamp. The one way basepad copies a
+ * database.
+ *
+ * A template copy needs `from` to have no other session, and only `allow_connections` keeps out a
+ * superuser, so `from` is closed, its sessions ended, and opened again after: a pooled client
+ * reconnects by itself. `provision` opens a database an interrupted copy left closed. The copy is a
+ * file clone where the server offers one (Postgres 18; copy-on-write on APFS, btrfs, XFS), else a
+ * plain template copy; Postgres never falls back by itself, so basepad does. Dump and restore,
+ * with `from` open again, only when a template copy fails.
  */
-async function copyDatabase(
-	sql: (text: string) => Promise<string>,
-	from: string,
-	to: string,
-): Promise<void> {
-	await sql(`create database ${identifier(to)} template ${identifier(from)}`);
+async function copyDatabase(pg: Tool, port: number, from: string, to: string): Promise<Route> {
+	const sql = (...statements: string[]) => query(pg, port, statements);
+	const offered = await sql(
+		"select coalesce(enumvals::text, '') from pg_settings where name = 'file_copy_method'",
+	);
+	// File by file, not the default WAL_LOG: about 4 times faster on a 1 GB database, and a clone
+	// needs it.
+	const create = `create database ${identifier(to)} template ${identifier(from)} strategy file_copy`;
+	const routes: [Route, string[]][] = [["template copy", [create]]];
+	// One session: the setting is the session's own.
+	if (offered.includes("clone")) {
+		routes.unshift(["file clone", ["set file_copy_method = clone", create]]);
+	}
+	const failures: string[] = [];
+	await sql(`alter database ${identifier(from)} allow_connections false`);
+	try {
+		await sql(
+			`select pg_terminate_backend(pid, 5000) from pg_stat_activity where datname = ${literal(from)} and pid <> pg_backend_pid()`,
+		);
+		for (const [route, statements] of routes) {
+			try {
+				await sql(...statements);
+				return route;
+			} catch (error) {
+				failures.push(`${route}: ${(error as Error).message.trim()}`);
+				await sql(`drop database if exists ${identifier(to)}`);
+			}
+		}
+	} finally {
+		await sql(`alter database ${identifier(from)} allow_connections true`);
+	}
+	await sql(`create database ${identifier(to)}`);
+	const conn = (db: string) =>
+		["-h", HOST, "-p", String(port), "-U", USER, "-d", db].map(shellQuote).join(" ");
+	try {
+		await must(
+			"bash",
+			[
+				"-c",
+				`set -o pipefail; ${shellQuote(pg.bin("pg_dump"))} -Fc ${conn(from)} | ${shellQuote(pg.bin("pg_restore"))} --no-owner --exit-on-error ${conn(to)}`,
+			],
+			{ env: clientEnv() },
+		);
+	} catch (error) {
+		await sql(`drop database if exists ${identifier(to)}`);
+		failures.push(`dump and restore: ${(error as Error).message.trim()}`);
+		throw new BasepadError(`Could not copy \`${from}\` to \`${to}\`.\n${failures.join("\n")}`);
+	}
+	return "dump and restore";
 }
 
 /** The port of the server running on `data`, read from Postgres's own pid file. */
@@ -313,11 +372,11 @@ function alive(pid: number): boolean {
 	}
 }
 
-/** Runs SQL in the maintenance database as the superuser; returns psql's unaligned output. */
-async function query(pg: Tool, port: number, sql: string): Promise<string> {
-	const env = Object.fromEntries(
-		Object.entries(process.env).filter(([key]) => !key.startsWith("PG")),
-	);
+/**
+ * Runs SQL in the maintenance database as the superuser, each statement on its own in one session;
+ * returns psql's unaligned output.
+ */
+async function query(pg: Tool, port: number, sql: string | string[]): Promise<string> {
 	const out = await must(
 		pg.bin("psql"),
 		[
@@ -332,10 +391,9 @@ async function query(pg: Tool, port: number, sql: string): Promise<string> {
 			"-tAX",
 			"-v",
 			"ON_ERROR_STOP=1",
-			"-c",
-			sql,
+			...[sql].flat().flatMap((statement) => ["-c", statement]),
 		],
-		{ env: { ...env, PGCONNECT_TIMEOUT: "2" } },
+		{ env: clientEnv() },
 	);
 	return out.trim();
 }
@@ -343,6 +401,14 @@ async function query(pg: Tool, port: number, sql: string): Promise<string> {
 /** `text` for a `like` pattern, its wildcards matched as themselves (backslash escapes). */
 function likeEscaped(text: string): string {
 	return text.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
+/** The environment for Postgres's client programs, free of the developer's own `PG*` settings. */
+function clientEnv(): NodeJS.ProcessEnv {
+	const env = Object.fromEntries(
+		Object.entries(process.env).filter(([key]) => !key.startsWith("PG")),
+	);
+	return { ...env, PGCONNECT_TIMEOUT: "2" };
 }
 
 function literal(text: string): string {

@@ -59,7 +59,7 @@ Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### `basepad worktree add`
 
-Purpose: makes a worktree of main: a git worktree named `<prefix>-<n>` beside the project, its own databases (copied from main's, empty or shared), domains `<app>.<suffix>.<name>.localhost` and env files from main's. `up`, `down` and `status` in its folder act on it. Worktrees are found from git; nothing is listed.
+Purpose: makes a worktree of main: a git worktree named `<prefix>-<n>` beside the project, its own databases (copied from main's while its app is connected, by the fastest route the server has; empty or shared), domains `<app>.<suffix>.<name>.localhost` and env files from main's. `up`, `down` and `status` in its folder act on it. Worktrees are found from git; nothing is listed.
 Entry: `basepad worktree add [--json]`, `worktrees` in the config, `postgres({ worktree })`
 Paths: src/worktrees.ts, src/commands.ts, src/layout.ts, src/catalogue/postgres.ts
 
