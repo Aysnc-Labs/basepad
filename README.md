@@ -90,7 +90,7 @@ The URL carries the proxy's port, and its certificate is signed by basepad's own
 curl --cacert ~/.basepad/pitchfork/state/proxy/ca.pem https://web.shop.localhost:7443
 ```
 
-To open it in a browser with no port and no warning, run [`basepad setup`](#port-free-urls-basepad-setup) once on the machine.
+That's Linux as a user. On macOS, URLs have no port from the first `up`: `https://web.shop.localhost`. To open it in a browser with no warning, run [`basepad setup`](#port-free-urls-basepad-setup) once on the machine.
 
 ```sh
 npx basepad status   # each app and service, with its address and state
@@ -151,7 +151,7 @@ A service gives:
 | `password` | `basepad`, a placeholder: local connections need none       |
 | `database` | `<name>_<key>`, with hyphens made underscores: `shop_db`    |
 
-An app gives `url`: `https://<key>.<name>.localhost`, with the proxy's port (`:7443`) until `basepad setup` has been run. An app's port isn't given: it changes from run to run.
+An app gives `url`: `https://<key>.<name>.localhost`, with the proxy's port (`:7443`) while port 443 doesn't reach the proxy (Linux as a user, until `basepad setup`). An app's port isn't given: it changes from run to run.
 
 ### Env files
 
@@ -290,7 +290,7 @@ npx basepad down && rm -rf ~/.basepad/services/shop
 
 ## Port-free URLs: `basepad setup`
 
-Without setup, everything works, with the port in each URL (`https://web.shop.localhost:7443`) and a certificate your browser doesn't trust. Once per machine:
+Without setup, everything works, with a certificate your browser doesn't trust, and on Linux as a user the port in each URL (`https://web.shop.localhost:7443`). Once per machine:
 
 ```sh
 npx basepad setup
@@ -298,10 +298,10 @@ npx basepad setup
 
 It prints its plan, then asks before it changes anything. Steps marked `[sudo]` ask for your password.
 
-- **macOS:** trusts basepad's certificate authority, and redirects port 443 to the proxy's port with a pf rule.
+- **macOS:** trusts basepad's certificate authority in your login keychain; macOS asks for Touch ID or your password, and nothing needs `sudo`. URLs are port-free without setup: `up` starts a small forwarder on port 443, which macOS lets any user take, that passes connections from this Mac to the proxy and closes any from the network. basepad doesn't use pf, which redirects ports but turns off iCloud Private Relay; setup removes a pf redirect an earlier basepad setup added. Setting `BASEPAD_PROXY_PORT` turns the forwarder off.
 - **Linux:** trusts the certificate authority in the system store and in Chrome's and Firefox's own stores, and redirects port 443 with iptables.
 
-Then run `basepad up` in each project, so its env files get the port-free URLs. When something else answers on port 443 (Herd, Valet), setup warns you first. A restart can drop the redirect; run `setup` again if URLs get their port back.
+Then run `basepad up` in each project, so its env files get the port-free URLs. When something else answers on port 443 (Herd, Valet), setup warns you first, and on macOS the forwarder leaves it alone and URLs keep their port. On Linux a restart can drop the redirect; run `setup` again if URLs get their port back.
 
 `--dry-run` prints the plan and changes nothing. `--yes` applies it without asking, and is needed when there's no terminal to ask on.
 

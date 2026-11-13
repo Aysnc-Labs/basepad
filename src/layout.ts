@@ -15,6 +15,12 @@ export interface Machine {
 	 * `basepad setup` redirected it. Asked from the machine (`Supervisor.standardPort`), never stored.
 	 */
 	portFree: boolean;
+	/**
+	 * Whether basepad's forwarder takes port 443 for the proxy: on macOS with `BASEPAD_PROXY_PORT`
+	 * unset, where no privilege is needed for it and pf, the alternative, turns off iCloud Private
+	 * Relay.
+	 */
+	forwards443: boolean;
 }
 
 /** The proxy's default port: high, so it needs no privilege, and unlike pitchfork's own suggestion. */
@@ -24,7 +30,11 @@ const PROXY_PORT = 7443;
  * Reads `BASEPAD_HOME` (default `~/.basepad`) and `BASEPAD_PROXY_PORT` (default 7443, or 443 as root
  * on Linux, where the proxy binds it itself). `portFree` starts as what the port alone tells.
  */
-export function machine(env: NodeJS.ProcessEnv, rootOnLinux = isRootOnLinux()): Machine {
+export function machine(
+	env: NodeJS.ProcessEnv,
+	rootOnLinux = isRootOnLinux(),
+	platform = process.platform,
+): Machine {
 	const raw = env.BASEPAD_PROXY_PORT;
 	const unset = raw === undefined || raw === "";
 	const proxyPort = unset ? (rootOnLinux ? 443 : PROXY_PORT) : Number(raw);
@@ -35,6 +45,7 @@ export function machine(env: NodeJS.ProcessEnv, rootOnLinux = isRootOnLinux()): 
 		home: env.BASEPAD_HOME || join(env.HOME || homedir(), ".basepad"),
 		proxyPort,
 		portFree: proxyPort === 443,
+		forwards443: unset && platform === "darwin",
 	};
 }
 
