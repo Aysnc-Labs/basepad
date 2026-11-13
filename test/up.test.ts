@@ -4,7 +4,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { request } from "node:https";
 import { join, relative } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { configFile, type Result, type Sandbox, sandbox } from "./sandbox.ts";
+import { configFile, freePort, type Result, type Sandbox, sandbox } from "./sandbox.ts";
 
 const echo = join(import.meta.dirname, "apps/echo.mjs");
 const node = (script: string) => `exec '${process.execPath}' '${script}'`;
@@ -204,4 +204,17 @@ test("down stops the project's apps and deletes nothing", async () => {
 	const status = await box.basepad(shop, "status");
 	expect(status.stdout).toContain(`web  ${url("web")}  stopped`);
 	expect(status.stdout).toContain(`cms  ${url("cms")}  stopped`);
+});
+
+test("up says so before a settings change restarts the supervisor, and only then", async () => {
+	const warning =
+		"basepad's supervisor restarts to take new settings, which stops every project's running apps and services.";
+	expect(firstUp.stdout).not.toContain(warning);
+	const other = String(await freePort());
+	const out = await box.basepadWith({ env: { BASEPAD_PROXY_PORT: other } }, shop, "up");
+	expect(out.stderr).toBe("");
+	expect(out.code).toBe(0);
+	expect(out.stdout.indexOf(warning)).toBe(0);
+	expect(out.stdout).toContain(`web  https://web.shop.localhost:${other}  running`);
+	await box.basepadWith({ env: { BASEPAD_PROXY_PORT: other } }, shop, "down");
 });

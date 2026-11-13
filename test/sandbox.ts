@@ -182,7 +182,7 @@ export async function sandbox(): Promise<Sandbox> {
 }
 
 /** A port nothing listens on right now. */
-function freePort(): Promise<number> {
+export function freePort(): Promise<number> {
 	return new Promise((resolve, reject) => {
 		const server = createServer();
 		server.on("error", reject);

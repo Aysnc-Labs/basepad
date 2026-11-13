@@ -110,8 +110,18 @@ function settings(machine: Machine): Record<string, string> {
 	};
 }
 
-/** Installs pitchfork through mise and opens basepad's supervisor. Nothing starts until asked. */
-export async function openSupervisor(machine: Machine): Promise<Supervisor> {
+/** What `serve` prints before a settings change restarts a running supervisor. */
+export const RESTART_WARNING =
+	"basepad's supervisor restarts to take new settings, which stops every project's running apps and services. Run `basepad up` in a project to start it again.";
+
+/**
+ * Installs pitchfork through mise and opens basepad's supervisor. Nothing starts until asked.
+ * `print` gets what the developer must know before it happens: a restart that stops their apps.
+ */
+export async function openSupervisor(
+	machine: Machine,
+	print: (line: string) => void = () => {},
+): Promise<Supervisor> {
 	const paths = supervisorPaths(machine);
 	const dirs = {
 		PITCHFORK_STATE_DIR: paths.state,
@@ -135,7 +145,10 @@ export async function openSupervisor(machine: Machine): Promise<Supervisor> {
 			([key, value]) => now.get(key) !== value,
 		);
 		for (const [key, value] of changes) await run("settings", "set", key, value, "--global");
-		if (changes.length > 0 && running()) await run("supervisor", "start", "--force");
+		if (changes.length > 0 && running()) {
+			print(RESTART_WARNING);
+			await run("supervisor", "start", "--force");
+		}
 	};
 
 	/** The namespace's daemons. With no supervisor running there are none, and none is started. */

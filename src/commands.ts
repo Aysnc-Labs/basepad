@@ -88,7 +88,7 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const ports = layout(project, here);
 	const services = Object.keys(project.services);
 	const apps = Object.keys(project.apps);
-	const supervisor = await openSupervisor(here);
+	const supervisor = await openSupervisor(here, print);
 	const owner = await supervisor.owner(project.name);
 	if (owner !== undefined && owner !== project.root && flags.claim !== true) {
 		throw new BasepadError(
