@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import { CONFIG_FILE, LOCAL_FILE, loadProject } from "./config.ts";
 import { BasepadError } from "./internal/exec.ts";
 import { table } from "./internal/table.ts";
-import { layout } from "./layout.ts";
+import { layout, machine } from "./layout.ts";
 
 export interface Flag {
 	short?: string;
@@ -125,7 +125,7 @@ async function ownVersion(): Promise<string> {
 
 async function status({ cwd, print }: Invocation): Promise<void> {
 	const project = await loadProject(cwd);
-	const { apps } = layout(project);
+	const { apps } = layout(project, machine(process.env));
 	const rows = Object.entries(apps).map(([key, app]) => [key, app.url, "stopped"]);
 	if (rows.length === 0) {
 		print(`${project.file} names no apps.`);
