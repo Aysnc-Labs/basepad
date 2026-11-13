@@ -132,7 +132,7 @@ export function layout(
 	}
 	const services: Layout["services"] = {};
 	for (const [key, service] of Object.entries(project.services)) {
-		const dir = join(machine.home, "services", name, key);
+		const dir = join(servicesHome(machine, name), key);
 		let names: NamesOf<Service>;
 		try {
 			names = kindOf(service).names(service, { name, key, dir, suffix });
@@ -186,6 +186,11 @@ export function nextSuffix(prefix: string, taken: Iterable<string>): string {
 	let n = 1;
 	while (names.has(`${prefix}-${n}`)) n++;
 	return `${prefix}-${n}`;
+}
+
+/** The folder in basepad's home holding a project's services, one folder per service key. */
+export function servicesHome(machine: Pick<Machine, "home">, name: string): string {
+	return join(machine.home, "services", name);
 }
 
 /** basepad's own pitchfork's folders in the home, and the CA its proxy signs with. */

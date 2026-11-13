@@ -17,7 +17,7 @@ async function main(argv: string[]): Promise<number> {
 		return 1;
 	}
 	if (first.startsWith("-")) {
-		const flags = parseFlags([first, ...rest], TOP_FLAGS, "basepad");
+		const { flags } = parseFlags([first, ...rest], TOP_FLAGS, "basepad");
 		if (flags.version) {
 			process.stdout.write(`${version()}\n`);
 			return 0;
@@ -37,25 +37,40 @@ async function main(argv: string[]): Promise<number> {
 		);
 	}
 	const args = name === pair ? rest.slice(1) : rest;
-	const flags = parseFlags(args, { ...command.flags, ...HELP }, `basepad ${name}`);
+	const { flags, positional } = parseFlags(args, { ...command.flags, ...HELP }, `basepad ${name}`);
 	if (flags.help) {
 		process.stdout.write(commandHelp(name, command));
 		return 0;
 	}
-	await command.run({ cwd: process.cwd(), flags, print: (line) => console.log(line) });
+	const wanted = command.args ?? [];
+	if (positional.length !== wanted.length) {
+		throw new BasepadError(
+			wanted.length === 0
+				? `\`basepad ${name}\` takes no arguments; got \`${positional[0]}\`.`
+				: `Usage: basepad ${name} ${usageArgs(wanted)}[flags]`,
+		);
+	}
+	await command.run({
+		cwd: process.cwd(),
+		flags,
+		args: positional,
+		print: (line) => console.log(line),
+	});
 	return 0;
 }
 
 /**
  * Reads flags by long or short name: a switch, or a flag with a value, which takes the next
- * argument. Anything else is an error naming the nearest flag.
+ * argument. Other words are the positional arguments; any other flag is an error naming the
+ * nearest.
  */
 function parseFlags(
 	args: string[],
 	known: Record<string, Flag>,
 	usage: string,
-): Record<string, boolean | string> {
+): { flags: Record<string, boolean | string>; positional: string[] } {
 	const flags: Record<string, boolean | string> = {};
+	const positional: string[] = [];
 	const spellings = Object.entries(known).flatMap(([name, flag]) => [
 		[`--${name}`, name],
 		...(flag.short ? [[`-${flag.short}`, name]] : []),
@@ -77,8 +92,10 @@ function parseFlags(
 			flags[name] = given;
 			continue;
 		}
-		if (!arg.startsWith("-"))
-			throw new BasepadError(`\`${usage}\` takes no arguments; got \`${arg}\`.`);
+		if (!arg.startsWith("-")) {
+			positional.push(arg);
+			continue;
+		}
 		const near = nearest(
 			arg,
 			Object.keys(known).map((n) => `--${n}`),
@@ -87,7 +104,7 @@ function parseFlags(
 			`\`${usage}\` has no flag \`${arg}\`. The nearest is \`${near}\`; run \`${usage} --help\` for its flags.`,
 		);
 	}
-	return flags;
+	return { flags, positional };
 }
 
 /** The candidate with the fewest edits from `word`. */
@@ -132,7 +149,7 @@ function topHelp(): string {
 
 function commandHelp(name: string, command: Command): string {
 	return [
-		`Usage: basepad ${name} [flags]`,
+		`Usage: basepad ${name} ${usageArgs(command.args ?? [])}[flags]`,
 		"",
 		`${command.summary}.`,
 		"",
@@ -140,6 +157,11 @@ function commandHelp(name: string, command: Command): string {
 		...flagLines({ ...command.flags, ...HELP }),
 		"",
 	].join("\n");
+}
+
+/** A command's arguments for its usage line: `<name> `. */
+function usageArgs(args: string[]): string {
+	return args.map((arg) => `<${arg}> `).join("");
 }
 
 function flagLines(flags: Record<string, Flag>): string[] {

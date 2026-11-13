@@ -44,6 +44,14 @@ export type Place<N = unknown> = {
 	machine: Machine;
 } & N;
 
+/** One piece of a worktree's data on main's server, such as a database. */
+export interface WorktreeData {
+	/** Its name on the server. */
+	name: string;
+	/** The folder stamped on it as its owner; empty when unstamped. */
+	owner: string;
+}
+
 /** One service kind: `S` its config entry, `O` what it gives to `env`, `N` the names it derives. */
 export interface Kind<S extends ServiceBase, O, N> {
 	/** Validates one config entry of this kind: a strict object whose `kind` is a literal. */
@@ -64,12 +72,21 @@ export interface Kind<S extends ServiceBase, O, N> {
 	 * it gives to `env`. In a worktree it provisions from main's, as the service's `worktree` option
 	 * says (a copy of main's data, empty, or main's own), so main's must be provisioned first. Throws a `BasepadError` when another checkout owns it, unless `claim`, and
 	 * `Stopped` (`internal/ports.ts`) as soon as `stopped` says its daemon is no longer running.
+	 * `print` tells the developer what it did that they would want to know, such as how it copied.
 	 */
 	provision(
 		service: S,
 		place: Place<N>,
-		options: { claim: boolean; stopped: () => Promise<boolean> },
+		options: { claim: boolean; stopped: () => Promise<boolean>; print(line: string): void },
 	): Promise<O>;
+	/**
+	 * The worktree data this service holds on main's server, never main's own. In main's place,
+	 * every worktree's; in a worktree's, that worktree's, found by its name or its stamp (`owner`),
+	 * so it needs no worktree config. None while the server is not running.
+	 */
+	worktreeData(service: S, place: Place<N>): Promise<WorktreeData[]>;
+	/** Deletes worktree data by name. Throws on main's own, and deletes nothing. */
+	dropWorktreeData(service: S, place: Place<N>, names: string[]): Promise<void>;
 	/** Where a client reaches the service: where it runs, else where it would first be tried. */
 	address(service: S, place: Place<N>): Promise<string>;
 }

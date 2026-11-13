@@ -196,9 +196,22 @@ npx basepad worktree add --start  # starts its apps now
 - Each path in `worktrees.clone` is copied from main, copy-on-write where the filesystem can (APFS, btrfs, XFS) and fully otherwise, so the worktree's writes never reach main's files. A path main lacks is skipped with a note. A full copy is slow: about 10 s for a `node_modules` of 34,000 files on Linux's ext4.
 - Then the commands in `worktrees.setup` run in order in the worktree, with its env files written. The first that fails is shown with its output, the rest don't run, `worktree add` exits 1 and the worktree is kept.
 - `worktree add` starts no app: an app starts when its domain is first opened, with main's services if they are stopped, or straight away with `--start`. After `down`, an app stays stopped until `up`. `basepad up`, `down` and `status` in the worktree's folder act on it, with the config in that folder. A worktree's services are main's servers, so `up` there starts main's services too, and `down` there stops only the worktree's apps.
-- The copy needs no client connected to main's database.
+- The copy works while main's app is connected. basepad closes main's database to connections for the copy, ends its sessions and opens it again; main's app reconnects by itself. A node-postgres `Pool` needs an `error` listener (`pool.on("error", …)`), or an ended idle client crashes its process. If a copy is interrupted, the next `basepad up` opens main's database again.
+- The copy is a file clone where the server offers one (Postgres 18 on APFS, btrfs or XFS with reflink: copy-on-write), else a template copy (about 1 s per GB on Linux), else dump and restore. The output says which.
 
 basepad keeps no list of worktrees: it asks git which exist.
+
+To see and remove them, in main:
+
+```sh
+npx basepad worktree ls               # each worktree, its branch and folder
+npx basepad status                    # main, then each worktree's apps and services
+npx basepad worktree rm worktree-1    # stops its apps, drops its databases, removes the git worktree
+npx basepad prune                     # clears what worktrees whose folder you deleted left behind
+```
+
+- `worktree rm` keeps the branch. It refuses a worktree with uncommitted or untracked files; `--force` removes it anyway, and they are lost. It works from the name alone, so a broken config or a folder already deleted does not stop it. It never drops main's database, so a `shared` service's stays.
+- `prune` lists what worktrees whose folder is gone left (git's record, databases, registrations), then asks before removing it; `--yes` removes it without asking. It also lists the data of services no longer in the config, main's included, and deletes that only when you answer yes on a terminal, even with `--yes`.
 
 ### The local file
 
@@ -224,8 +237,11 @@ Run them anywhere in the project, as `npx basepad <command>`. `basepad --help` l
 | `basepad init`   | Writes `basepad.config.ts`, named after the folder. Adds `basepad.config.local.ts` to `.gitignore`, creating it. Adds basepad to `package.json`'s devDependencies when it isn't there. | An existing config: it refuses to overwrite one. It installs nothing.             |
 | `basepad up`     | Installs what it needs through mise, starts the services, creates their databases, sets the env files' keys, starts the apps and prints the tables above.                              | Any other file in the project, any other line of an env file, your own pitchfork. |
 | `basepad down`   | Stops the project's apps and services. Its apps stay stopped, whatever opens their domains, until `up`.                                                                               | Data and env files: it deletes nothing.                                           |
-| `basepad status` | Nothing. Prints each app with its URL and each service with its address, and their state: `running`, `starting`, `failed` or `stopped`.                                                | Anything: it starts nothing.                                                      |
-| `basepad worktree add` | Checks out a git worktree beside the project, copies `worktrees.clone` into it, creates its databases from main's, writes its env files from main's and runs `worktrees.setup`. Starts main's services. | Main's data and env files, apart from what `up` in main would set. It starts no app, unless `--start`. |
+| `basepad status` | Nothing. Prints each app with its URL and each service with its address, and their state: `running`, `starting`, `failed` or `stopped`. In main, then each worktree's.               | Anything: it starts nothing.                                                      |
+| `basepad worktree add` | Checks out a git worktree beside the project, copies `worktrees.clone` into it, creates its databases from main's, writes its env files from main's and runs `worktrees.setup`. Starts main's services. Ends main's database sessions for the copy. | Main's data and env files, apart from what `up` in main would set. It starts no app, unless `--start`. |
+| `basepad worktree ls` | Nothing. Lists main's worktrees with their branch and folder. | Anything. |
+| `basepad worktree rm <name>` | Stops the worktree's apps, drops its databases, removes its registration and its git worktree. | Its branch, main's data. Uncommitted work: it refuses unless `--force`. |
+| `basepad prune` | After asking: removes what worktrees whose folder is gone left, and the data of services no longer in the config. | Anything you did not say yes to. Main's databases of services still in the config. |
 | `basepad setup`  | The machine, once: trusts basepad's certificate authority and makes URLs port-free. See [below](#port-free-urls-basepad-setup).                                                        | Any project. A pitchfork setup of your own: it refuses rather than overwrite it.  |
 
 More on `up`:
