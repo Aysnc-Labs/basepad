@@ -168,9 +168,30 @@ test("focusing one part narrows the stream to its lines, without the name column
 	expect(out).not.toContain("GET / 200 3ms");
 });
 
-test("the keys are on screen", () => {
-	const out = draw(snap([main]));
-	expect(out).toMatch(/↑↓ +environment +←→ +app or service +esc +all logs +q +close/);
+test("every key is on screen, wrapping onto a second row where the terminal is narrow", () => {
+	const keys = [
+		/↑↓ +environment/,
+		/←→ +app or service/,
+		/s +start/,
+		/x +stop/,
+		/r +restart/,
+		/o +open/,
+		/c +copy/,
+		/q +close/,
+	];
+	for (const [cols, rows] of [
+		[140, 40],
+		[72, 20],
+	] as const) {
+		const out = draw(snap([main]), initialView("shop"), cols, rows);
+		for (const key of keys) expect(out).toMatch(key);
+		expect(out.split("\n")).toHaveLength(rows);
+	}
+});
+
+test("what the last key did shows above the keys", () => {
+	const out = draw(snap([main]), { ...initialView("shop"), notice: "Restarting web…" });
+	expect(out).toMatch(/Restarting web…\n.*environment/);
 });
 
 test("a terminal too small for the layout says how big it must be", () => {

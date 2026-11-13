@@ -70,6 +70,34 @@ export interface View {
 	focus?: string;
 	/** Set once the developer closes mission control. */
 	quit: boolean;
+	/** What the last key did or could not do, shown until the next key. */
+	notice?: string;
+}
+
+/**
+ * Something the developer asked of what runs, which the view cannot do itself: `perform` in
+ * `act.ts` does it. A part's actions name that part; an environment's name its apps, and main's
+ * also its services, as `basepad down` and `up` do.
+ */
+export type Intent = Action | { kind: "open"; url: string } | { kind: "copy"; text: string };
+
+/** A start, stop or restart of daemons in one namespace. */
+export interface Action {
+	kind: "start" | "stop" | "restart";
+	/** The supervisor namespace the daemons are in. */
+	namespace: string;
+	/** Apps, which a stop holds so no request starts them again. */
+	apps: string[];
+	/** Services, which are never held. */
+	services: string[];
+	/** What the developer sees it called: the part's name, or the environment's label. */
+	label: string;
+}
+
+/** What a key press did: the next view, and what to ask of what runs, if anything. */
+export interface Step {
+	view: View;
+	intent?: Intent;
 }
 
 /** The view mission control opens on: the environment `basepad up` ran in. */
@@ -89,11 +117,18 @@ export function partsOf(env: EnvironmentView | undefined): Part[] {
 	return env === undefined ? [] : [...env.apps, ...env.services];
 }
 
+const ACTIONS: Record<string, { kind: "start" | "stop" | "restart"; doing: string }> = {
+	s: { kind: "start", doing: "Starting" },
+	x: { kind: "stop", doing: "Stopping" },
+	r: { kind: "restart", doing: "Restarting" },
+};
+
 /**
- * The next view after a key press. `key` is a name (`up`, `down`, `left`, `right`, `escape`,
- * `ctrl-c`) or the character typed.
+ * What a key press does. `key` is a name (`up`, `down`, `left`, `right`, `escape`, `ctrl-c`) or
+ * the character typed.
  */
-export function reduce(view: View, key: string, snapshot: Snapshot): View {
+export function reduce(previous: View, key: string, snapshot: Snapshot): Step {
+	const { notice: _, ...view } = previous;
 	const envs = snapshot.environments;
 	const env = selectedOf(snapshot, view);
 	const at = env === undefined ? 0 : envs.indexOf(env);
@@ -109,25 +144,74 @@ export function reduce(view: View, key: string, snapshot: Snapshot): View {
 		const { focus: _, ...rest } = view;
 		return focus === undefined ? rest : { ...rest, focus };
 	};
+	const focused = partsOf(env).find((part) => part.id === view.focus);
+	const action = ACTIONS[key];
+	if (action !== undefined) {
+		const intent = env === undefined ? undefined : actionOn(env, focused, action.kind);
+		if (intent === undefined)
+			return { view: { ...view, notice: `Nothing here to ${action.kind}.` } };
+		return { view: { ...view, notice: `${action.doing} ${intent.label}…` }, intent };
+	}
+	// Open and copy take the selected part, else the environment's first app.
+	const target = focused ?? env?.apps[0];
 	switch (key) {
+		case "o":
+			if (target === undefined) return { view: { ...view, notice: "Nothing here to open." } };
+			if (!env?.apps.includes(target)) {
+				const notice = `${target.name} is a service, with no page to open; c copies its address.`;
+				return { view: { ...view, notice } };
+			}
+			return { view, intent: { kind: "open", url: target.address } };
+		case "c":
+			if (target === undefined) return { view: { ...view, notice: "Nothing here to copy." } };
+			return { view, intent: { kind: "copy", text: target.address } };
 		case "q":
 		case "ctrl-c":
-			return { ...view, quit: true };
+			return { view: { ...view, quit: true } };
 		case "up":
 		case "k":
-			return select(at - 1);
+			return { view: select(at - 1) };
 		case "down":
 		case "j":
-			return select(at + 1);
+			return { view: select(at + 1) };
 		case "right":
 		case "l":
-			return step(1);
+			return { view: step(1) };
 		case "left":
 		case "h":
-			return step(-1);
+			return { view: step(-1) };
 		case "escape":
-			return { selected: view.selected, quit: view.quit };
+			return { view: { selected: view.selected, quit: view.quit } };
 		default:
-			return view;
+			return { view };
 	}
+}
+
+/** A start, stop or restart of one part, or of the whole environment when none is given. */
+function actionOn(
+	env: EnvironmentView,
+	part: Part | undefined,
+	kind: Action["kind"],
+): Action | undefined {
+	if (part !== undefined) {
+		const slash = part.id.lastIndexOf("/");
+		const isApp = env.apps.includes(part);
+		return {
+			kind,
+			namespace: part.id.slice(0, slash),
+			apps: isApp ? [part.name] : [],
+			services: isApp ? [] : [part.name],
+			label: part.name,
+		};
+	}
+	// A worktree's services are main's: only main's own actions reach them.
+	const services = env.services.filter((s) => s.id.startsWith(`${env.namespace}/`));
+	if (env.apps.length + services.length === 0) return undefined;
+	return {
+		kind,
+		namespace: env.namespace,
+		apps: env.apps.map((a) => a.name),
+		services: services.map((s) => s.name),
+		label: env.label,
+	};
 }

@@ -46,7 +46,8 @@ export function frame({ snapshot, view, cols, rows, now, color }: FrameInput): R
 	const env = selectedOf(snapshot, view);
 	if (env === undefined) return centred(cols, rows, c.mute, "Reading the supervisor…");
 	const alerts = alertLines(snapshot, cols, c);
-	const body = rows - 4 - alerts.length - (alerts.length > 0 ? 1 : 0);
+	const keys = footer(cols, c);
+	const body = rows - 3 - keys.length - alerts.length - (alerts.length > 0 ? 1 : 0);
 	const side = Math.min(34, Math.max(24, Math.floor(cols * 0.2)));
 	const right = cols - side - 1;
 	const wanted = partsHeight(env);
@@ -71,8 +72,10 @@ export function frame({ snapshot, view, cols, rows, now, color }: FrameInput): R
 				stream(env, view, snapshot, right, body - table, c),
 			),
 		),
-		gap("g4"),
-		footer(cols, c),
+		view.notice === undefined
+			? gap("g4")
+			: line("notice", cols, [run(" "), run(view.notice, c.accent)]),
+		...keys,
 	);
 }
 
@@ -337,20 +340,35 @@ function alertLines(snapshot: Snapshot, cols: number, c: Palette): ReactElement[
 	);
 }
 
-function footer(cols: number, c: Palette): ReactElement {
-	const key = (k: string) => run(` ${k} `, c.text, { bg: c.keyBg, bold: true });
-	return line("footer", cols, [
-		run(" "),
-		key("↑↓"),
-		run(" environment    ", c.mute),
-		key("←→"),
-		run(" app or service    ", c.mute),
-		key("esc"),
-		run(" all logs    ", c.mute),
-		key("q"),
-		run(" close", c.mute),
-		run("  ·  everything keeps running", c.dim),
-	]);
+/** Every key with what it does, as many to a row as fit. */
+const KEYS: [string, string][] = [
+	["↑↓", "environment"],
+	["←→", "app or service"],
+	["esc", "all logs"],
+	["s", "start"],
+	["x", "stop"],
+	["r", "restart"],
+	["o", "open"],
+	["c", "copy"],
+	["q", "close"],
+];
+
+/** The keys, in rows: each key's label stays with its key. */
+function footer(cols: number, c: Palette): ReactElement[] {
+	const rows: Run[][] = [[run(" ")]];
+	for (const [k, label] of KEYS) {
+		const item = [run(` ${k} `, c.text, { bg: c.keyBg, bold: true }), run(` ${label}   `, c.mute)];
+		let last = rows[rows.length - 1] as Run[];
+		if (widthOf(last) + widthOf(item) - 3 > cols && last.length > 1) {
+			last = [run(" ")];
+			rows.push(last);
+		}
+		last.push(...item);
+	}
+	const last = rows[rows.length - 1] as Run[];
+	const tail = run("·  everything keeps running", c.dim);
+	if (widthOf(last) + widthOf([tail]) <= cols) last.push(tail);
+	return rows.map((runs, i) => line(`keys ${i}`, cols, runs));
 }
 
 /** Environments down the left: state glyph and name, the branch whole, the state in words. */

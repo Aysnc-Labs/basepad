@@ -1,8 +1,9 @@
 import { type Key, render, useApp, useInput, useWindowSize } from "ink";
-import { createElement as h, useEffect, useState } from "react";
+import { createElement as h, useEffect, useRef, useState } from "react";
 import type { Project } from "../config.ts";
 import type { Machine } from "../layout.ts";
 import type { Supervisor } from "../supervisor.ts";
+import { desktopHands, type Hands, perform } from "./act.ts";
 import { type Feed, openFeed } from "./feed.ts";
 import { frame } from "./frame.ts";
 import { initialView, reduce } from "./model.ts";
@@ -29,6 +30,7 @@ export async function missionControl(options: {
 	const app = render(
 		h(App, {
 			feed,
+			hands: desktopHands(options.supervisor, process.stdout),
 			listeners,
 			selected: options.selected,
 			// NO_COLOR, set to anything but empty, turns colour off (https://no-color.org).
@@ -50,11 +52,20 @@ export async function missionControl(options: {
 }
 
 /** The live view's one component: the frame for the feed's latest snapshot and the view. */
-function App(props: { feed: Feed; listeners: Set<() => void>; selected: string; color: boolean }) {
-	const { feed, listeners, color } = props;
+function App(props: {
+	feed: Feed;
+	hands: Hands;
+	listeners: Set<() => void>;
+	selected: string;
+	color: boolean;
+}) {
+	const { feed, hands, listeners, color } = props;
 	const { exit } = useApp();
 	const { columns, rows } = useWindowSize();
 	const [view, setView] = useState(() => initialView(props.selected));
+	// The latest view, so keys that arrive before a repaint (a paste into search) each build on it.
+	const latest = useRef(view);
+	latest.current = view;
 	const [, setTick] = useState(0);
 	useEffect(() => {
 		const repaint = () => setTick((n) => n + 1);
@@ -68,9 +79,19 @@ function App(props: { feed: Feed; listeners: Set<() => void>; selected: string; 
 	}, [listeners]);
 	const snapshot = feed.snapshot();
 	useInput((input, key) => {
-		const next = reduce(view, keyName(input, key), snapshot);
-		if (next.quit) exit();
-		else setView(next);
+		const { view: next, intent } = reduce(latest.current, keyName(input, key), snapshot);
+		if (next.quit) {
+			exit();
+			return;
+		}
+		latest.current = next;
+		setView(next);
+		if (intent === undefined) return;
+		// Done in the background, so the view stays live; the outcome shows when it is known.
+		perform(intent, hands).then((notice) => {
+			feed.refresh();
+			setView((now) => ({ ...now, notice }));
+		});
 	});
 	return frame({ snapshot, view, cols: columns, rows, now: clock(), color });
 }

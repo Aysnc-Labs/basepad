@@ -14,6 +14,8 @@ import type { EnvironmentView, LogLine, Part, Snapshot } from "./model.ts";
 export interface Feed {
 	/** The latest of everything; cheap, called on every repaint. */
 	snapshot(): Snapshot;
+	/** Reads states again now, as after an action, rather than on the next tick. */
+	refresh(): void;
 	close(): void;
 }
 
@@ -131,6 +133,9 @@ export async function openFeed(options: {
 			const since = Date.now() - 1000;
 			while (arrivals.length > 0 && (arrivals[0] as number) < since) arrivals.shift();
 			return { project: main.name, environments, logs, rate: arrivals.length };
+		},
+		refresh() {
+			void tick();
 		},
 		close() {
 			closed = true;
