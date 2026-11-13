@@ -193,6 +193,7 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 			try {
 				outputs[key] = await kindOf(service).provision(service, placeOf(project, lay, here, key), {
 					claim: context.claim,
+					print,
 					stopped: async () => {
 						const state = (await supervisor.status(project.name))[key];
 						return state === "failed" || state === "stopped";
