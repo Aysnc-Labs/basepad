@@ -30,6 +30,12 @@ test("defineConfig types env's outputs from the config's services and apps", () 
 		// @ts-expect-error: an app with no port has no URL
 		env: ({ web, queue }) => ({ ".env": { APP_URL: web.url, QUEUE_URL: queue.url } }),
 	});
+	defineConfig({
+		name: "shop",
+		apps: { web: { run: "next dev" }, vite: { run: "vite --port $PORT", domain: false } },
+		// @ts-expect-error: an app with no domain has no URL
+		env: ({ web, vite }) => ({ ".env": { APP_URL: web.url, VITE_URL: vite.url } }),
+	});
 	// @ts-expect-error: `port` can only be `false`
 	defineConfig({ name: "shop", apps: { web: { run: "next dev", port: 3000 } } });
 	// @ts-expect-error: Postgres 16 is not offered

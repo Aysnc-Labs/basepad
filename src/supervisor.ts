@@ -27,6 +27,8 @@ export interface Daemon {
 	dir: string;
 	/** The port it is first offered as `PORT`; a taken one is passed over. Gives it a domain. */
 	port?: number;
+	/** `false` for a daemon with a port but no domain: the proxy does not route it. */
+	proxy?: false;
 	/** The signal that stops it, sent to its process group; pitchfork's default is SIGTERM. */
 	stopSignal?: "SIGINT";
 	/** A port it listens on once ready, for a daemon without `port` (a service's server). */
@@ -673,6 +675,7 @@ function toml(daemons: Record<string, Daemon>): string {
 			if (daemon.port !== undefined) {
 				lines.push(`port = { expect = [${daemon.port}], bump = true }`);
 			}
+			if (daemon.proxy === false) lines.push("proxy = false");
 			if (daemon.stopSignal !== undefined) {
 				lines.push(`stop_signal = ${JSON.stringify(daemon.stopSignal)}`);
 			}

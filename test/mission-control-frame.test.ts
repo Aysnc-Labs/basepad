@@ -85,9 +85,9 @@ test("main only: the header names the project and counts, main is listed, its pa
 	const out = draw(snap([main], [lines("shop/web", "GET / 200 3ms"), lines("shop/api", "ready")]));
 	expect(out).toMatch(/basepad.*shop.*2 running/);
 	expect(out).toContain("10:00:05");
-	expect(out).toMatch(/│ ▌● main +│.*\n│ ▌ {2}main +│/); // selected: its name, then its branch
-	expect(out).toMatch(/web +running +https:\/\/web\.shop\.localhost:7443 +:20001 +pid 4242/);
-	expect(out).toMatch(/db +running +postgresql:\/\/postgres@127\.0\.0\.1:15432\/shop +postgres/);
+	expect(out).toMatch(/│ ▌1 ● main +│/); // selected; its branch is its name, so not said again
+	expect(out).toMatch(/web +running +https:\/\/web\.shop\.localhost:7443 *│/);
+	expect(out).toMatch(/db +running +postgresql:\/\/postgres@127\.0\.0\.1:15432\/shop *│/);
 	expect(out).toMatch(/10:00:00 +▎web +GET \/ 200 3ms/);
 	expect(out).toMatch(/10:00:00 +▎api +ready/);
 	expect(out.split("\n")).toHaveLength(40);
@@ -100,8 +100,8 @@ test("main with three worktrees: each is listed with its branch, and the selecte
 	);
 	for (const n of [1, 2, 3])
 		expect(out).toMatch(new RegExp(`● worktree-${n}[\\s\\S]*feature/thing-${n}`));
-	expect(out).toMatch(/│ ▌● worktree-2 /);
-	expect(out).not.toMatch(/▌● main/);
+	expect(out).toMatch(/│ ▌3 ● worktree-2 /);
+	expect(out).not.toMatch(/▌1 ● main/);
 	expect(out).toContain("worktree-2  · feature/thing-2");
 	expect(out).toContain("https://web.worktree-2.shop.localhost:7443");
 	expect(out).toContain("postgresql://postgres@127.0.0.1:15432/shop_worktree_2");
@@ -166,10 +166,10 @@ test("a very long branch name wraps in the sidebar and is never cut", () => {
 	const out = draw(snap([main, worktree(1, { branch })]));
 	const sidebar = out
 		.split("\n")
-		.map((row) => /^│ [ ▌] {2}(\S*)/.exec(row)?.[1] ?? "")
+		.map((row) => /^│ [ ▌] {4}(\S*)/.exec(row)?.[1] ?? "")
 		.join("");
 	expect(sidebar).toContain(branch);
-	expect(out).toMatch(/│ {4}feature\/JIRA-12345- +│/); // broken after a dash, not mid-word
+	expect(out).toMatch(/│ {6}feature\/JIRA-12345- +│/); // broken after a dash, not mid-word
 	expect(out).not.toMatch(/^│[^│]*…/m);
 });
 
@@ -182,22 +182,14 @@ test("focusing one part narrows the stream to its lines, without the name column
 	expect(out).not.toContain("GET / 200 3ms");
 });
 
-test("every key is on screen, wrapping onto a second row where the terminal is narrow", () => {
+test("the keys used most are on screen, wrapping onto a second row where the terminal is narrow", () => {
 	const keys = [
-		/↑↓ +environment/,
-		/←→ +app or service/,
-		/s +start/,
-		/x +stop/,
+		/↑↓ +select/,
+		/enter +open/,
+		/space +start\/stop/,
 		/r +restart/,
-		/o +open/,
-		/c +copy/,
-		/v +side by side/,
 		/\/ +search/,
-		/n N +next match/,
-		/PgUp PgDn +scroll/,
-		/esc +back/,
-		/a +add worktree/,
-		/d +remove worktree/,
+		/\? +all keys/,
 		/q +close/,
 	];
 	for (const [cols, rows] of [
@@ -214,7 +206,7 @@ test("every key is on screen, wrapping onto a second row where the terminal is n
 
 test("what the last key did shows above the keys", () => {
 	const out = draw(snap([main]), { ...initialView("shop"), notice: "Restarting web…" });
-	expect(out).toMatch(/Restarting web…\n.*environment/);
+	expect(out).toMatch(/Restarting web…\n.*select/);
 });
 
 test("a terminal too small for the layout says how big it must be", () => {
@@ -236,8 +228,7 @@ test("scrolled back, the stream holds still at its line and says how many newer 
 	const out = draw(snap([main], [web]), { ...initialView("shop"), until });
 	expect(out).toMatch(/line 50 +│\n.*╰/);
 	expect(out).not.toContain("line 51");
-	expect(out).toMatch(/LOGS +all +⏸ paused · 49 newer · end for live/);
-	expect(out).toMatch(/PgUp PgDn +scroll/);
+	expect(out).toMatch(/LOGS +all +‖ paused · 49 newer · end for live/);
 });
 
 test("a search being typed shows in the stream's title; a found one marks its line", () => {
@@ -258,34 +249,6 @@ test("a search being typed shows in the stream's title; a found one marks its li
 	expect(found).toContain("0 newer");
 	expect(found).toMatch(/“typeerr” +n older · N newer/);
 	expect(found).toMatch(/\/ +search/);
-	expect(found).toMatch(/n N +next match/);
-});
-
-test("side by side: a column for each app with its own lines, and services left out", () => {
-	const logs = [
-		lines("shop/web", "GET / 200", "GET /cart 200"),
-		lines("shop/api", "POST /orders 201"),
-		lines("shop/db", "checkpoint complete"),
-	];
-	const out = draw(snap([main], logs), { ...initialView("shop"), sideBySide: true });
-	expect(out).toMatch(/LOGS +side by side/);
-	expect(out).toMatch(/■ web +│ ■ api/);
-	expect(out).toMatch(/10:00:00 GET \/ 200 +│ 10:00:00 POST \/orders 201/);
-	expect(out).toMatch(/10:00:00 GET \/cart 200 +│/);
-	expect(out).not.toContain("checkpoint");
-	expect(out).toMatch(/v +side by side/);
-});
-
-test("side by side, an app's long name wraps in its column and is never cut", () => {
-	const long = "storefront-checkout-worker-service";
-	const apps = [app("shop", "web"), app("shop", long), app("shop", "api")];
-	const out = draw(snap([{ ...main, apps }], [lines(`shop/${long}`, "ready")]), {
-		...initialView("shop"),
-		sideBySide: true,
-	});
-	expect(out).not.toContain("…");
-	expect(out).toMatch(/│ ■ storefront-checkout-worker- +│[^\n]*\n[^\n]*│ {3}service +│/);
-	expect(out).toMatch(/10:00:00 ready/);
 });
 
 test("a removal waiting for its word names the worktree, what goes and what stays, and the one key that goes on", () => {
@@ -316,7 +279,7 @@ test("a worktree being added or removed shows its progress above the keys; the o
 			{ kind: "remove", title: "Removing worktree-1", namespace: "shop.worktree-1" },
 		],
 	});
-	expect(out).toMatch(/◐ Adding a worktree +Running `npm install`\n.*◐ Removing worktree-1\n/);
+	expect(out).toMatch(/◉ Adding a worktree +Running `npm install`\n.*◉ Removing worktree-1\n/);
 	expect(out).toMatch(/● worktree-1[^\n]*\n[^\n]*feature\/thing-1[^\n]*\n[^\n]*being removed/);
 });
 
@@ -345,11 +308,11 @@ test("at every size from the minimum up, the frame fills the terminal exactly, e
 		const at = `${cols}×${rows}`;
 		expect(out.split("\n"), at).toHaveLength(rows);
 		for (const row of out.split("\n")) expect([...row].length, at).toBeLessThanOrEqual(cols);
-		for (const key of ["environment", "start", "add worktree", "remove worktree", "close"])
+		for (const key of ["select", "tab", "start/stop", "all keys", "close"])
 			expect(out, at).toContain(key);
 		expect(out, at).toContain("Adding a worktree");
 		expect(out, at).toContain("Restarting web…");
-		expect(out, at).toMatch(/▌● worktree-1/);
+		expect(out, at).toMatch(/▌2 ● worktree-1/);
 		expect(out, at).toMatch(/GET \/49 200/);
 		// The selected part with its whole address, wrapped where it must be: the database's too.
 		const db = draw(busy, { ...initialView(ns), focus: "shop/db" }, cols, rows);
@@ -370,14 +333,14 @@ test("at every size from the minimum up, the frame fills the terminal exactly, e
 test("on a short terminal, the selected environment stays in view however many there are, and the sidebar says how many more", () => {
 	const many = [main, ...Array.from({ length: 9 }, (_, i) => worktree(i + 1))];
 	const last = draw(snap(many), initialView("shop.worktree-9"), 100, 20);
-	expect(last).toMatch(/▌● worktree-9/);
+	expect(last).toMatch(/▌10 ● worktree-9/);
 	expect(last).toMatch(/↑ \d+ more/);
 	expect(last).not.toMatch(/● main/);
 	const first = draw(snap(many), initialView("shop"), 100, 20);
-	expect(first).toMatch(/▌● main/);
+	expect(first).toMatch(/▌ 1 ● main/);
 	expect(first).toMatch(/↓ \d+ more/);
 	const middle = draw(snap(many), initialView("shop.worktree-5"), 100, 20);
-	expect(middle).toMatch(/↑ \d+ more[\s\S]*▌● worktree-5[\s\S]*↓ \d+ more/);
+	expect(middle).toMatch(/↑ \d+ more[\s\S]*▌ 6 ● worktree-5[\s\S]*↓ \d+ more/);
 });
 
 test("many failed apps on a short terminal: the alerts give way to one line that counts the rest", () => {
@@ -447,7 +410,7 @@ test("NO_COLOR: not one colour, though the terminal has them all; glyphs and wor
 	const plain = stripVTControlCharacters(out);
 	expect(plain).toMatch(/● web +running/);
 	expect(plain).toMatch(/✖ api +failed/);
-	expect(plain).toMatch(/◐ worker +starting/);
+	expect(plain).toMatch(/◉ worker +starting/);
 });
 
 test("16 colours: the terminal's own named colours, a different one for running, starting and failed", () => {
@@ -465,7 +428,7 @@ test("16 colours: the terminal's own named colours, a different one for running,
 	);
 	for (const code of codes(out)) expect(code).not.toMatch(/38;|48;/);
 	expect(out).toContain("\u001b[32m● ");
-	expect(out).toContain("\u001b[33m◐ ");
+	expect(out).toContain("\u001b[33m◉ ");
 	expect(out).toContain("\u001b[31m✖ ");
 	// The panels' borders are not black, which a dark terminal would hide.
 	expect(out).not.toContain("\u001b[30m╭");
@@ -498,10 +461,10 @@ test("256 colours: running, starting, failed and idle each keep a colour, and ea
 		return { state: found?.[1], own: found?.[2] };
 	};
 	const running = colours("●", "web").state;
-	const looks = [running, colours("◐", "worker").state, colours("✖", "api").state];
+	const looks = [running, colours("◉", "worker").state, colours("✖", "api").state];
 	const idle = colours("○", "mail").state;
 	expect(new Set([...looks, idle]).size).toBe(4);
-	const glyphs: Record<string, string> = { api: "✖", worker: "◐", mail: "○" };
+	const glyphs: Record<string, string> = { api: "✖", worker: "◉", mail: "○" };
 	const own = names.map((name) => colours(glyphs[name] ?? "●", name).own);
 	expect(new Set(own).size).toBe(names.length);
 	// An app's own colour is never a state's, so a name never reads as running or failed.
@@ -527,7 +490,7 @@ test("short of room, the parts' headings give way before a part does, and a long
 			app(ns, "api", { address: "https://api.worktree-1.shop.localhost:36859" }),
 		],
 	});
-	const out = draw(snap([main, long]), initialView(ns), 80, 24);
+	const out = draw(snap([main, long]), initialView(ns), 80, 23);
 	expect(out).not.toContain("more");
 	expect(out).not.toContain("SERVICES");
 	expect(out).toMatch(/● db /);

@@ -33,5 +33,5 @@ A saved copy of one environment's database, under a label, that it can be put ba
 _Avoid_: Backup, dump, checkpoint
 
 **App**:
-A process of the project's own that basepad runs and gives a domain, unless it listens on nothing, as a queue worker does.
+A process of the project's own that basepad runs and gives a domain, unless it listens on nothing, as a queue worker does, or serves another app's page from `localhost`, as Vite can.
 _Avoid_: Daemon, server, service

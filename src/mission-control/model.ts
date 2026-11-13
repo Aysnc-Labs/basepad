@@ -16,7 +16,7 @@ export interface Part {
 	/** Its key in the config. */
 	name: string;
 	state: PartState;
-	/** Where it is reached: an app's URL, a service's address. None for an app with no port. */
+	/** Where it is reached: an app's URL, a service's address. None for an app with no domain. */
 	address?: string;
 	/** A detail after the address: an app's port and pid, a service's kind. */
 	note?: string;
@@ -32,7 +32,7 @@ export interface EnvironmentView {
 	label: string;
 	/** Its git branch; none when detached. */
 	branch?: string;
-	/** Its folder. */
+	/** Its folder, as shown: from `~` under the home folder. */
 	dir: string;
 	apps: Part[];
 	/** Its services, which run in main's namespace or, for a server of its own, in its. */
@@ -52,6 +52,8 @@ export interface LogLine {
 	/** `HH:MM:SS`, as the supervisor stamped it. */
 	time: string;
 	text: string;
+	/** When it arrived, in milliseconds: a new line settles in. */
+	at?: number;
 }
 
 /** Everything mission control shows, as last read from the supervisor. */
@@ -93,8 +95,8 @@ export interface View {
 	until?: number;
 	/** A search of the stream: while `typing`, keys go to the query; after, `until` is its match. */
 	search?: { query: string; typing: boolean };
-	/** The apps' logs in columns side by side, rather than merged into one stream. */
-	sideBySide?: true;
+	/** Every key, with what it does, shown in place of the logs. */
+	help?: true;
 	/**
 	 * A worktree's removal waiting for the developer's word: `remove` asks yes or no; `discard`, for
 	 * a worktree with uncommitted changes, wants its name typed (`typed`) and enter.
@@ -158,19 +160,21 @@ export function partsOf(env: EnvironmentView | undefined): Part[] {
 	return env === undefined ? [] : [...env.apps, ...env.services];
 }
 
-const ACTIONS: Record<string, { kind: "start" | "stop" | "restart"; doing: string }> = {
-	s: { kind: "start", doing: "Starting" },
-	x: { kind: "stop", doing: "Stopping" },
-	r: { kind: "restart", doing: "Restarting" },
+const DOING: Record<Action["kind"], string> = {
+	start: "Starting",
+	stop: "Stopping",
+	restart: "Restarting",
 };
 
-/**
- * The parts whose lines the stream shows: side by side, the environment's apps; else the focused
- * part, or all the environment's.
- */
+/** What space does: stops what runs or is on its way, else starts it. */
+function toggleOf(env: EnvironmentView, part: Part | undefined): "start" | "stop" {
+	const states = part === undefined ? env.apps.map((app) => app.state) : [part.state];
+	return states.some((state) => state === "running" || state === "starting") ? "stop" : "start";
+}
+
+/** The parts whose lines the stream shows: the focused part, or all the environment's. */
 export function streamIds(snapshot: Snapshot, view: View): string[] {
 	const env = selectedOf(snapshot, view);
-	if (view.sideBySide) return (env?.apps ?? []).map((app) => app.id);
 	const parts = partsOf(env);
 	const focused = parts.find((part) => part.id === view.focus);
 	return focused === undefined ? parts.map((part) => part.id) : [focused.id];
@@ -179,12 +183,14 @@ export function streamIds(snapshot: Snapshot, view: View): string[] {
 /** Every line the stream can show, scrolled all the way back, in arrival order. */
 export function streamLines(snapshot: Snapshot, view: View): LogLine[] {
 	return streamIds(snapshot, view)
-		.flatMap((id) => snapshot.logs.get(id) ?? [])
+		.flatMap((id) => (snapshot.logs.get(id) ?? []).filter(printed))
 		.sort((a, b) => a.seq - b.seq);
 }
 
-/** A web page `o` can open: an app's URL, or a service's page such as an inbox. */
+/** A web page `enter` can open: an app's URL, or a service's page such as an inbox. */
 const isPage = (address: string): boolean => /^https?:\/\//.test(address);
+/** Whether a line says anything: the blank ones an app prints are left out of the stream. */
+export const printed = (line: LogLine) => line.text.trim() !== "";
 
 /** The index of the last line that arrived no later than `seq`; -1 when none did. */
 function indexOf(lines: readonly LogLine[], seq: number): number {
@@ -225,20 +231,18 @@ export function reduce(previous: View, key: Press, snapshot: Snapshot, page = 10
 	const envs = snapshot.environments;
 	const env = selectedOf(snapshot, view);
 	const at = env === undefined ? 0 : envs.indexOf(env);
+	// Environments go round, by tab or arrow; a number picks one outright.
 	const select = (i: number): View => {
-		const next = envs[Math.max(0, Math.min(envs.length - 1, i))];
+		const next = envs[i];
 		if (next === undefined) return view;
-		return {
-			selected: next.namespace,
-			quit: false,
-			...(view.sideBySide ? { sideBySide: true } : {}),
-		};
+		return { selected: next.namespace, quit: false, ...(view.help ? { help: true } : {}) };
 	};
-	// Focus steps through "all" (none), then each part in order, and round again.
+	const turn = (by: 1 | -1) => select((at + by + envs.length) % Math.max(1, envs.length));
+	// Focus steps from "all" (none) down through each part in order, and stops at the last.
 	const step = (by: 1 | -1): View => {
 		const ids = [undefined, ...partsOf(env).map((part) => part.id)];
 		const now = Math.max(0, ids.indexOf(view.focus));
-		const focus = ids[(now + by + ids.length) % ids.length];
+		const focus = ids[Math.max(0, Math.min(ids.length - 1, now + by))];
 		const { focus: _, until: __, ...rest } = view;
 		return focus === undefined ? rest : { ...rest, focus };
 	};
@@ -253,18 +257,28 @@ export function reduce(previous: View, key: Press, snapshot: Snapshot, page = 10
 		return at >= last ? live : { ...view, until: (lines[at] as LogLine).seq };
 	};
 	const focused = partsOf(env).find((part) => part.id === view.focus);
-	const action = ACTIONS[key];
-	if (action !== undefined) {
-		const intent = env === undefined ? undefined : actionOn(env, focused, action.kind);
-		if (intent === undefined)
-			return { view: { ...view, notice: `Nothing here to ${action.kind}.` } };
-		return { view: { ...view, notice: `${action.doing} ${intent.label}…` }, intent };
+	// One key never stops a whole environment: `space` takes a selected part, else asks for one.
+	if (key === "space" && focused === undefined) {
+		const notice = "Select an app or service first (↓); `basepad down` stops them all.";
+		return { view: { ...view, notice } };
 	}
+	const kind =
+		key === "r"
+			? "restart"
+			: key === "space" && env !== undefined
+				? toggleOf(env, focused)
+				: undefined;
+	if (kind !== undefined) {
+		const intent = env === undefined ? undefined : actionOn(env, focused, kind);
+		if (intent === undefined) return { view: { ...view, notice: `Nothing here to ${kind}.` } };
+		return { view: { ...view, notice: `${DOING[kind]} ${intent.label}…` }, intent };
+	}
+	if (/^[1-9]$/.test(key)) return { view: select(Number(key) - 1) };
 	// Open and copy take the selected part, else the environment's first app with an address.
 	const target = focused ?? env?.apps.find((app) => app.address !== undefined);
-	const noAddress = `${target?.name} listens on nothing, so it has no address.`;
+	const noAddress = `${target?.name} has no domain, so no address to open or copy.`;
 	switch (key) {
-		case "o":
+		case "return":
 			if (target === undefined) return { view: { ...view, notice: "Nothing here to open." } };
 			if (target.address === undefined) return { view: { ...view, notice: noAddress } };
 			if (!isPage(target.address)) {
@@ -281,16 +295,22 @@ export function reduce(previous: View, key: Press, snapshot: Snapshot, page = 10
 			return { view: { ...view, quit: true } };
 		case "up":
 		case "k":
-			return { view: select(at - 1) };
+			return { view: step(-1) };
 		case "down":
 		case "j":
-			return { view: select(at + 1) };
+			return { view: step(1) };
+		case "tab":
 		case "right":
 		case "l":
-			return { view: step(1) };
+			return { view: turn(1) };
+		case "shift-tab":
 		case "left":
 		case "h":
-			return { view: step(-1) };
+			return { view: turn(-1) };
+		case "?": {
+			const { help, ...rest } = view;
+			return { view: help ? rest : { ...rest, help: true } };
+		}
 		case "pageup":
 			return { view: scroll(-page) };
 		case "pagedown":
@@ -301,10 +321,6 @@ export function reduce(previous: View, key: Press, snapshot: Snapshot, page = 10
 		case "end":
 		case "G":
 			return { view: scroll("live") };
-		case "v": {
-			const { sideBySide, until: _, ...rest } = view;
-			return { view: sideBySide ? rest : { ...rest, sideBySide: true } };
-		}
 		case "a":
 			if (snapshot.work?.some((w) => w.kind === "add")) {
 				const notice = "A worktree is being added; a adds another once it is made.";
@@ -331,7 +347,11 @@ export function reduce(previous: View, key: Press, snapshot: Snapshot, page = 10
 				view: view.search === undefined ? view : find(view, key === "n" ? -1 : 1, snapshot),
 			};
 		case "escape": {
-			// One layer at a time: the search or the pause, then the focus.
+			// One layer at a time: the keys, then the search or the pause, then the focus.
+			if (view.help) {
+				const { help: _, ...rest } = view;
+				return { view: rest };
+			}
 			const { until, search, ...rest } = view;
 			if (until !== undefined || search !== undefined) return { view: rest };
 			const { focus: _, ...all } = rest;

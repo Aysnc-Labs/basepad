@@ -26,6 +26,7 @@ import {
 	isRootOnLinux,
 	type Layout,
 	layout,
+	localhostCertificate,
 	type Machine,
 	machine,
 	namespaceOf,
@@ -33,9 +34,11 @@ import {
 	placeOf,
 	servicesHome,
 	suffixOf,
+	supervisorPaths,
 } from "./layout.ts";
 import { setup, trustAsRoot } from "./setup.ts";
 import { type Daemon, type DaemonState, openSupervisor, type Supervisor } from "./supervisor.ts";
+import { ensureLocalhostCertificate } from "./tls.ts";
 import {
 	checkedOut,
 	checkOutWorktree,
@@ -284,19 +287,32 @@ async function ready(
 		daemons[key] = await kindOf(service).prepare(service, placeOf(project, ports, here, key));
 	}
 	const servers = Object.values(ports.services).map((place) => place.daemon);
-	const portless = Object.keys(project.apps).filter((key) => project.apps[key]?.port === false);
+	// No request reaches these, so the apps with a domain start them.
+	const unreached = Object.keys(project.apps).filter((key) => ports.apps[key]?.host === undefined);
+	const tls = localhostCertificate(here);
 	for (const [key, app] of Object.entries(project.apps)) {
+		const run = withLocalBins(project, app.cwd, app.run);
+		const port = ports.apps[key]?.port;
 		daemons[key] = {
-			run: withLocalBins(project, app.cwd, app.run),
+			run:
+				app.domain === false
+					? `export BASEPAD_TLS_CERT=${shellQuote(tls.cert)} BASEPAD_TLS_KEY=${shellQuote(tls.key)} && ${run}`
+					: run,
 			dir: app.cwd,
-			port: ports.apps[key]?.port,
+			port,
+			...(app.domain === false ? { proxy: false as const } : {}),
 			// So the proxy's start on a first request starts the servers first, wherever they run,
-			// and the apps with no port, which no request reaches.
-			depends:
-				app.port === false
-					? servers
-					: [...servers, ...portless.map((name) => daemonId(ports.namespace, name))],
+			// and the apps no request reaches.
+			depends: unreached.includes(key)
+				? servers
+				: [...servers, ...unreached.map((name) => daemonId(ports.namespace, name))],
 		};
+	}
+	// Made before any app can start, once the proxy, which makes the CA, runs.
+	if (Object.values(project.apps).some((app) => app.domain === false)) {
+		await supervisor.serve();
+		const { ca, caKey } = supervisorPaths(here);
+		await ensureLocalhostCertificate({ ca, caKey, ...tls });
 	}
 	await supervisor.register({
 		namespace: ports.namespace,
@@ -364,10 +380,18 @@ async function ready(
 	return lay;
 }
 
-/** Opens the supervisor, and readies main first when the environment is a worktree. */
-async function open(environment: Environment, flags: Invocation["flags"], print: Context["print"]) {
+/**
+ * Opens the supervisor (or takes the one opened), and readies main first when the environment is a
+ * worktree.
+ */
+async function open(
+	environment: Environment,
+	flags: Invocation["flags"],
+	print: Context["print"],
+	opened?: Supervisor,
+) {
 	const here = machine(process.env);
-	const supervisor = await openSupervisor(here, print);
+	const supervisor = opened ?? (await openSupervisor(here, print));
 	const context: Context = { here, supervisor, claim: flags.claim === true, print };
 	// `--claim` in a worktree claims the worktree's, never main's.
 	if (environment.main !== undefined) {
@@ -378,29 +402,80 @@ async function open(environment: Environment, flags: Invocation["flags"], print:
 
 async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const environment = await environmentAt(cwd);
+	// Only on a terminal: scripts, CI and agents get `-d`'s behaviour without asking for it.
+	if (flags.detach !== true && process.stdin.isTTY && process.stdout.isTTY) {
+		return upOnTerminal(environment, flags, print);
+	}
 	const { project } = environment;
 	const context = await open(environment, flags, print);
 	const { supervisor, here } = context;
 	const lay = await ready(environment, context);
 	const { states, failure } = await startApps(supervisor, project, lay);
 	print(await stateTables(environment, lay, here, await withServices(supervisor, lay, states)));
-	// Only on a terminal: scripts, CI and agents get `-d`'s behaviour without asking for it.
-	if (flags.detach !== true && process.stdin.isTTY && process.stdout.isTTY) {
-		// Loaded only here, so other commands never load the terminal UI.
-		const { missionControl } = await import("./mission-control/run.ts");
-		const main = environment.main ?? project;
-		await missionControl({
-			main,
-			machine: await machineWithPortFree(here, supervisor),
-			supervisor,
-			selected: lay.namespace,
-			// This very command, run again on the same Node: mission control adds and removes worktrees
-			// with it, in processes of their own that outlive the view.
-			basepad: [process.execPath, ...process.execArgv, process.argv[1] as string],
-		});
-	}
 	if (failure !== undefined) throw new BasepadError(failure);
 }
+
+/**
+ * `up` on a terminal: mission control opens at once and the environment readies meanwhile, so its
+ * logs show from the start. What readying prints waits for the view to close; a failure shows in it
+ * as a notice.
+ */
+async function upOnTerminal(
+	environment: Environment,
+	flags: Invocation["flags"],
+	print: Invocation["print"],
+): Promise<void> {
+	const { project } = environment;
+	const here = machine(process.env);
+	// Loaded only here, so other commands never load the terminal UI.
+	const { missionControl } = await import("./mission-control/run.ts");
+	const held: string[] = [];
+	const say = (line: string) => held.push(line);
+	const supervisor = await openSupervisor(here, say);
+	let served = here;
+	let outcome: { lay: Layout; states: Record<string, DaemonState>; failure?: string } | undefined;
+	let error: unknown;
+	let notice: string | undefined;
+	const readying = (async () => {
+		const context = await open(environment, flags, say, supervisor);
+		const lay = await ready(environment, { ...context, print: say });
+		// The supervisor answers on 443 by now, so URLs show as they are served.
+		served = await machineWithPortFree(here, supervisor);
+		outcome = { lay, ...(await startApps(supervisor, project, lay)) };
+		if (outcome.failure !== undefined) {
+			const failed = Object.keys(project.apps).filter((key) => outcome?.states[key] === "failed");
+			notice = `${failed.map((key) => `\`${key}\``).join(", ")} exited on start; ${failed.length > 1 ? "their" : "its"} output is in the logs.`;
+		}
+	})().catch((caught: unknown) => {
+		error = caught;
+		notice = firstLine(caught instanceof Error ? caught.message : String(caught));
+	});
+	await missionControl({
+		main: environment.main ?? project,
+		machine: () => served,
+		supervisor,
+		failure: () => {
+			const told = notice;
+			notice = undefined;
+			return told;
+		},
+		selected: layout(project, here, environment.suffix).namespace,
+		// This very command, run again on the same Node: mission control adds and removes worktrees
+		// with it, in processes of their own that outlive the view.
+		basepad: [process.execPath, ...process.execArgv, process.argv[1] as string],
+	});
+	// Closed while it readies, the environment still finishes.
+	if (outcome === undefined && error === undefined) print("Still starting; finishing…");
+	await readying;
+	for (const line of held) print(line);
+	if (error !== undefined) throw error;
+	if (outcome === undefined) return;
+	const { lay, states, failure } = outcome;
+	print(await stateTables(environment, lay, here, await withServices(supervisor, lay, states)));
+	if (failure !== undefined) throw new BasepadError(failure);
+}
+
+const firstLine = (text: string) => text.split("\n")[0] ?? text;
 
 /**
  * Starts the environment's apps and waits briefly for them. Returns their states, and the report
@@ -590,18 +665,53 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 	const supervisor = await openSupervisor(machine(process.env), print);
 	const lay = layout(project, machine(process.env), suffix);
 	const { namespace } = lay;
-	// Held first, so no request starts an app again while it stops.
-	await supervisor.hold(namespace, Object.keys(project.apps));
-	// Its own servers with its apps; those on main's keep running for main.
-	await supervisor.stop(namespace);
+	const apps = Object.keys(project.apps);
+	// Its own servers stop with its apps; those on main's keep running for main.
 	const own = ownServers(lay);
 	const mains = Object.keys(project.services).filter((key) => !own.includes(key));
+	// On a terminal, the landing shows while they stop.
+	const landed = process.stdout.isTTY
+		? await startLanding(project.name, suffix, [...apps, ...own], mains)
+		: undefined;
+	try {
+		// Held first, so no request starts an app again while it stops.
+		await supervisor.hold(namespace, apps);
+		await supervisor.stop(namespace);
+	} catch (error) {
+		landed?.fail();
+		throw error;
+	}
+	if (landed !== undefined) {
+		await landed.land();
+		return;
+	}
 	const names = (keys: string[]) => keys.map((key) => `\`${key}\``).join(", ");
 	print(
 		suffix === undefined
 			? `Stopped ${project.name}'s apps and services.`
 			: `Stopped worktree ${suffix}'s apps${own.length > 0 ? ` and ${names(own)}` : ""}.${mains.length > 0 ? ` ${names(mains)} ${mains.length > 1 ? "run" : "runs"} on main's and keep${mains.length > 1 ? "" : "s"} running.` : ""}`,
 	);
+}
+
+/** Opens the landing for an environment's apps and services on the terminal. */
+async function startLanding(
+	project: string,
+	suffix: string | undefined,
+	parts: string[],
+	kept: string[],
+) {
+	const [{ landing }, { colorsFor }, { default: chalk }] = await Promise.all([
+		import("./mission-control/launch.ts"),
+		import("./mission-control/frame.ts"),
+		import("chalk"),
+	]);
+	return landing({
+		project,
+		environment: suffix ?? "main",
+		parts,
+		kept,
+		color: colorsFor(process.env.NO_COLOR, chalk.level),
+	});
 }
 
 async function status({ cwd, print }: Invocation): Promise<void> {

@@ -52,7 +52,6 @@ const paused = { ...initialView("shop"), until: 500 };
 const views: [string, View][] = [
 	["all", paused],
 	["one app", { ...paused, focus: "shop/chatty" }],
-	["side by side", { ...paused, sideBySide: true }],
 	["a search", { ...paused, focus: "shop/chatty", search: { query: "lorem", typing: false } }],
 ];
 
@@ -78,7 +77,7 @@ for (const [name, view] of [
 		for (let cols = 72; cols <= 160; cols++) {
 			const title = top(view, cols, 16);
 			expect(title, `${cols} columns`).not.toContain("…");
-			expect(title, `${cols} columns`).toMatch(/LOGS.* ⏸ paused/);
+			expect(title, `${cols} columns`).toMatch(/LOGS.* ‖ paused/);
 			const query = view.search?.query ?? "";
 			if (title.includes("“") || title.includes(" / ")) expect(title).toContain(query);
 		}
@@ -90,7 +89,7 @@ test("a long query being typed shows its end and the caret, as an input field do
 	const view = { ...paused, focus: "shop/chatty", search: { query, typing: true } };
 	for (let cols = 72; cols <= 120; cols++) {
 		const title = top(view, cols, 16);
-		expect(title, `${cols} columns`).toMatch(/LOGS.* ⏸ paused/);
+		expect(title, `${cols} columns`).toMatch(/LOGS.* ‖ paused/);
 		expect(title, `${cols} columns`).toMatch(/─╮$|[^…]╮$/);
 		// Whole where it fits, else its end after a "…".
 		expect(title, `${cols} columns`).toMatch(new RegExp(`/ (${query}|…[a-j]+)▏`));

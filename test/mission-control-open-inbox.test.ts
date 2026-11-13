@@ -47,16 +47,16 @@ function press(keys: Press[]) {
 	return step;
 }
 
-test("o on Mailpit opens its inbox", () => {
+test("enter on Mailpit opens its inbox", () => {
 	// web, db, mail
-	expect(press(["right", "right", "right", "o"]).intent).toEqual({
+	expect(press(["down", "down", "down", "return"]).intent).toEqual({
 		kind: "open",
 		url: "https://mail.shop.localhost",
 	});
 });
 
-test("o on Postgres still has no page to open", () => {
-	const step = press(["right", "right", "o"]);
+test("enter on Postgres still has no page to open", () => {
+	const step = press(["down", "down", "return"]);
 	expect(step.intent).toBeUndefined();
 	expect(step.view.notice).toContain("no page to open");
 });

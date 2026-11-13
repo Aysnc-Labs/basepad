@@ -27,7 +27,7 @@
 	],
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
-		"check": "biome check . && tsc --noEmit && node scripts/check-feature-map.ts && node --test scripts/check-feature-map.test.ts && npm test",
+		"check": "biome check . && tsc --noEmit && node scripts/check-feature-map.ts && node --test scripts/check-feature-map.test.ts && node scripts/rocket-svg.ts --check && npm test",
 		"lint": "biome check .",
 		"prepare": "npm run build",
 		"test": "vitest run"

@@ -54,12 +54,6 @@ function draw(snapshot: Snapshot, view: View, cols: number, rows: number): strin
 	return stripVTControlCharacters(text);
 }
 
-test("side by side with more apps than fit says how many more and to widen the terminal", () => {
-	const logs = [lines("shop/web", 3), lines("shop/api", 3), lines("shop/worker", 3)];
-	const out = draw(snap(logs), { ...initialView("shop"), sideBySide: true }, 72, 24);
-	expect(out).toMatch(/\+\d more: widen the terminal/);
-});
-
 test("scrolled back at the minimum width, the stream's top border keeps its corner", () => {
 	const web = lines("shop/web", 3000);
 	const until = (web[1][500] as LogLine).seq;

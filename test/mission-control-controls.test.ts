@@ -41,17 +41,24 @@ function press(keys: string[], from: View = initialView("shop")) {
 	return step;
 }
 
-test("x stops the selected app: it is held, then stopped", () => {
-	expect(press(["right", "x"]).intent).toEqual({
+test("space stops the selected part when it runs, and starts it when it does not", () => {
+	expect(press(["down", "space"]).intent).toEqual({
 		kind: "stop",
 		namespace: "shop",
 		apps: ["web"],
 		services: [],
 		label: "web",
 	});
+	const stopped: Snapshot = {
+		...snapshot,
+		environments: [{ ...env("shop", ["web"]), apps: [part("shop/web", { state: "stopped" })] }],
+	};
+	expect(
+		reduce(reduce(initialView("shop"), "down", stopped).view, "space", stopped).intent,
+	).toEqual({ kind: "start", namespace: "shop", apps: ["web"], services: [], label: "web" });
 });
 
-test("with no app selected, s, x and r act on the whole environment: main's apps and services, a worktree's apps", () => {
+test("with no part selected, r restarts the whole environment: main's apps and services, a worktree's apps", () => {
 	expect(press(["r"]).intent).toEqual({
 		kind: "restart",
 		namespace: "shop",
@@ -59,8 +66,8 @@ test("with no app selected, s, x and r act on the whole environment: main's apps
 		services: ["db"],
 		label: "main",
 	});
-	expect(press(["down", "s"]).intent).toEqual({
-		kind: "start",
+	expect(press(["tab", "r"]).intent).toEqual({
+		kind: "restart",
 		namespace: "shop.worktree-1",
 		apps: ["web", "api"],
 		services: [],
@@ -68,8 +75,16 @@ test("with no app selected, s, x and r act on the whole environment: main's apps
 	});
 });
 
+test("with no part selected, space stops nothing and says to select one: one key never stops everything", () => {
+	const step = press(["space"]);
+	expect(step.intent).toBeUndefined();
+	expect(step.view.notice).toBe(
+		"Select an app or service first (↓); `basepad down` stops them all.",
+	);
+});
+
 test("a service selected in a worktree acts on main's server", () => {
-	expect(press(["down", "left", "x"]).intent).toEqual({
+	expect(press(["tab", "down", "down", "down", "space"]).intent).toEqual({
 		kind: "stop",
 		namespace: "shop",
 		apps: [],
@@ -79,33 +94,33 @@ test("a service selected in a worktree acts on main's server", () => {
 });
 
 test("an action says what it is doing until the next key", () => {
-	expect(press(["right", "r"]).view.notice).toBe("Restarting web…");
-	expect(press(["right", "r", "down"]).view.notice).toBeUndefined();
+	expect(press(["down", "r"]).view.notice).toBe("Restarting web…");
+	expect(press(["down", "r", "down"]).view.notice).toBeUndefined();
 });
 
-test("o opens the selected app's URL, and c copies the selected part's address", () => {
-	expect(press(["down", "right", "o"]).intent).toEqual({
+test("enter opens the selected app's URL, and c copies the selected part's address", () => {
+	expect(press(["tab", "down", "return"]).intent).toEqual({
 		kind: "open",
 		url: "https://web.shop.localhost",
 	});
-	expect(press(["left", "c"]).intent).toEqual({
+	expect(press(["down", "down", "down", "c"]).intent).toEqual({
 		kind: "copy",
 		text: "postgresql://postgres@127.0.0.1:15432/shop",
 	});
 });
 
-test("with none selected, o and c take the environment's first app", () => {
-	expect(press(["o"]).intent).toEqual({ kind: "open", url: "https://web.shop.localhost" });
+test("with none selected, enter and c take the environment's first app", () => {
+	expect(press(["return"]).intent).toEqual({ kind: "open", url: "https://web.shop.localhost" });
 	expect(press(["c"]).intent).toEqual({ kind: "copy", text: "https://web.shop.localhost" });
 });
 
-test("a service has no page to open: o says so and asks nothing", () => {
-	const step = press(["left", "o"]);
+test("a service has no page to open: enter says so and asks nothing", () => {
+	const step = press(["down", "down", "down", "return"]);
 	expect(step.intent).toBeUndefined();
 	expect(step.view.notice).toBe("db is a service, with no page to open; c copies its address.");
 });
 
-test("an app with no port has no address: o and c say so, and with none selected take the first app that has one", () => {
+test("an app with no port has no address: enter and c say so, and with none selected take the first app that has one", () => {
 	const queue = part("jobs/queue", { address: undefined });
 	const jobs: Snapshot = {
 		...snapshot,
@@ -116,13 +131,19 @@ test("an app with no port has no address: o and c say so, and with none selected
 		for (const key of pressed) step = reduce(step.view, key, jobs);
 		return step;
 	};
-	for (const key of ["o", "c"]) {
-		const step = keys(["right", key]);
+	for (const key of ["return", "c"]) {
+		const step = keys(["down", key]);
 		expect(step.intent).toBeUndefined();
-		expect(step.view.notice).toBe("queue listens on nothing, so it has no address.");
+		expect(step.view.notice).toBe("queue has no domain, so no address to open or copy.");
 	}
-	expect(keys(["o"]).intent).toEqual({ kind: "open", url: "https://web.shop.localhost" });
+	expect(keys(["return"]).intent).toEqual({ kind: "open", url: "https://web.shop.localhost" });
 	expect(keys(["c"]).intent).toEqual({ kind: "copy", text: "https://web.shop.localhost" });
+});
+
+test("? shows every key and hides them again; escape hides them too", () => {
+	expect(press(["?"]).view.help).toBe(true);
+	expect(press(["?", "?"]).view.help).toBeUndefined();
+	expect(press(["?", "escape"]).view.help).toBeUndefined();
 });
 
 /** A main whose web printed `line 0` to `line 99`, and api `api 0` to `api 9` among them. */
@@ -169,9 +190,9 @@ test("scrolling stops at the oldest page, and home goes there", () => {
 });
 
 test("narrowed to one part, scrolling moves through its lines alone", () => {
-	expect(scroll(["right", "pageup"]).until).toBe(178); // web's line 89
+	expect(scroll(["down", "pageup"]).until).toBe(178); // web's line 89
 	// api has fewer lines than a page: they all show already, so it stays live.
-	expect(scroll(["right", "right", "pageup"]).until).toBeUndefined();
+	expect(scroll(["down", "down", "pageup"]).until).toBeUndefined();
 });
 
 const type = (text: string) => ["/", ...text];
@@ -199,8 +220,8 @@ test("text pasted into a search is its query; elsewhere a paste presses no key",
 		query: "line4",
 		typing: true,
 	});
-	const idle = scroll(["right", { paste: "qdvx/" }]);
-	expect(idle).toEqual(scroll(["right"]));
+	const idle = scroll(["down", { paste: "qd x/" }]);
+	expect(idle).toEqual(scroll(["down"]));
 });
 
 test("a search with no match says so and leaves the stream live", () => {
@@ -214,23 +235,12 @@ test("a search with no match says so and leaves the stream live", () => {
 });
 
 test("escape steps back one layer at a time: the search, then the pause, then the focus", () => {
-	const searched = scroll(["right", ...type("line 4"), "return"]);
+	const searched = scroll(["down", ...type("line 4"), "return"]);
 	expect(scroll(["escape"], searched)).toMatchObject({ focus: "shop/web" });
 	expect(scroll(["escape"], searched).search).toBeUndefined();
 	expect(scroll(["escape"], searched).until).toBeUndefined();
-	const paused = scroll(["right", "pageup"]);
+	const paused = scroll(["down", "pageup"]);
 	expect(scroll(["escape"], paused)).toMatchObject({ focus: "shop/web" });
 	expect(scroll(["escape"], paused).until).toBeUndefined();
 	expect(scroll(["escape", "escape"], paused).focus).toBeUndefined();
-});
-
-test("v shows the apps' logs side by side and back; it stays on across environments and escape", () => {
-	expect(scroll(["v"]).sideBySide).toBe(true);
-	expect(scroll(["v", "v"]).sideBySide).toBeUndefined();
-	expect(scroll(["v", "down", "right", "escape"]).sideBySide).toBe(true);
-});
-
-test("side by side, scrolling and search move through every app's lines, whatever is selected", () => {
-	// web and api together, as in the merged stream, but never db's.
-	expect(scroll(["v", "right", "right", "pageup"]).until).toBe(180);
 });

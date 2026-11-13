@@ -10,6 +10,9 @@ import { BasepadError } from "./internal/exec.ts";
 export const CONFIG_FILE = "basepad.config.ts";
 export const LOCAL_FILE = "basepad.config.local.ts";
 
+/** An app as the project describes it: its folder absolute, and `port` and `domain` when `false`. */
+export type ProjectApp = Required<Pick<App, "run" | "cwd">> & Pick<App, "port" | "domain">;
+
 /** One plain description of the project, from its config and the local file over it. */
 export interface Project {
 	/** The config file's real path. */
@@ -19,7 +22,7 @@ export interface Project {
 	name: string;
 	services: Record<string, Service>;
 	/** Each app with its folder made absolute. */
-	apps: Record<string, Required<Omit<App, "port">> & Pick<App, "port">>;
+	apps: Record<string, ProjectApp>;
 	env: (outputs: Outputs<Record<string, Service>, Record<string, App>>) => EnvFiles;
 	/** How worktrees are named, and where they are checked out when the config says. */
 	worktrees: {
@@ -70,6 +73,7 @@ export async function loadProject(cwd: string): Promise<Project> {
 					run: app.run,
 					cwd: resolve(root, app.cwd ?? "."),
 					...(app.port === false ? { port: false as const } : {}),
+					...(app.domain === false ? { domain: false as const } : {}),
 				},
 			]),
 		),
@@ -161,6 +165,11 @@ const AppSchema = z.strictObject({
 	port: z
 		.literal(false, { error: "`port` can only be `false`, for an app that listens on nothing" })
 		.optional(),
+	domain: z
+		.literal(false, {
+			error: "`domain` can only be `false`, for an app served at `https://localhost:$PORT`",
+		})
+		.optional(),
 });
 
 const ConfigSchema = z
@@ -210,6 +219,15 @@ const ConfigSchema = z
 			.optional(),
 	})
 	.superRefine((config, ctx) => {
+		for (const [key, app] of Object.entries(config.apps ?? {})) {
+			if (app.port === false && app.domain === false) {
+				ctx.addIssue({
+					code: "custom",
+					path: ["apps", key, "domain"],
+					message: "an app with no port has no domain already; drop `domain`",
+				});
+			}
+		}
 		// Services and apps share one namespace: `env`'s outputs and the supervisor's daemons.
 		for (const key of Object.keys(config.services ?? {})) {
 			if (config.apps && key in config.apps) {

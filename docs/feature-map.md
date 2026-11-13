@@ -38,7 +38,7 @@ flowchart LR
 
 ### The config file
 
-Purpose: one committed, typed `basepad.config.ts` that names the project, its services (with each one's `worktree` option: copy, empty or shared), apps (each served at a domain, or with `port: false` for one that listens on nothing), env files and `worktrees` (prefix, folder, clone, setup); `basepad.config.local.ts` adjusts it per machine.
+Purpose: one committed, typed `basepad.config.ts` that names the project, its services (with each one's `worktree` option: copy, empty or shared), apps (each served at a domain, or with `port: false` for one that listens on nothing, or `domain: false` for one served at `https://localhost:$PORT`), env files and `worktrees` (prefix, folder, clone, setup); `basepad.config.local.ts` adjusts it per machine.
 Entry: `import { defineConfig, postgres } from "@aysnc-labs/basepad"`
 Paths: src/index.ts, src/config.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md)
@@ -59,14 +59,14 @@ Paths: src/init.ts
 
 ### `basepad up`, `down` and `status`
 
-Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.localhost`, starts services, sets the env keys the config names; stops them; shows their state.
+Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.localhost`, starts services, sets the env keys the config names; stops them (on a terminal, the landing in `src/mission-control/launch.ts` shows them coming down); shows their state.
 Entry: `basepad up [-d] [--claim]`, `basepad down`, `basepad status`
-Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts, src/internal/processes.ts
+Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts, src/internal/processes.ts, src/mission-control/launch.ts, src/tls.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### Mission control
 
-Purpose: one place to see and steer a project while it runs, so nothing needs another command: every environment (main and each worktree) at a glance, the selected one's apps and services with their addresses, and their logs live, with crashes standing out. Its keys are in the README. It only reads and asks: the supervisor runs everything, and worktrees are added and removed by the `worktree add` and `worktree rm` commands in processes of their own (`work.ts`), so closing or crashing the view stops nothing. A pure frame (state to Ink element) and a pure reducer (key to view and intent), behind one feed (git, configs, the supervisor's states and `pitchfork logs --tail`, worktree work under way), one place that performs intents (`act.ts`) and one terminal adapter.
+Purpose: one place to see and steer a project while it runs, so nothing needs another command. It opens at once, while `up` readies the environment, so its logs show from the start; a failure shows as a notice. Then every environment (main and each worktree) at a glance, the selected one's apps and services with their addresses, and their logs live, with crashes standing out. Its keys are in `docs/guide.md`. It only reads and asks: the supervisor runs everything, and worktrees are added and removed by the `worktree add` and `worktree rm` commands in processes of their own (`work.ts`), so closing or crashing the view stops nothing. A pure frame (state to Ink element) and a pure reducer (key to view and intent), behind one feed (git, configs, the supervisor's states and `pitchfork logs --tail`, worktree work under way), one place that performs intents (`act.ts`) and one terminal adapter.
 Entry: `basepad up` on a terminal (`-d`, or no terminal, skips it)
 Paths: src/mission-control/, src/supervisor.ts, src/commands.ts, src/worktrees.ts
 
@@ -96,9 +96,15 @@ Paths: src/commands.ts, src/catalogue.ts, src/catalogue/postgres.ts
 
 ### `basepad setup`
 
-Purpose: one-time machine setup: trusts basepad's CA, and on Linux makes URLs port-free; adds domains to `/etc/hosts` where `*.localhost` doesn't resolve.
+Purpose: one-time machine setup: trusts basepad's CA, and on Linux makes URLs port-free; adds domains to `/etc/hosts` where `*.localhost` doesn't resolve. On a terminal, its plan is a checklist beside a rocket on its pad (`launch.ts`), which lifts off once URLs are port-free.
 Entry: `basepad setup [--dry-run] [--yes]`
-Paths: src/setup.ts, src/hosts.ts
+Paths: src/setup.ts, src/hosts.ts, src/mission-control/launch.ts
+
+### Port 443 on macOS
+
+Purpose: port-free URLs on macOS with no privilege and no pf (pf turns off iCloud Private Relay): `serve` starts a forwarder on the wildcard address's port 443 that passes connections from this Mac to the proxy, refuses the network's, and stops with the supervisor. Off when `BASEPAD_PROXY_PORT` is set, or something else answers on 443.
+Entry: `basepad up` on macOS
+Paths: src/forward.ts, src/supervisor.ts, src/layout.ts
 
 ### Port 443 on macOS
 
