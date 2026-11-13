@@ -85,6 +85,32 @@ test("a two-word command takes its flags after both words", async () => {
 	);
 });
 
+test("a command group with no command, or with --help, lists its commands", async () => {
+	const help = await box.basepad(dir, "db", "--help");
+	expect(help.code).toBe(0);
+	expect(help.stdout).toBe(
+		[
+			"Usage: basepad db <command> [flags]",
+			"",
+			"Commands:",
+			"  db save       Save this environment's database as a snapshot, replacing one of the same label",
+			"  db load       Replace this environment's database with a snapshot, which is kept",
+			"  db snapshots  List this environment's snapshots",
+			"  db rm         Delete one of this environment's snapshots",
+			"  db import     Replace this environment's database with a dump file or a postgres:// URL's, after asking",
+			"  db export     Write a dump of this environment's database to a file, or to standard output",
+			"",
+			"Run `basepad db <command> --help` for a command's flags.",
+			"",
+		].join("\n"),
+	);
+	const bare = await box.basepad(dir, "worktree");
+	expect(bare.code).toBe(1);
+	expect(bare.stdout).toContain("Usage: basepad worktree <command> [flags]\n");
+	expect(bare.stdout).toContain("  worktree rm   Remove a worktree");
+	expect((await box.basepad(dir, "worktree", "-h")).stdout).toBe(bare.stdout);
+});
+
 test("a flag that takes a value says so when it has none", async () => {
 	const out = await box.basepad(dir, "worktree", "add", "--branch");
 	expect(out.code).toBe(1);
