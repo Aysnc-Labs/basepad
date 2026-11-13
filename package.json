@@ -1,6 +1,6 @@
 {
 	"name": "basepad",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"description": "Local environments for a project, described in one committed config and run natively through mise.",
 	"license": "MIT",
 	"type": "module",
