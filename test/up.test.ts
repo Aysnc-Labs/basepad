@@ -4,6 +4,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { request } from "node:https";
 import { join, relative } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { RESTART_WARNING } from "../src/supervisor.ts";
 import { configFile, freePort, type Result, type Sandbox, sandbox } from "./sandbox.ts";
 
 const echo = join(import.meta.dirname, "apps/echo.mjs");
@@ -207,15 +208,13 @@ test("down stops the project's apps and deletes nothing", async () => {
 });
 
 test("up says so before a settings change restarts the supervisor, and only then", async () => {
-	const warning =
-		"basepad's supervisor restarts to take new settings, which stops every project's running apps and services.";
-	expect(firstUp.stdout).not.toContain(warning);
+	expect(firstUp.stdout).not.toContain(RESTART_WARNING);
 	const other = String(await freePort());
 	const out = await box.basepadWith({ env: { BASEPAD_PROXY_PORT: other } }, shop, "up");
 	expect(out.stderr).toBe("");
 	expect(out.code).toBe(0);
-	expect(out.stdout.indexOf(warning)).toBe(0);
+	expect(out.stdout.indexOf(RESTART_WARNING)).toBe(0);
 	expect(out.stdout).toContain(`web  https://web.shop.localhost:${other}  running`);
-	await box.basepadWith({ env: { BASEPAD_PROXY_PORT: other } }, shop, "down");
-	// As root on Linux, pitchfork's supervisor takes about 60 s to stop, so a restart does too.
-}, 150_000);
+	// Back on the sandbox's own port, so the supervisor is left as the file found it.
+	expect((await box.basepad(shop, "down")).code).toBe(0);
+}, 240_000); // Two restarts, and as root on Linux pitchfork's supervisor takes about 60 s to stop.
