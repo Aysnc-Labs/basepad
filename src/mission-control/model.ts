@@ -196,17 +196,6 @@ function indexOf(lines: readonly LogLine[], seq: number): number {
  * stream shows: a page up or down moves by that many.
  */
 export function reduce(previous: View, key: string, snapshot: Snapshot, page = 10): Step {
-	const step = react(previous, key, snapshot, page);
-	// Closing ends `up`, and a worktree's addition or removal with it, partway: it waits, unless
-	// the developer insists.
-	const [work] = snapshot.work ?? [];
-	if (!step.view.quit || work === undefined) return step;
-	const warning = `${work.title} is under way: closing now would stop it partway. q closes once it is done; ctrl-c again closes now.`;
-	if (key === "ctrl-c" && previous.notice === warning) return step;
-	return { view: { ...previous, notice: warning } };
-}
-
-function react(previous: View, key: string, snapshot: Snapshot, page: number): Step {
 	const { notice: _, ...view } = previous;
 	if (view.confirm !== undefined) return confirming(view, view.confirm, key, snapshot);
 	if (view.search?.typing) return { view: typing(view, view.search.query, key, snapshot) };

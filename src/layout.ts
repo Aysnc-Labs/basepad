@@ -253,6 +253,14 @@ export function servicesHome(machine: Pick<Machine, "home">, name: string): stri
 	return join(machine.home, "services", name);
 }
 
+/**
+ * The folder in basepad's home holding a project's worktree additions and removals started from
+ * mission control, while they run and until a view reads how they ended.
+ */
+export function workHome(machine: Pick<Machine, "home">, name: string): string {
+	return join(machine.home, "work", name);
+}
+
 /** basepad's own pitchfork's folders in the home, and the CA its proxy signs with. */
 export function supervisorPaths(machine: Pick<Machine, "home">): {
 	state: string;

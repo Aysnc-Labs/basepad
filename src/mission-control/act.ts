@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { Supervisor } from "../supervisor.ts";
 import type { Intent } from "./model.ts";
+import type { WorkOrder } from "./work.ts";
 
 /**
  * Where mission control's intents are done: the one place the view acts on what runs (through the
@@ -13,47 +14,27 @@ export interface Hands {
 	/** Puts text on the clipboard. Returns where it went (`the clipboard`). */
 	copy(text: string): Promise<string>;
 	/**
-	 * `basepad worktree add` and `worktree rm` themselves, run from main, saying what they print to
-	 * `print` rather than the terminal. Each rejects as its command fails.
+	 * Starts `basepad worktree add` or `worktree rm` itself, from main, in a process that outlives
+	 * the view (`startWork`). Resolves once it runs; rejects when it cannot start.
 	 */
-	worktrees: {
-		add(print: (line: string) => void): Promise<void>;
-		remove(suffix: string, force: boolean, print: (line: string) => void): Promise<void>;
-	};
+	worktrees(order: WorkOrder): Promise<void>;
 }
 
 /** How long a start waits for each daemon to listen or fail before it says how it went. */
 const START_WAIT_MS = 10_000;
 
-/**
- * Does what the developer asked. Resolves to what to tell them; never rejects. A worktree's
- * addition or removal, which takes a while, tells `progress` each line its command prints.
- */
-export async function perform(
-	intent: Intent,
-	hands: Hands,
-	progress: (line: string) => void = () => {},
-): Promise<string> {
+/** Does what the developer asked. Resolves to what to tell them; never rejects. */
+export async function perform(intent: Intent, hands: Hands): Promise<string> {
 	const { supervisor } = hands;
 	switch (intent.kind) {
 		case "add":
 		case "remove": {
-			// The command's last line says how it ended: where the worktree is, or what was removed.
-			let last = "";
-			const print = (text: string) => {
-				const line = text.split("\n").findLast((l) => l.trim() !== "");
-				if (line === undefined) return;
-				last = line;
-				progress(line);
-			};
-			const done =
-				intent.kind === "add"
-					? hands.worktrees.add(print)
-					: hands.worktrees.remove(intent.suffix, intent.force, print);
+			// Its progress, and how it ended, the feed reads from its files.
+			const doing = intent.kind === "add" ? "Adding a worktree" : `Removing ${intent.suffix}`;
 			const what = intent.kind === "add" ? "add a worktree" : `remove ${intent.suffix}`;
-			return done.then(
-				() => last,
-				(error) => `Could not ${what}: ${firstAndLast(reason(error))}`,
+			return hands.worktrees(intent).then(
+				() => `${doing}: it goes on if you close the view.`,
+				(error) => `Could not ${what}: ${reason(error)}`,
 			);
 		}
 		case "open":
@@ -87,12 +68,6 @@ export async function perform(
 	} catch (error) {
 		return `Could not ${kind} ${label}: ${reason(error)}`;
 	}
-}
-
-/** A message of several lines as one: its first and last, which say what failed and what next. */
-function firstAndLast(message: string): string {
-	const lines = message.split("\n").filter((l) => l.trim() !== "");
-	return lines.length <= 2 ? lines.join(" ") : `${lines[0]} … ${lines.at(-1)}`;
 }
 
 function reason(error: unknown): string {

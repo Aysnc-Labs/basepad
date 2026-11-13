@@ -272,7 +272,7 @@ More on `up`:
   - `↑` `↓` pick an environment; `←` `→` pick one of its apps or services, and narrow the logs to it.
   - `s`, `x` and `r` start, stop and restart the selected app or service; with none selected, the whole environment (main's apps and services, or a worktree's apps, as `up` and `down` do). A stopped app stays stopped: a request does not start it again until `s`.
   - `o` opens the selected app in the browser; `c` copies the selected address (a database's URL, say). With none selected, both take the environment's first app.
-  - `a` adds a worktree, as `basepad worktree add` does; it shows in the list once it is made, and its progress shows meanwhile. `d` removes the selected worktree, as `basepad worktree rm` does, after you press `y`. One with uncommitted changes asks again: type its name and press enter to lose them. While a worktree is being added or removed, `q` waits for it to finish.
+  - `a` adds a worktree, as `basepad worktree add` does; it shows in the list once it is made, and its progress shows meanwhile. `d` removes the selected worktree, as `basepad worktree rm` does, after you press `y`. One with uncommitted changes asks again: type its name and press enter to lose them. Either runs in a process of its own: `q` closes the view at once and it goes on, and `up` again shows it still under way.
   - `v` shows the apps' logs side by side, a column each.
   - `PgUp` `PgDn` scroll back, which pauses the logs; `End` goes back to live. `/` searches them (ignoring case), `n` and `N` step to older and newer matches.
   - `esc` steps back: out of a search or a pause, then to all logs. `q` or Ctrl-C closes it and leaves everything running; `up` again reopens it. Run `up` in a worktree's folder and it opens on that worktree.

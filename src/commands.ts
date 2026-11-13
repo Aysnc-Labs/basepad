@@ -313,17 +313,9 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 			machine: await machineWithPortFree(here, supervisor),
 			supervisor,
 			selected: lay.namespace,
-			// The commands themselves, from main, as `basepad worktree add` and `rm` there.
-			worktrees: {
-				add: (say) => worktreeAdd({ cwd: main.root, args: [], flags: {}, print: say }),
-				remove: (suffix, force, say) =>
-					worktreeRm({
-						cwd: main.root,
-						args: [suffix],
-						flags: force ? { force: true } : {},
-						print: say,
-					}),
-			},
+			// This very command, run again on the same Node: mission control adds and removes worktrees
+			// with it, in processes of their own that outlive the view.
+			basepad: [process.execPath, ...process.execArgv, process.argv[1] as string],
 		});
 	}
 	if (failure !== undefined) throw new BasepadError(failure);

@@ -5,6 +5,7 @@ import { daemonId, layout, type Machine, namespaceOf, placeOf } from "../layout.
 import type { DaemonInfo, Supervisor } from "../supervisor.ts";
 import { hasChanges, listWorktrees, mainBranch } from "../worktrees.ts";
 import type { EnvironmentView, LogLine, Part, Snapshot } from "./model.ts";
+import { type Running, takeWork } from "./work.ts";
 
 /**
  * Mission control's feed: the one adapter between the view and what runs. It reads environments
@@ -16,11 +17,8 @@ export interface Feed {
 	snapshot(): Snapshot;
 	/** Reads states again now, as after an action, rather than on the next tick. */
 	refresh(): void;
-	/**
-	 * Says a worktree is being added: until the returned function is called, a worktree that
-	 * appears is not shown, as its databases, env files and setup are not done yet.
-	 */
-	adding(): () => void;
+	/** What finished work (a worktree added or removed) has to say since last asked, oldest first. */
+	notices(): string[];
 	close(): void;
 }
 
@@ -35,12 +33,14 @@ const KEEP = 2000;
 
 /**
  * Opens the feed on `main`'s project and its worktrees, as served on `machine` (whose `portFree`
- * is known). Resolves once the first read is done. `changed` is called when there is something new.
+ * is known), with the worktree work in `work` (`startWork`'s folder). Resolves once the first read
+ * is done. `changed` is called when there is something new.
  */
 export async function openFeed(options: {
 	main: Project;
 	machine: Machine;
 	supervisor: Supervisor;
+	work: string;
 	changed(): void;
 }): Promise<Feed> {
 	const { main, machine, supervisor, changed } = options;
@@ -54,9 +54,8 @@ export async function openFeed(options: {
 		arrivals.push(Date.now());
 		dirty = true;
 	});
-	/** While worktrees are being added, the suffixes of those there before: only they show. */
-	let before: Set<string> | undefined;
-	let additions = 0;
+	let running: Running[] = [];
+	const notices: string[] = [];
 
 	const configOf = async (root: string): Promise<Project | string> => {
 		let config = configs.get(root);
@@ -70,6 +69,10 @@ export async function openFeed(options: {
 	};
 
 	const refresh = async () => {
+		// First and alone: what finished is told once, whatever fails after.
+		const work = await takeWork(options.work);
+		running = work.running;
+		notices.push(...work.finished);
 		const [trees, daemons, branch] = await Promise.all([
 			listWorktrees(main),
 			supervisor.daemons(),
@@ -77,7 +80,9 @@ export async function openFeed(options: {
 		]);
 		const byId = new Map(daemons.map((daemon) => [daemon.id, daemon]));
 		const next = [await environmentOf(main, undefined, branch, main.root, byId, machine)];
-		const shown = trees.filter((t) => t.present && (before?.has(t.suffix) ?? true));
+		// A worktree being added shows once it is ready: until then, only those there before it began.
+		const adding = running.flatMap((w) => (w.before === undefined ? [] : [w.before]));
+		const shown = trees.filter((t) => t.present && adding.every((was) => was.includes(t.suffix)));
 		// A worktree removed and made again under its suffix reads its config again.
 		for (const root of configs.keys()) {
 			if (!shown.some((t) => t.root === root)) configs.delete(root);
@@ -121,22 +126,19 @@ export async function openFeed(options: {
 		snapshot() {
 			const since = Date.now() - 1000;
 			while (arrivals.length > 0 && (arrivals[0] as number) < since) arrivals.shift();
-			return { project: main.name, environments, logs: book.logs, rate: arrivals.length };
+			return {
+				project: main.name,
+				environments,
+				logs: book.logs,
+				rate: arrivals.length,
+				work: running,
+			};
 		},
 		refresh() {
 			void tick();
 		},
-		adding() {
-			if (additions++ === 0) {
-				before = new Set(environments.slice(1).map((env) => env.label));
-			}
-			let released = false;
-			return () => {
-				if (released) return;
-				released = true;
-				if (--additions === 0) before = undefined;
-				void tick();
-			};
+		notices() {
+			return notices.splice(0);
 		},
 		close() {
 			closed = true;
