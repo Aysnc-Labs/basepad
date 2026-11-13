@@ -1,9 +1,11 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { request as httpsRequest } from "node:https";
 import { createConnection } from "node:net";
 import { dirname, join } from "node:path";
+import { connect } from "node:tls";
 import { z } from "zod";
-import { must, shellQuote } from "./internal/exec.ts";
+import { interactive, must, shellQuote } from "./internal/exec.ts";
 import type { Machine } from "./layout.ts";
 import { install } from "./tools.ts";
 import { PITCHFORK_VERSION } from "./versions.ts";
@@ -37,7 +39,28 @@ export interface Environment {
 	daemons: Record<string, Daemon>;
 }
 
+/** What answers on the machine's port 443: basepad's proxy, something else, or nothing. */
+export type StandardPort = "proxy" | "other" | "closed";
+
 export interface Supervisor {
+	/** The certificate authority basepad's proxy signs with. Exists once the supervisor has run. */
+	ca: string;
+	/**
+	 * Applies basepad's supervisor settings and starts the supervisor when none runs, waiting
+	 * briefly for its proxy to listen.
+	 */
+	serve(): Promise<void>;
+	/**
+	 * What port 443 reaches, asked from the port itself: basepad's proxy only when the certificate
+	 * it serves verifies against basepad's CA (a developer's own pitchfork there is `other`).
+	 */
+	standardPort(): Promise<StandardPort>;
+	/** pitchfork's own plan for trusting the CA and redirecting port 443, one step per line. */
+	proxySetupPlan(): Promise<string[]>;
+	/** Applies that plan on the user's terminal (`sudo` may ask for a password). Returns its exit code. */
+	proxySetup(): Promise<number>;
+	/** Adds the CA to the system trust store. Needs root on Linux. Throws with pitchfork's reason. */
+	trust(): Promise<void>;
 	/**
 	 * Applies basepad's supervisor settings, writes the environment's definitions and registers them
 	 * against its folder. Idempotent.
@@ -94,6 +117,7 @@ export async function openSupervisor(machine: Machine): Promise<Supervisor> {
 	const run = (...args: string[]) => must(pitchfork, args, { cwd: machine.home, env });
 
 	const running = () => existsSync(join(dirs.PITCHFORK_STATE_DIR, "sock"));
+	const ca = join(dirs.PITCHFORK_STATE_DIR, "proxy", "ca.pem");
 
 	/** Sets what differs; a running supervisor restarts to take changed settings (its daemons stop). */
 	const applySettings = async () => {
@@ -120,9 +144,44 @@ export async function openSupervisor(machine: Machine): Promise<Supervisor> {
 		return out;
 	};
 
+	const serve = async () => {
+		await applySettings();
+		if (running()) return;
+		await run("supervisor", "start");
+		// The proxy (and its CA, on a first start) comes up just after the supervisor returns.
+		const until = Date.now() + 5000;
+		while (!(await listening(machine.proxyPort)) && Date.now() < until) {
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+	};
+
 	return {
+		ca,
+		serve,
+
+		standardPort: () => probeStandardPort(ca),
+
+		async proxySetupPlan() {
+			const out = await run("proxy", "setup", "--dry-run");
+			return (
+				out
+					.split("\n")
+					.map((line) => line.trim())
+					.filter((line) => line !== "" && !line.endsWith("following:"))
+					// pitchfork lists this step even when the CA exists, and skips it when applying.
+					.filter((line) => !(line.startsWith("generate the pitchfork CA") && existsSync(ca)))
+			);
+		},
+
+		proxySetup: () =>
+			interactive(pitchfork, ["proxy", "setup", "--yes"], { cwd: machine.home, env }),
+
+		async trust() {
+			await run("proxy", "trust");
+		},
+
 		async register({ namespace, dir, definitions, daemons }) {
-			await applySettings();
+			await serve();
 			const text = toml(daemons);
 			if ((await readFile(definitions, "utf8").catch(() => "")) !== text) {
 				await mkdir(dirname(definitions), { recursive: true });
@@ -151,7 +210,18 @@ export async function openSupervisor(machine: Machine): Promise<Supervisor> {
 			for (;;) {
 				const now = await states(namespace);
 				const settled = names.every((name) => now[name] !== "starting");
-				if (settled || Date.now() >= until) return now;
+				if (settled || Date.now() >= until) {
+					// The proxy re-reads its routes every 2 s, so a new daemon's domain can lag.
+					const ported = (await list(namespace)).filter((d) => (d.port ?? []).length > 0);
+					for (const daemon of ported) {
+						if (now[daemon.name] !== "running") continue;
+						const host = `${daemon.name}.${namespace}.localhost`;
+						while (!(await routed(machine.proxyPort, host)) && Date.now() < until + 3000) {
+							await new Promise((resolve) => setTimeout(resolve, 200));
+						}
+					}
+					return now;
+				}
 				await new Promise((resolve) => setTimeout(resolve, 200));
 			}
 		},
@@ -195,6 +265,61 @@ function supervisorEnv(dirs: Record<string, string>): NodeJS.ProcessEnv {
 	if (env.BASEPAD_PATH) env.PATH = env.BASEPAD_PATH;
 	delete env.BASEPAD_PATH;
 	return { ...env, ...dirs };
+}
+
+/** Whether the proxy has a route for `host`: its answer is anything but its own "No route". */
+function routed(port: number, host: string): Promise<boolean> {
+	return new Promise((resolve) => {
+		const req = httpsRequest(
+			{
+				host: "127.0.0.1",
+				port,
+				servername: host,
+				headers: { host },
+				rejectUnauthorized: false,
+				timeout: 1000,
+			},
+			(res) => {
+				let body = "";
+				res.setEncoding("utf8").on("data", (chunk: string) => {
+					body += chunk;
+				});
+				res.on("end", () => resolve(!(res.statusCode === 404 && body.includes("No route for"))));
+			},
+		);
+		// A slow answer comes from the app, so the proxy did route it.
+		req.on("timeout", () => {
+			resolve(true);
+			req.destroy();
+		});
+		req.on("error", () => resolve(false));
+		req.end();
+	});
+}
+
+/** The name the probe asks the proxy for: any name under `localhost` gets a certificate. */
+const PROBE_HOST = "basepad-probe.localhost";
+
+async function probeStandardPort(ca: string): Promise<StandardPort> {
+	const pem = await readFile(ca, "utf8").catch(() => undefined);
+	return new Promise((resolve) => {
+		const socket = connect({
+			host: "127.0.0.1",
+			port: 443,
+			servername: PROBE_HOST,
+			ca: pem ?? [],
+			rejectUnauthorized: false,
+		});
+		const done = (answer: StandardPort) => {
+			socket.destroy();
+			resolve(answer);
+		};
+		socket.setTimeout(1000, () => done("other"));
+		socket.on("secureConnect", () => done(pem && socket.authorized ? "proxy" : "other"));
+		socket.on("error", (error: NodeJS.ErrnoException) =>
+			done(error.code === "ECONNREFUSED" ? "closed" : "other"),
+		);
+	});
 }
 
 /** One entry of `pitchfork list --json`; only what basepad reads. */

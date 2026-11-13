@@ -3,7 +3,7 @@ import { postgres } from "../src/index.ts";
 import { layout, machine } from "../src/layout.ts";
 
 const app = { run: "next dev", cwd: "/p" };
-const here = { home: "/h", proxyPort: 7443 };
+const here = { home: "/h", proxyPort: 7443, portFree: false };
 
 function project(name: string, apps: string[] = [], services: string[] = []) {
 	return {
@@ -55,8 +55,8 @@ test("an app key over 63 characters is rejected as a domain label", () => {
 	);
 });
 
-test("on the standard HTTPS port an app's URL carries no port", () => {
-	const { apps } = layout(project("shop", ["web"]), { ...here, proxyPort: 443 });
+test("once port 443 reaches the proxy, an app's URL carries no port", () => {
+	const { apps } = layout(project("shop", ["web"]), { ...here, portFree: true });
 	expect(apps.web?.url).toBe("https://web.shop.localhost");
 });
 
@@ -78,12 +78,29 @@ test("the environment's supervisor definitions live in basepad's home", () => {
 });
 
 test("the machine is read from BASEPAD_HOME and BASEPAD_PROXY_PORT, with defaults", () => {
-	expect(machine({ BASEPAD_HOME: "/x", BASEPAD_PROXY_PORT: "9443" })).toEqual({
+	expect(machine({ BASEPAD_HOME: "/x", BASEPAD_PROXY_PORT: "9443" }, false)).toEqual({
 		home: "/x",
 		proxyPort: 9443,
+		portFree: false,
 	});
-	expect(machine({ HOME: "/u" })).toEqual({ home: "/u/.basepad", proxyPort: 7443 });
+	expect(machine({ HOME: "/u" }, false)).toEqual({
+		home: "/u/.basepad",
+		proxyPort: 7443,
+		portFree: false,
+	});
 	expect(() => machine({ BASEPAD_PROXY_PORT: "nope" })).toThrow(
 		"BASEPAD_PROXY_PORT must be a port number; got `nope`.",
 	);
+});
+
+test("as root on Linux the proxy listens on 443 itself, so URLs are port-free", () => {
+	expect(machine({ HOME: "/root" }, true)).toEqual({
+		home: "/root/.basepad",
+		proxyPort: 443,
+		portFree: true,
+	});
+	expect(machine({ HOME: "/root", BASEPAD_PROXY_PORT: "9443" }, true)).toMatchObject({
+		proxyPort: 9443,
+		portFree: false,
+	});
 });

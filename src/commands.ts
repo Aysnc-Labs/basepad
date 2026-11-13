@@ -4,10 +4,12 @@ import { basename, join } from "node:path";
 import { z } from "zod";
 import { CONFIG_FILE, LOCAL_FILE, loadProject, type Project } from "./config.ts";
 import { writeEnvFiles } from "./env-files.ts";
+import { syncHosts } from "./hosts.ts";
 import type { EnvFiles } from "./index.ts";
 import { BasepadError, shellQuote } from "./internal/exec.ts";
 import { table } from "./internal/table.ts";
-import { type Layout, layout, machine } from "./layout.ts";
+import { isRootOnLinux, type Layout, layout, type Machine, machine } from "./layout.ts";
+import { setup, trustAsRoot } from "./setup.ts";
 import { type DaemonState, openSupervisor, type Supervisor } from "./supervisor.ts";
 
 export interface Flag {
@@ -35,6 +37,14 @@ export const COMMANDS: Record<string, Command> = {
 		summary: `Write a starter ${CONFIG_FILE} in this folder`,
 		flags: {},
 		run: init,
+	},
+	setup: {
+		summary: "Once per machine: trust basepad's certificate and drop the port from URLs",
+		flags: {
+			"dry-run": { description: "Print the plan and change nothing" },
+			yes: { short: "y", description: "Apply the plan without asking" },
+		},
+		run: setup,
 	},
 	up: {
 		summary: "Start this project's apps, set its env files and show their state",
@@ -153,25 +163,42 @@ async function up({ cwd, print }: Invocation): Promise<void> {
 		);
 	}
 	const here = machine(process.env);
-	const lay = layout(project, here);
-	await writeEnvFiles(project.root, envFiles(project, lay));
 	const supervisor = await openSupervisor(here);
+	const ports = layout(project, here);
 	await supervisor.register({
 		namespace: project.name,
 		dir: project.root,
-		definitions: lay.definitions,
+		definitions: ports.definitions,
 		daemons: Object.fromEntries(
 			Object.entries(project.apps).map(([key, app]) => [
 				key,
-				{ run: withLocalBins(project, app.cwd, app.run), dir: app.cwd, port: lay.apps[key]?.port },
+				{
+					run: withLocalBins(project, app.cwd, app.run),
+					dir: app.cwd,
+					port: ports.apps[key]?.port,
+				},
 			]),
 		),
 	});
+	if (isRootOnLinux()) for (const line of await trustAsRoot(supervisor)) print(line);
+	const lay = layout(project, await asked(here, supervisor));
+	for (const line of await syncHosts(
+		project.name,
+		Object.values(lay.apps).map((a) => a.host),
+	)) {
+		print(line);
+	}
+	await writeEnvFiles(project.root, envFiles(project, lay));
 	const since = new Date(Date.now() - 1000);
 	const states = await supervisor.start(project.name, Object.keys(project.apps), APP_WAIT_MS);
 	print(appTable(lay, states));
 	const failed = Object.keys(project.apps).filter((key) => states[key] === "failed");
 	if (failed.length > 0) throw new BasepadError(await failures(supervisor, project, failed, since));
+}
+
+/** The machine with whether URLs are port-free asked from its port 443, once the supervisor runs. */
+async function asked(here: Machine, supervisor: Supervisor): Promise<Machine> {
+	return { ...here, portFree: (await supervisor.standardPort()) === "proxy" };
 }
 
 /** Runs the config's `env` with each app's URL, and checks what it returns. */
@@ -246,11 +273,16 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 async function status({ cwd, print }: Invocation): Promise<void> {
 	const project = await loadProject(cwd);
 	const here = machine(process.env);
-	const lay = layout(project, here);
-	if (Object.keys(lay.apps).length === 0) {
+	if (Object.keys(layout(project, here).apps).length === 0) {
 		print(`${project.file} names no apps.`);
 		return;
 	}
 	const supervisor = await openSupervisor(here);
-	print(appTable(lay, await supervisor.status(project.name)));
+	const states = await supervisor.status(project.name);
+	// With no supervisor running nothing answers on 443, so the URL form is the port's default.
+	const lay = layout(
+		project,
+		Object.keys(states).length > 0 ? await asked(here, supervisor) : here,
+	);
+	print(appTable(lay, states));
 }

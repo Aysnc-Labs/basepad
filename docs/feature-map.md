@@ -16,7 +16,7 @@ Starts at: `loadProject` in `src/config.ts`.
 
 ## Layout
 
-Derives every name from the project's description and the machine: each app's domain `<app>.<name>.localhost` and URL (with the proxy's port unless it is 443: the one place the URL form is decided), each app's starting port (a block of 20 chosen by the name's hash, in [20000, 32000)), each service's database `<name>_<service>`, and the environment's definitions file in the home. Rejects a name past its limit (63-character domain label, 63-byte database name) with the reason, never truncating. The machine is `BASEPAD_HOME` (default `~/.basepad`) and `BASEPAD_PROXY_PORT` (default 7443).
+Derives every name from the project's description and the machine: each app's domain `<app>.<name>.localhost` and URL (port-free when the machine's `portFree` says port 443 reaches the proxy, else with the proxy's port: the one place the URL form is decided), each app's starting port (a block of 20 chosen by the name's hash, in [20000, 32000)), each service's database `<name>_<service>`, and the environment's definitions file in the home. Rejects a name past its limit (63-character domain label, 63-byte database name) with the reason, never truncating. The machine is `BASEPAD_HOME` (default `~/.basepad`), `BASEPAD_PROXY_PORT` (default 7443; 443 as root on Linux, where the proxy binds it itself) and `portFree`, which commands ask from port 443 once the supervisor runs, never stored.
 
 Starts at: `layout` and `machine` in `src/layout.ts`.
 
@@ -28,19 +28,19 @@ Starts at: `setKeys` (pure) and `writeEnvFiles` in `src/env-files.ts`.
 
 ## Tools
 
-Installs a tool through mise when missing and locates its install folder and programs. Runs mise from the home, so no project's mise config is read.
+Installs a tool through mise (always asking mise, which waits for an install another basepad has in progress, and is a no-op once installed) and locates its install folder and programs. Runs mise from the home, so no project's mise config is read.
 
 Starts at: `install` in `src/tools.ts`.
 
 ## Supervisor
 
-basepad's own pitchfork, isolated in `<home>/pitchfork/{state,config,logs}` so a developer's pitchfork is untouched. Sets its settings through pitchfork (zero ready delay, worktree labels off, HTTPS proxy on the machine's port with DNS, hosts sync, auto-trust and proxy auto-start off) and restarts the supervisor when one changes. Registers an environment's generated definitions against its folder under the name's namespace; starts what is not running and waits a bounded time for each daemon to listen or fail; stops, reports state and reads logs. The CA is `<home>/pitchfork/state/proxy/ca.pem`.
+basepad's own pitchfork, isolated in `<home>/pitchfork/{state,config,logs}` so a developer's pitchfork is untouched. Sets its settings through pitchfork (zero ready delay, worktree labels off, HTTPS proxy on the machine's port with DNS, hosts sync, auto-trust and proxy auto-start off) and restarts the supervisor when one changes. Registers an environment's generated definitions against its folder under the name's namespace; starts what is not running and waits a bounded time for each daemon to listen or fail; stops, reports state and reads logs. The CA is `<home>/pitchfork/state/proxy/ca.pem`. `standardPort` asks what answers on port 443: basepad's proxy only when its certificate verifies against that CA (so Herd, Valet or a developer's own pitchfork there count as `other`). Wraps `pitchfork proxy setup` (`--dry-run` plan, `--yes` on the user's terminal) and `pitchfork proxy trust`. Processes it starts get the CA as `NODE_EXTRA_CA_CERTS` and `PITCHFORK_CA_FILE`; other runtimes need their own setting (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`).
 
 Starts at: `openSupervisor` in `src/supervisor.ts`.
 
 ## `basepad up`
 
-Writes the env files with each app's URL, registers the apps with the supervisor (each runs from its folder with its own and the project's `node_modules/.bin` on PATH, and gets a free `PORT`), starts what is not running, waits up to 5 s, prints the APP/URL/STATE table and returns. An app that exits on start is shown with its last output and the command for its full log, and `up` exits 1. `-d` is accepted. Refuses a config with `services` until Postgres lands.
+Registers the apps with the supervisor; as root on Linux trusts the CA (system store and browsers' NSS stores, no prompt); asks port 443 for the URL form; adds the project's domains to `/etc/hosts` where they do not resolve for server-side code (or prints the lines when it cannot write); writes the env files with each app's URL (each runs from its folder with its own and the project's `node_modules/.bin` on PATH, and gets a free `PORT`), starts what is not running, waits up to 5 s (and up to 3 s more for the proxy, which re-reads routes every 2 s, to route each new domain), prints the APP/URL/STATE table and returns. An app that exits on start is shown with its last output and the command for its full log, and `up` exits 1. `-d` is accepted. Refuses a config with `services` until Postgres lands.
 
 Starts at: `up` in `src/commands.ts`.
 
@@ -64,6 +64,18 @@ Starts at: `init` in `src/commands.ts`.
 
 ## `basepad status`
 
-Prints one row per app with its URL and live state (`running`, `starting`, `failed` or `stopped`). Starts no supervisor when none runs.
+Prints one row per app with its URL and live state (`running`, `starting`, `failed` or `stopped`). Starts no supervisor when none runs; then the URL form is the port's default, since nothing answers on 443 to ask.
 
 Starts at: `status` in `src/commands.ts`.
+
+## `basepad setup`
+
+Once per machine: trusts basepad's CA and makes URLs port-free. Prints the plan first (pitchfork's own proxy-setup plan against basepad's isolated pitchfork: login-keychain trust and a pf redirect of 443 on macOS, system trust and an iptables redirect on Linux; plus certutil into Chrome's and Firefox's NSS stores on Linux), then asks; `--dry-run` prints only, `--yes` skips the question, no terminal and no `--yes` refuses. Warns when something else answers on 443; refuses when a developer's own pitchfork setup holds the pf anchor or Linux CA file it would overwrite. As root on Linux it applies with no prompt, and `up` does the same itself. Without it everything works with the port in each URL.
+
+Starts at: `setup` in `src/setup.ts`.
+
+## Hosts file
+
+Where `*.localhost` does not resolve for server-side code (glibc without systemd's resolver, as in a container), `up` writes the project's domains as a marked block `# >>> basepad <name>` in `/etc/hosts`, in place (a bind mount in Docker), or prints the lines when it cannot write.
+
+Starts at: `syncHosts` in `src/hosts.ts`.
