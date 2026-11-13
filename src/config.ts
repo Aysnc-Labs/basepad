@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { registerHooks } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { FACTORIES, SCHEMAS, type Service } from "./catalogue.ts";
@@ -26,6 +26,10 @@ export interface Project {
 		prefix: string;
 		/** Absolute. When absent, beside the git repository (the Worktrees module decides). */
 		dir?: string;
+		/** Paths relative to the config, copied from main's folder into a new worktree's. */
+		clone: string[];
+		/** Shell commands run in order in a new worktree's folder. */
+		setup: string[];
 	};
 }
 
@@ -68,6 +72,8 @@ export async function loadProject(cwd: string): Promise<Project> {
 		env: (config.env as Project["env"] | undefined) ?? (() => ({})),
 		worktrees: {
 			prefix: config.worktrees?.prefix ?? "worktree",
+			clone: config.worktrees?.clone ?? [],
+			setup: config.worktrees?.setup ?? [],
 			...(config.worktrees?.dir === undefined ? {} : { dir: resolve(root, config.worktrees.dir) }),
 		},
 	};
@@ -174,6 +180,24 @@ const ConfigSchema = z
 				dir: z
 					.string({ error: "must be a folder relative to the config" })
 					.min(1, "must be a folder relative to the config")
+					.optional(),
+				clone: z
+					.array(
+						z
+							.string({ error: "each must be a path relative to the config" })
+							.min(1, "each must be a path relative to the config")
+							.refine(
+								(path) => !isAbsolute(path) && !normalize(path).startsWith(".."),
+								"each must be a path inside the config's folder",
+							),
+					)
+					.optional(),
+				setup: z
+					.array(
+						z
+							.string({ error: "each must be a shell command" })
+							.min(1, "each must be a shell command"),
+					)
 					.optional(),
 			})
 			.optional(),

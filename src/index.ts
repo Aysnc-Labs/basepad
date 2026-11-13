@@ -58,6 +58,10 @@ export interface Config<
 		prefix?: string;
 		/** Where worktrees are checked out, relative to the config. Defaults to `<repository>/../<name>.worktrees`. */
 		dir?: string;
+		/** Untracked paths, relative to the config, copied from main into each new worktree (copy-on-write where the filesystem can). */
+		clone?: string[];
+		/** Shell commands run in order in each new worktree, after its env files are written. */
+		setup?: string[];
 	};
 }
 

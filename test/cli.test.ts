@@ -68,11 +68,22 @@ test("up's and setup's help show their own flags", async () => {
 test("a two-word command takes its flags after both words", async () => {
 	const help = await box.basepad(dir, "worktree", "add", "--help");
 	expect(help.stdout).toContain("Usage: basepad worktree add [flags]\n");
-	expect(help.stdout).toContain("      --json  Print only the worktree's name and path, as JSON\n");
+	expect(help.stdout).toContain(
+		"      --json           Print only the worktree's name and path, as JSON\n",
+	);
+	expect(help.stdout).toContain("      --branch <name>  Check out this branch,");
 	const typo = await box.basepad(dir, "worktree", "ad");
 	expect(typo.code).toBe(1);
 	expect(typo.stderr).toBe(
 		"basepad: Unknown command `worktree ad`. The nearest is `worktree add`; run `basepad --help` for every command.\n",
+	);
+});
+
+test("a flag that takes a value says so when it has none", async () => {
+	const out = await box.basepad(dir, "worktree", "add", "--branch");
+	expect(out.code).toBe(1);
+	expect(out.stderr).toBe(
+		"basepad: `--branch` needs a name: `basepad worktree add --branch <name>`.\n",
 	);
 });
 

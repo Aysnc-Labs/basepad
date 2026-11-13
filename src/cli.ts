@@ -17,7 +17,7 @@ async function main(argv: string[]): Promise<number> {
 		return 1;
 	}
 	if (first.startsWith("-")) {
-		const flags = parseFlags([first, ...rest], TOP_FLAGS, "basepad");
+		const { flags } = parseFlags([first, ...rest], TOP_FLAGS, "basepad");
 		if (flags.version) {
 			process.stdout.write(`${version()}\n`);
 			return 0;
@@ -37,12 +37,7 @@ async function main(argv: string[]): Promise<number> {
 		);
 	}
 	const args = name === pair ? rest.slice(1) : rest;
-	const positional = args.filter((arg) => !arg.startsWith("-"));
-	const flags = parseFlags(
-		args.filter((arg) => arg.startsWith("-")),
-		{ ...command.flags, ...HELP },
-		`basepad ${name}`,
-	);
+	const { flags, positional } = parseFlags(args, { ...command.flags, ...HELP }, `basepad ${name}`);
 	if (flags.help) {
 		process.stdout.write(commandHelp(name, command));
 		return 0;
@@ -64,22 +59,41 @@ async function main(argv: string[]): Promise<number> {
 	return 0;
 }
 
-/** Reads switches by long or short name; anything else is an error naming the nearest flag. */
+/**
+ * Reads flags by long or short name: a switch, or a flag with a value, which takes the next
+ * argument. Other words are the positional arguments; any other flag is an error naming the
+ * nearest.
+ */
 function parseFlags(
 	args: string[],
 	known: Record<string, Flag>,
 	usage: string,
-): Record<string, boolean> {
-	const flags: Record<string, boolean> = {};
+): { flags: Record<string, boolean | string>; positional: string[] } {
+	const flags: Record<string, boolean | string> = {};
+	const positional: string[] = [];
 	const spellings = Object.entries(known).flatMap(([name, flag]) => [
 		[`--${name}`, name],
 		...(flag.short ? [[`-${flag.short}`, name]] : []),
 	]) as [string, string][];
 	const byArg = new Map(spellings);
-	for (const arg of args) {
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i] as string;
 		const name = byArg.get(arg);
-		if (name !== undefined) {
+		const value = name === undefined ? undefined : known[name]?.value;
+		if (name !== undefined && value === undefined) {
 			flags[name] = true;
+			continue;
+		}
+		if (name !== undefined) {
+			const given = args[++i];
+			if (given === undefined || given.startsWith("-")) {
+				throw new BasepadError(`\`${arg}\` needs a ${value}: \`${usage} ${arg} <${value}>\`.`);
+			}
+			flags[name] = given;
+			continue;
+		}
+		if (!arg.startsWith("-")) {
+			positional.push(arg);
 			continue;
 		}
 		const near = nearest(
@@ -90,7 +104,7 @@ function parseFlags(
 			`\`${usage}\` has no flag \`${arg}\`. The nearest is \`${near}\`; run \`${usage} --help\` for its flags.`,
 		);
 	}
-	return flags;
+	return { flags, positional };
 }
 
 /** The candidate with the fewest edits from `word`. */
@@ -153,7 +167,7 @@ function usageArgs(args: string[]): string {
 function flagLines(flags: Record<string, Flag>): string[] {
 	return columns(
 		Object.entries(flags).map(([name, flag]) => [
-			flag.short ? `-${flag.short}, --${name}` : `    --${name}`,
+			`${flag.short ? `-${flag.short}, --${name}` : `    --${name}`}${flag.value ? ` <${flag.value}>` : ""}`,
 			flag.description,
 		]),
 	);
