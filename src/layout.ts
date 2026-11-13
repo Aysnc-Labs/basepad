@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { kindOf, type NamesOf, type Service } from "./catalogue.ts";
 import type { Project } from "./config.ts";
 import { BasepadError } from "./internal/exec.ts";
@@ -69,6 +69,8 @@ export interface Layout {
 	 * service runs in main's, on one server per service for all of a project's environments.
 	 */
 	namespace: string;
+	/** Main's namespace, `<name>`, where every service runs. */
+	mainNamespace: string;
 	/** A worktree's suffix; absent in main. */
 	suffix?: string;
 }
@@ -79,6 +81,8 @@ export type ServicePlace = {
 	port: number;
 	/** The service's data folder in the home. */
 	dir: string;
+	/** Its daemon with the supervisor, `<name>/<key>` in main's namespace: what an app depends on. */
+	daemon: string;
 } & NamesOf<Service>;
 
 /** A DNS label's limit, in characters. */
@@ -118,7 +122,7 @@ export function layout(
 		fail(`\`name\` is ${name.length} characters; a domain label allows ${LABEL_MAX}.`);
 	}
 	if (suffix !== undefined && suffix.length > LABEL_MAX) {
-		fail(`the worktree name is ${suffix.length} characters; a domain label allows ${LABEL_MAX}.`);
+		fail(`the worktree suffix is ${suffix.length} characters; a domain label allows ${LABEL_MAX}.`);
 	}
 	const apps: Layout["apps"] = {};
 	const block = APP_PORT_BASE + (hash(name) % APP_PORT_BLOCKS) * APP_PORT_BLOCK;
@@ -144,6 +148,7 @@ export function layout(
 			...names,
 			port: SERVICE_PORT_BASE + (hash(`${name}.${key}`) % SERVICE_PORTS),
 			dir,
+			daemon: `${name}/${key}`,
 		};
 	}
 	// Last, so a name main itself cannot have is reported in main's words.
@@ -156,10 +161,10 @@ export function layout(
 				throw error;
 			}
 			const reason = error.message.slice(project.file.length + 2);
-			const shorten = reason.startsWith("the worktree name")
+			const shorten = reason.startsWith("the worktree suffix")
 				? "Shorten `worktrees.prefix`."
 				: "Shorten `name`, the service key or `worktrees.prefix`.";
-			fail(`worktrees named like "${longest}" leave too little room: ${reason} ${shorten}`);
+			fail(`worktree suffixes like "${longest}" leave too little room: ${reason} ${shorten}`);
 		}
 	}
 	const namespace = suffix === undefined ? name : `${name}.${suffix}`;
@@ -168,6 +173,7 @@ export function layout(
 		services,
 		definitions: join(machine.home, "environments", `${namespace}.toml`),
 		namespace,
+		mainNamespace: name,
 		...(suffix === undefined ? {} : { suffix }),
 	};
 }
@@ -178,6 +184,24 @@ export function layout(
  */
 export function appHost(app: string, name: string, suffix?: string): string {
 	return suffix === undefined ? `${app}.${name}.localhost` : `${app}.${suffix}.${name}.localhost`;
+}
+
+/** The suffix of `namespace` when it is a worktree's of the project `name`; else none. */
+export function suffixOf(name: string, namespace: string): string | undefined {
+	return namespace.startsWith(`${name}.`) ? namespace.slice(name.length + 1) : undefined;
+}
+
+/**
+ * The folder worktrees are checked out in: `worktrees.dir`, else `<name>.worktrees` beside the
+ * repository's top folder `top`. With `suffix`, that worktree's own folder in it.
+ */
+export function worktreeFolder(
+	project: Pick<Project, "name"> & { worktrees: Pick<Project["worktrees"], "dir"> },
+	top: string,
+	suffix?: string,
+): string {
+	const dir = project.worktrees.dir ?? join(dirname(top), `${project.name}.worktrees`);
+	return suffix === undefined ? dir : join(dir, suffix);
 }
 
 /** A new worktree's suffix: `<prefix>-<n>` with the lowest `n` from 1 that no name in `taken` has. */

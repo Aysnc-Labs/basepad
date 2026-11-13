@@ -133,10 +133,10 @@ test("a database left closed by an interrupted copy is opened again by the next 
 }, 120_000);
 
 // The budget is provisional: a human sets it from the times measured on a Mac.
-const MACOS_BUDGET_MS = 3_000;
+const MACOS_BUDGET_S = 1.5;
 
 test.runIf(process.platform === "darwin")(
-	`on macOS, worktree add copies a database of about 1 GB within ${MACOS_BUDGET_MS / 1000} s`,
+	`on macOS, worktree add copies a database of about 1 GB within ${MACOS_BUDGET_S} s`,
 	async () => {
 		const big = await project("t16big", 18);
 		const init = await box.run("mise", [
@@ -152,12 +152,12 @@ test.runIf(process.platform === "darwin")(
 		]);
 		expect(init.code).toBe(0);
 		clients.push(await holdOpen(big));
-		const start = Date.now();
 		const added = await box.basepad(big, "worktree", "add");
-		const took = Date.now() - start;
 		expect(added.code).toBe(0);
-		expect(added.stdout).toContain("by file clone");
-		expect(took).toBeLessThan(MACOS_BUDGET_MS);
+		// The copy's own time, from its route line: not the checkout, clone paths or setup.
+		const took = added.stdout.match(/Copied main's `db` by file clone in ([\d.]+) s\./)?.[1];
+		expect(took).toBeDefined();
+		expect(Number(took)).toBeLessThan(MACOS_BUDGET_S);
 	},
 	600_000,
 );

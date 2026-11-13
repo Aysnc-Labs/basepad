@@ -3,11 +3,11 @@ import { mkdir, readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { CONFIG_FILE, type Project } from "./config.ts";
 import { BasepadError, exec, must } from "./internal/exec.ts";
-import { nextSuffix } from "./layout.ts";
+import { nextSuffix, worktreeFolder } from "./layout.ts";
 
 /**
  * Worktrees: environments made from a main, each in its own git worktree. Everything about them is
- * asked from git (which checkouts exist, their folders, their names), so basepad keeps no list.
+ * asked from git (which checkouts exist, their folders, their suffixes), so basepad keeps no list.
  */
 
 /** Where a config's folder sits in git: main, or a worktree of main with its suffix. */
@@ -27,9 +27,9 @@ export type Checkout =
 export async function checkoutOf(root: string): Promise<Checkout> {
 	const top = await toplevel(root);
 	if (top === undefined) return {};
-	const [first] = await worktreePaths(top);
-	if (first === undefined || first === top) return {};
-	return { suffix: basename(top), main: join(first, relative(top, root)) };
+	const [first] = await checkoutsOf(top);
+	if (first === undefined || first.path === top) return {};
+	return { suffix: basename(top), main: join(first.path, relative(top, root)) };
 }
 
 /**
@@ -48,14 +48,14 @@ export async function checkOutWorktree(
 			`A worktree is a git worktree, and ${main.root} is not in a git repository.`,
 		);
 	}
-	const dir = main.worktrees.dir ?? join(dirname(top), `${main.name}.worktrees`);
+	const dir = worktreeFolder(main, top);
 	const branches = (await git(top, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]))
 		.split("\n")
 		.filter(Boolean);
 	const folders = existsSync(dir) ? await readdir(dir) : [];
-	const checkouts = (await worktreePaths(top)).map((path) => basename(path));
+	const checkouts = (await checkoutsOf(top)).map(({ path }) => basename(path));
 	const suffix = nextSuffix(main.worktrees.prefix, [...branches, ...folders, ...checkouts]);
-	const path = join(dir, suffix);
+	const path = worktreeFolder(main, top, suffix);
 	const on = branch ?? suffix;
 	// For a branch only a remote has, git makes a local one tracking it.
 	const exists =
@@ -85,7 +85,7 @@ export async function checkOutWorktree(
  * Copies each of `paths` (relative to both folders) from main's folder to a worktree's, file by
  * file, copy-on-write where the filesystem can (APFS, btrfs, XFS) and plainly otherwise. Never a
  * link: a worktree's writes must not reach main's files. Returns a note for each path main lacks.
- * The system's `cp` does it: Node's own `cp` is ten times slower on a large `node_modules`.
+ * The system's `cp` does it, which is faster than Node's own on a large `node_modules`.
  */
 export async function clonePaths(from: string, to: string, paths: string[]): Promise<string[]> {
 	const notes: string[] = [];
@@ -158,25 +158,14 @@ export interface Listed {
 export async function listWorktrees(main: Project): Promise<Listed[]> {
 	const top = await toplevel(main.root);
 	if (top === undefined) return [];
-	const out = await git(top, ["worktree", "list", "--porcelain", "-z"]);
-	const listed: Listed[] = [];
-	// Each worktree is a run of fields, ended by an empty one.
-	for (const record of out.split("\0\0")) {
-		const fields = record.split("\0");
-		const path = fields.find((f) => f.startsWith("worktree "))?.slice("worktree ".length);
-		const branch = fields.find((f) => f.startsWith("branch "))?.slice("branch refs/heads/".length);
-		if (path === undefined) continue;
-		const real = await realpath(path).catch(() => path);
-		listed.push({
-			suffix: basename(real),
-			path: real,
-			root: join(real, relative(top, main.root)),
-			...(branch === undefined ? {} : { branch }),
-			present: existsSync(real),
-		});
-	}
 	// Main's own checkout comes first.
-	return listed.slice(1);
+	return (await checkoutsOf(top)).slice(1).map(({ path, branch }) => ({
+		suffix: basename(path),
+		path,
+		root: join(path, relative(top, main.root)),
+		...(branch === undefined ? {} : { branch }),
+		present: existsSync(path),
+	}));
 }
 
 /** Whether a git worktree's folder has changes git would lose: modified, staged or untracked files. */
@@ -200,14 +189,20 @@ async function toplevel(dir: string): Promise<string | undefined> {
 	return realpath(out.stdout.trim());
 }
 
-/** Every checkout of the repository, main's first, real. */
-async function worktreePaths(top: string): Promise<string[]> {
+/** Every checkout of the repository as git lists it, main's first: its real folder and branch. */
+async function checkoutsOf(top: string): Promise<{ path: string; branch?: string }[]> {
 	const out = await git(top, ["worktree", "list", "--porcelain", "-z"]);
-	const paths = out
-		.split("\0")
-		.filter((field) => field.startsWith("worktree "))
-		.map((field) => field.slice("worktree ".length));
-	return Promise.all(paths.map((path) => realpath(path).catch(() => path)));
+	const checkouts: { path: string; branch?: string }[] = [];
+	// Each checkout is a run of fields, ended by an empty one.
+	for (const record of out.split("\0\0")) {
+		const fields = record.split("\0");
+		const path = fields.find((f) => f.startsWith("worktree "))?.slice("worktree ".length);
+		const branch = fields.find((f) => f.startsWith("branch "))?.slice("branch refs/heads/".length);
+		if (path === undefined) continue;
+		const real = await realpath(path).catch(() => path);
+		checkouts.push({ path: real, ...(branch === undefined ? {} : { branch }) });
+	}
+	return checkouts;
 }
 
 function git(cwd: string, args: string[]): Promise<string> {

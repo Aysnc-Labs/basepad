@@ -79,7 +79,8 @@ export async function loadProject(cwd: string): Promise<Project> {
 	};
 }
 
-function findConfig(cwd: string): string {
+/** The config file in `cwd` or its nearest parent with one, real. */
+export function findConfig(cwd: string): string {
 	for (let dir = resolve(cwd); ; dir = dirname(dir)) {
 		const file = join(dir, CONFIG_FILE);
 		if (existsSync(file)) return realpathSync(file);

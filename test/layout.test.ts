@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { postgres } from "../src/index.ts";
-import { layout, machine, nextSuffix } from "../src/layout.ts";
+import { layout, machine, nextSuffix, suffixOf, worktreeFolder } from "../src/layout.ts";
 
 const app = { run: "next dev", cwd: "/p" };
 const here = { home: "/h", proxyPort: 7443, portFree: false };
@@ -161,18 +161,45 @@ test("a worktree registers under its own namespace and definitions file", () => 
 	expect(tree.definitions).toBe("/h/environments/shop.worktree-1.toml");
 });
 
+test("every service runs in main's namespace, as <name>/<key>, in main and in a worktree", () => {
+	for (const suffix of [undefined, "worktree-1"]) {
+		const lay = layout(project("shop", [], ["db"]), here, suffix);
+		expect(lay.mainNamespace).toBe("shop");
+		expect(lay.services.db?.daemon).toBe("shop/db");
+	}
+});
+
+test("a namespace of the project's worktree gives its suffix; any other gives none", () => {
+	expect(suffixOf("shop", "shop.worktree-1")).toBe("worktree-1");
+	expect(suffixOf("shop", "shop")).toBeUndefined();
+	expect(suffixOf("shop", "shopping.worktree-1")).toBeUndefined();
+	expect(suffixOf("shop", "blog.worktree-1")).toBeUndefined();
+});
+
+test("a worktree's folder is <suffix> in <name>.worktrees beside the repository, or in worktrees.dir", () => {
+	expect(worktreeFolder({ name: "shop", worktrees: {} }, "/code/shop")).toBe(
+		"/code/shop.worktrees",
+	);
+	expect(worktreeFolder({ name: "shop", worktrees: {} }, "/code/shop", "worktree-2")).toBe(
+		"/code/shop.worktrees/worktree-2",
+	);
+	expect(worktreeFolder({ name: "shop", worktrees: { dir: "/w" } }, "/code/shop", "wt-1")).toBe(
+		"/w/wt-1",
+	);
+});
+
 test("a name that leaves no room for a worktree's database is rejected at load, in main", () => {
 	// 50 + "_db_worktree_999" is 66 bytes, though main's own 53 fit.
 	const name = "a".repeat(50);
 	expect(() => layout(project(name, [], ["db"]), here)).toThrow(
-		`/p/basepad.config.ts: worktrees named like "worktree-999" leave too little room: service \`db\` makes a worktree's database name "${name}_db_worktree_999", which is 66 bytes; Postgres allows 63. Shorten \`name\`, the service key or \`worktrees.prefix\`.`,
+		`/p/basepad.config.ts: worktree suffixes like "worktree-999" leave too little room: service \`db\` makes a worktree's database name "${name}_db_worktree_999", which is 66 bytes; Postgres allows 63. Shorten \`name\`, the service key or \`worktrees.prefix\`.`,
 	);
 });
 
 test("a prefix too long for a domain label is rejected at load", () => {
 	const prefix = "p".repeat(60);
 	expect(() => layout(project("shop", ["web"], [], prefix), here)).toThrow(
-		`/p/basepad.config.ts: worktrees named like "${prefix}-999" leave too little room: the worktree name is 64 characters; a domain label allows 63. Shorten \`worktrees.prefix\`.`,
+		`/p/basepad.config.ts: worktree suffixes like "${prefix}-999" leave too little room: the worktree suffix is 64 characters; a domain label allows 63. Shorten \`worktrees.prefix\`.`,
 	);
 });
 

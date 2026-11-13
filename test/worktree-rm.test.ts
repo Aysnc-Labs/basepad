@@ -166,10 +166,10 @@ test("rm stops the worktree's apps, drops its databases, unregisters it and keep
 	expect((await box.get<{ cwd: string }>(url("web.t18shop.localhost"))).cwd).toBe(main);
 });
 
-test("rm works when the worktree's config is broken", async () => {
+test("rm works from inside a worktree whose config is broken", async () => {
 	await writeFile(join(tree(3), "basepad.config.ts"), "this is not a config {");
 	await git(tree(3), "commit", "--quiet", "-am", "break it");
-	const out = await box.basepad(main, "worktree", "rm", "worktree-3");
+	const out = await box.basepad(tree(3), "worktree", "rm", "worktree-3");
 	expect(out.stderr).toBe("");
 	expect(out.code).toBe(0);
 	expect(await databases("db")).not.toContain("t18shop_db_worktree_3");
@@ -183,6 +183,17 @@ test("rm works when the worktree's folder is already gone", async () => {
 	expect(out.code).toBe(0);
 	expect(await databases("db")).not.toContain("t18shop_db_worktree_4");
 	expect(await git(main, "worktree", "list")).not.toContain("worktree-4");
+	await mainIntact();
+});
+
+test("rm removes a hand-made worktree whose folder name is too long to be a suffix", async () => {
+	const long = "l".repeat(64);
+	await git(main, "worktree", "add", "--quiet", "-b", "long", join(box.root, long));
+	const out = await box.basepad(main, "worktree", "rm", long);
+	expect(out.stderr).toBe("");
+	expect(out.code).toBe(0);
+	expect(existsSync(join(box.root, long))).toBe(false);
+	expect(await git(main, "worktree", "list")).not.toContain(long);
 	await mainIntact();
 });
 

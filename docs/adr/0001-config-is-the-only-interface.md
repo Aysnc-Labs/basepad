@@ -15,5 +15,5 @@ A project describes everything it wants from basepad in one committed TypeScript
 ## Consequences
 
 - basepad is a devDependency of the project, so the config's import resolves and its version is pinned per project.
-- A new behaviour is added as a config key with a default, never as a command-line flag that has to be remembered.
+- Standing behaviour, which every run should repeat, is a config key with a default, never a command-line flag that has to be remembered. A flag carries only what belongs to one run: an input (`--branch`, `--start`), a consent (`--force`, `--yes`, `--claim`), an output format (`--json`) or the mode of an integration that calls basepad (`--claude`).
 - Removing an environment cannot depend on reading its config, which may be broken or gone: it works from names alone.

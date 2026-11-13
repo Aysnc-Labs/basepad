@@ -215,7 +215,7 @@ npx basepad prune                     # clears what worktrees whose folder you d
 
 #### A git worktree made by hand
 
-`basepad up` in any linked git worktree of main makes it a worktree, named after its folder: `git worktree add ../hand` then `basepad up` in `../hand` gives `shop_db_hand` with main's data and `https://web.hand.shop.localhost`. The folder name must be a lowercase DNS label (letters, digits and inner hyphens); any other is refused with the reason. `git worktree move` renames it.
+`basepad up` in any linked git worktree of main makes it a worktree, with its folder's name as the suffix: `git worktree add ../hand` then `basepad up` in `../hand` gives `shop_db_hand` with main's data and `https://web.hand.shop.localhost`. The folder name must be a lowercase DNS label (letters, digits and inner hyphens); any other is refused with the reason. `git worktree move` renames it.
 
 #### Claude Code
 
