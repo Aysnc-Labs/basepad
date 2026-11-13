@@ -75,8 +75,8 @@ The [guide](docs/guide.md) has the rest: every config option, how worktrees copy
 ## Hacking on basepad
 
 ```sh
-mise install && npm ci
-npm run check
+mise install && pnpm install
+pnpm check
 ```
 
 The tests run the real thing against real mise, pitchfork and Postgres. [`AGENTS.md`](AGENTS.md) explains how to keep a test run away from your own setup.

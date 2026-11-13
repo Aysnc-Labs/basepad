@@ -5,7 +5,7 @@ Start every task here: find the feature, open its paths, then read the code. The
 A feature is anything a user starts from: an import, a config key, a command or a URL. Code with no entry point of its own belongs to the feature it serves.
 
 - Words: [GLOSSARY.md](../GLOSSARY.md). Decisions: [docs/adr/](adr/). Commands: `AGENTS.md`.
-- Change this file when a feature is added, removed, renamed or moved, or its purpose or entry point changes. `npm run check` runs `scripts/check-feature-map.ts`, which checks every entry and that every module under `src/` is claimed.
+- Change this file when a feature is added, removed, renamed or moved, or its purpose or entry point changes. `pnpm check` runs `scripts/check-feature-map.ts`, which checks every entry and that every module under `src/` is claimed.
 
 ## Who calls whom
 

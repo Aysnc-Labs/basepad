@@ -2,13 +2,13 @@
 
 ## Commands
 
-- `npm run check`: the one gate CI runs (biome, tsc, feature-map check, tests). Green locally means green in CI.
-- `npm test`: the tests; builds `dist` first. One file: `npx vitest run test/<file>.test.ts`.
+- `pnpm check`: the one gate CI runs (biome, tsc, feature-map check, tests). Green locally means green in CI.
+- `pnpm test`: the tests; builds `dist` first. One file: `pnpm vitest run test/<file>.test.ts`.
 
 ## Conventions
 
 - CLI tests go through `sandbox()` in `test/sandbox.ts` and dispose it; never touch the developer's `~/.basepad`, mise or pitchfork state.
-- Export `MISE_DATA_DIR` and `MISE_CACHE_DIR` to a temp dir before `npm test` to keep tool installs out of your own mise.
+- Export `MISE_DATA_DIR` and `MISE_CACHE_DIR` to a temp dir before `pnpm test` to keep tool installs out of your own mise.
 - Give each test file's project its own `name`: a service's port comes from it.
 - Outside a container, run `basepad setup` only with `--dry-run`: it changes the trust store and asks for `sudo`.
 

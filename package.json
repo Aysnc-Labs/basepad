@@ -27,9 +27,9 @@
 	],
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
-		"check": "biome check . && tsc --noEmit && node scripts/check-feature-map.ts && node --test scripts/check-feature-map.test.ts && node scripts/rocket-svg.ts --check && npm test",
+		"check": "biome check . && tsc --noEmit && node scripts/check-feature-map.ts && node --test scripts/check-feature-map.test.ts && node scripts/rocket-svg.ts --check && pnpm test",
 		"lint": "biome check .",
-		"prepare": "npm run build",
+		"prepare": "tsc -p tsconfig.build.json",
 		"test": "vitest run",
 		"changeset": "changeset"
 	},
@@ -47,5 +47,6 @@
 		"@types/react": "^19.3.0",
 		"typescript": "^7.0.2",
 		"vitest": "^5.1.0"
-	}
+	},
+	"packageManager": "pnpm@12.18.0"
 }

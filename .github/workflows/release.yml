@@ -12,23 +12,32 @@ permissions:
   # npm trusted publishing (OIDC); also signs provenance.
   id-token: write
 
+env:
+  # The same mise as CI; it installs the node and pnpm in mise.toml.
+  MISE_VERSION: 2026.11.5
+
 jobs:
   release:
     name: Version or publish
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      # Trusted publishing needs npm 11.5+, which Node 24 ships.
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
+      - name: Install mise
+        # mise's own installer, which falls back to mise's mirror when a GitHub download fails.
+        run: |
+          curl -fsSL https://mise.run | MISE_VERSION="v$MISE_VERSION" MISE_QUIET=1 sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+      - run: mise trust --quiet && mise install
+        env:
+          # mise downloads tools from GitHub releases; a token avoids anonymous rate limits.
+          GITHUB_TOKEN: ${{ github.token }}
       # The PR's CI already ran the full check; `prepare` builds dist.
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
       - uses: changesets/action@v1
         with:
-          version: npx changeset version
-          publish: npx changeset publish
+          version: pnpm changeset version
+          publish: pnpm changeset publish
           title: Version Packages
           commit: Version Packages
         env:
