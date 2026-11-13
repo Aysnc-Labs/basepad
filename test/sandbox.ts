@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:https";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
+import { constants, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { PITCHFORK_VERSION } from "../src/versions.ts";
@@ -93,9 +93,21 @@ export async function sandbox(): Promise<Sandbox> {
 			const { stdout, stderr } = await child;
 			return { code: 0, stdout, stderr };
 		} catch (error) {
-			const e = error as { code?: number | string; stdout?: string; stderr?: string };
+			const e = error as {
+				code?: number | string | null;
+				signal?: NodeJS.Signals | null;
+				stdout?: string;
+				stderr?: string;
+			};
 			if (typeof e.code === "string") throw error;
-			return { code: e.code ?? 1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
+			const stdout = e.stdout ?? "";
+			const stderr = e.stderr ?? "";
+			// A kill is not an exit: report it as a shell does (128 + n), and name it.
+			if (e.signal) {
+				const code = 128 + (constants.signals[e.signal] ?? 0);
+				return { code, stdout, stderr: `${stderr}[killed by ${e.signal}]` };
+			}
+			return { code: e.code ?? 1, stdout, stderr };
 		}
 	};
 
