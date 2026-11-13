@@ -211,7 +211,7 @@ const textOf = (key: Press): string | undefined =>
 
 /**
  * What a key press does. `page` is how many log lines the stream shows: a page up or down moves
- * by that many. A paste is text in a text field (the search, a worktree's name) and no key
+ * by that many. A paste is text in a text field (the search, a worktree's suffix) and no key
  * anywhere else, so it never starts or stops anything.
  */
 export function reduce(previous: View, key: Press, snapshot: Snapshot, page = 10): Step {
