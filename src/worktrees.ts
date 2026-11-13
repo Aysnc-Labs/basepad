@@ -62,6 +62,57 @@ export async function checkOutWorktree(main: Project): Promise<{ suffix: string;
 	return { suffix, root };
 }
 
+/** One worktree of main, as git lists it. */
+export interface Listed {
+	/** Its suffix: the git worktree's folder name. */
+	suffix: string;
+	/** The git worktree's folder. */
+	path: string;
+	/** Its folder for the config: the same path inside it as main's config has in main. */
+	root: string;
+	/** Its branch; none when detached. */
+	branch?: string;
+	/** Whether its folder still exists. */
+	present: boolean;
+}
+
+/** Every worktree of `main` (a project in git's main checkout), as git lists them; none outside git. */
+export async function listWorktrees(main: Project): Promise<Listed[]> {
+	const top = await toplevel(main.root);
+	if (top === undefined) return [];
+	const out = await git(top, ["worktree", "list", "--porcelain", "-z"]);
+	const listed: Listed[] = [];
+	// Each worktree is a run of fields, ended by an empty one.
+	for (const record of out.split("\0\0")) {
+		const fields = record.split("\0");
+		const path = fields.find((f) => f.startsWith("worktree "))?.slice("worktree ".length);
+		const branch = fields.find((f) => f.startsWith("branch "))?.slice("branch refs/heads/".length);
+		if (path === undefined) continue;
+		const real = await realpath(path).catch(() => path);
+		listed.push({
+			suffix: basename(real),
+			path: real,
+			root: join(real, relative(top, main.root)),
+			...(branch === undefined ? {} : { branch }),
+			present: existsSync(real),
+		});
+	}
+	// Main's own checkout comes first.
+	return listed.slice(1);
+}
+
+/** Whether a git worktree's folder has changes git would lose: modified, staged or untracked files. */
+export async function hasChanges(path: string): Promise<boolean> {
+	return (await git(path, ["status", "--porcelain"])).trim() !== "";
+}
+
+/** Removes a git worktree's folder and git's record of it, changes and all; its branch stays. */
+export async function removeCheckout(main: Project, path: string): Promise<void> {
+	const top = await toplevel(main.root);
+	if (top === undefined) return;
+	await git(top, ["worktree", "remove", "--force", path]);
+}
+
 /** The git repository's top folder containing `dir`, real; none outside git. */
 async function toplevel(dir: string): Promise<string | undefined> {
 	const out = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: dir }).catch(

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { withHosts } from "../src/hosts.ts";
+import { withHosts, withoutHosts } from "../src/hosts.ts";
 
 const HOSTS = "127.0.0.1 localhost\n::1 localhost\n";
 
@@ -24,4 +24,16 @@ test("a file without a final newline gets one before the block", () => {
 	expect(withHosts("127.0.0.1 localhost", "shop", ["web.shop.localhost"])).toBe(
 		"127.0.0.1 localhost\n# >>> basepad shop\n127.0.0.1 web.shop.localhost\n# <<< basepad shop\n",
 	);
+});
+
+test("a removed environment's block goes, other blocks and lines kept", () => {
+	const two = withHosts(
+		withHosts(HOSTS, "shop.worktree-1", ["web.worktree-1.shop.localhost"]),
+		"shop",
+		["web.shop.localhost"],
+	);
+	expect(withoutHosts(two, "shop.worktree-1")).toBe(
+		withHosts(HOSTS, "shop", ["web.shop.localhost"]),
+	);
+	expect(withoutHosts(HOSTS, "shop")).toBe(HOSTS);
 });

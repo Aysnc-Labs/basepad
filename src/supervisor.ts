@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { request as httpsRequest } from "node:https";
 import { dirname, join } from "node:path";
 import { connect } from "node:tls";
@@ -76,6 +76,13 @@ export interface Supervisor {
 	register(environment: Environment): Promise<void>;
 	/** The folder a namespace is registered against, if it is. */
 	owner(namespace: string): Promise<string | undefined>;
+	/** Every registered namespace, with the folder it is registered against. */
+	registrations(): Promise<{ namespace: string; dir: string }[]>;
+	/**
+	 * Undoes `register`: stops the namespace's daemons, forgets them, detaches its definitions and
+	 * deletes them. Idempotent.
+	 */
+	unregister(environment: Pick<Environment, "namespace" | "definitions">): Promise<void>;
 	/**
 	 * Starts the named daemons that are not running, then waits up to `waitMs` for each to listen
 	 * (when it has a port) or fail, and for the proxy to route each of `hosts` (daemon to domain)
@@ -87,8 +94,8 @@ export interface Supervisor {
 		waitMs: number,
 		hosts: Record<string, string>,
 	): Promise<Record<string, DaemonState>>;
-	/** Stops every running daemon in the namespace. Deletes nothing. */
-	stop(namespace: string): Promise<void>;
+	/** Stops every running daemon in the namespace, or only the named ones. Deletes nothing. */
+	stop(namespace: string, names?: string[]): Promise<void>;
 	/** Every registered daemon's state in the namespace. */
 	status(namespace: string): Promise<Record<string, DaemonState>>;
 	/** A daemon's output lines since `since`, the last `lines` of them. */
@@ -173,16 +180,29 @@ export async function openSupervisor(
 		return out;
 	};
 
-	const stopAll = async (namespace: string) => {
-		const running = (await list(namespace)).filter((d) => LIVE.has(d.status));
+	const stopAll = async (namespace: string, names?: string[]) => {
+		const running = (await list(namespace)).filter(
+			(d) => LIVE.has(d.status) && (names === undefined || names.includes(d.name)),
+		);
 		if (running.length > 0) await run("stop", ...running.map((d) => d.id));
 	};
 
-	const registeredDir = async (namespace: string): Promise<string | undefined> => {
-		const entries = z
+	const registrations = async () =>
+		z
 			.array(z.looseObject({ namespace: z.string(), dir: z.string() }))
-			.parse(JSON.parse(await run("config", "list", "--json")));
-		return entries.find((entry) => entry.namespace === namespace)?.dir;
+			.parse(JSON.parse(await run("config", "list", "--json")))
+			.map(({ namespace, dir }) => ({ namespace, dir }));
+
+	const registeredDir = async (namespace: string): Promise<string | undefined> =>
+		(await registrations()).find((entry) => entry.namespace === namespace)?.dir;
+
+	/** Drops a namespace from pitchfork's registry, which keeps its folder after its file is detached. */
+	const forget = async (namespace: string, definitions: string) => {
+		await run("config", "remove", definitions);
+		const file = join(dirs.PITCHFORK_CONFIG_DIR, "config.toml");
+		if (existsSync(file)) {
+			await writeFile(file, withoutNamespace(await readFile(file, "utf8"), namespace));
+		}
 	};
 
 	const serve = async () => {
@@ -234,9 +254,7 @@ export async function openSupervisor(
 				// pitchfork keeps a namespace's folder even after its file is detached, and refuses
 				// another, so the namespace's entry is dropped from its registry by hand.
 				await stopAll(namespace);
-				await run("config", "remove", definitions);
-				const file = join(dirs.PITCHFORK_CONFIG_DIR, "config.toml");
-				await writeFile(file, withoutNamespace(await readFile(file, "utf8"), namespace));
+				await forget(namespace, definitions);
 			}
 			await run(
 				"config",
@@ -251,6 +269,17 @@ export async function openSupervisor(
 		},
 
 		owner: registeredDir,
+
+		registrations,
+
+		async unregister({ namespace, definitions }) {
+			if (running()) {
+				await stopAll(namespace);
+				await run("clean", namespace);
+			}
+			await forget(namespace, definitions);
+			await rm(definitions, { force: true });
+		},
 
 		async start(namespace, names, waitMs, hosts) {
 			const listed = await list(namespace);

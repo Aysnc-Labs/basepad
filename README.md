@@ -197,6 +197,18 @@ npx basepad worktree add --json   # {"name":"worktree-1","path":"/…/shop.workt
 
 basepad keeps no list of worktrees: it asks git which exist.
 
+To see and remove them, in main:
+
+```sh
+npx basepad worktree ls               # each worktree, its branch and folder
+npx basepad status                    # main, then each worktree's apps and services
+npx basepad worktree rm worktree-1    # stops its apps, drops its databases, removes the git worktree
+npx basepad prune                     # clears what worktrees whose folder you deleted left behind
+```
+
+- `worktree rm` keeps the branch. It refuses a worktree with uncommitted or untracked files; `--force` removes it anyway, and they are lost. It works from the name alone, so a broken config or a folder already deleted does not stop it. It never drops main's database, so a `shared` service's stays.
+- `prune` lists what worktrees whose folder is gone left (git's record, databases, registrations), then asks before removing it; `--yes` removes it without asking. It also lists the data of services no longer in the config, main's included, and deletes that only when you answer yes on a terminal, even with `--yes`.
+
 ### The local file
 
 `basepad.config.local.ts`, beside the config, adjusts it for your machine only; `basepad init` adds it to `.gitignore`. When it exists, basepad loads it after the config. Its default export is a function that gets the project's config and returns the changed one:
@@ -221,8 +233,11 @@ Run them anywhere in the project, as `npx basepad <command>`. `basepad --help` l
 | `basepad init`   | Writes `basepad.config.ts`, named after the folder. Adds `basepad.config.local.ts` to `.gitignore`, creating it. Adds basepad to `package.json`'s devDependencies when it isn't there. | An existing config: it refuses to overwrite one. It installs nothing.             |
 | `basepad up`     | Installs what it needs through mise, starts the services, creates their databases, sets the env files' keys, starts the apps and prints the tables above.                              | Any other file in the project, any other line of an env file, your own pitchfork. |
 | `basepad down`   | Stops the project's apps and services.                                                                                                                                                 | Data and env files: it deletes nothing.                                           |
-| `basepad status` | Nothing. Prints each app with its URL and each service with its address, and their state: `running`, `starting`, `failed` or `stopped`.                                                | Anything: it starts nothing.                                                      |
+| `basepad status` | Nothing. Prints each app with its URL and each service with its address, and their state: `running`, `starting`, `failed` or `stopped`. In main, then each worktree's.               | Anything: it starts nothing.                                                      |
 | `basepad worktree add` | Checks out a git worktree beside the project, creates its databases from main's and writes its env files from main's. Starts main's services. Ends main's database sessions for the copy. | Main's data and env files, apart from what `up` in main would set. It starts no app. |
+| `basepad worktree ls` | Nothing. Lists main's worktrees with their branch and folder. | Anything. |
+| `basepad worktree rm <name>` | Stops the worktree's apps, drops its databases, removes its registration and its git worktree. | Its branch, main's data. Uncommitted work: it refuses unless `--force`. |
+| `basepad prune` | After asking: removes what worktrees whose folder is gone left, and the data of services no longer in the config. | Anything you did not say yes to. Main's databases of services still in the config. |
 | `basepad setup`  | The machine, once: trusts basepad's certificate authority and makes URLs port-free. See [below](#port-free-urls-basepad-setup).                                                        | Any project. A pitchfork setup of your own: it refuses rather than overwrite it.  |
 
 More on `up`:
