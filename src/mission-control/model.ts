@@ -183,6 +183,9 @@ export function streamLines(snapshot: Snapshot, view: View): LogLine[] {
 		.sort((a, b) => a.seq - b.seq);
 }
 
+/** A web page `o` can open: an app's URL, or a service's page such as an inbox. */
+const isPage = (address: string): boolean => /^https?:\/\//.test(address);
+
 /** The index of the last line that arrived no later than `seq`; -1 when none did. */
 function indexOf(lines: readonly LogLine[], seq: number): number {
 	let i = lines.length - 1;
@@ -263,11 +266,11 @@ export function reduce(previous: View, key: Press, snapshot: Snapshot, page = 10
 	switch (key) {
 		case "o":
 			if (target === undefined) return { view: { ...view, notice: "Nothing here to open." } };
-			if (!env?.apps.includes(target)) {
+			if (target.address === undefined) return { view: { ...view, notice: noAddress } };
+			if (!isPage(target.address)) {
 				const notice = `${target.name} is a service, with no page to open; c copies its address.`;
 				return { view: { ...view, notice } };
 			}
-			if (target.address === undefined) return { view: { ...view, notice: noAddress } };
 			return { view, intent: { kind: "open", url: target.address } };
 		case "c":
 			if (target === undefined) return { view: { ...view, notice: "Nothing here to copy." } };
