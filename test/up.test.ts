@@ -217,4 +217,5 @@ test("up says so before a settings change restarts the supervisor, and only then
 	expect(out.stdout.indexOf(warning)).toBe(0);
 	expect(out.stdout).toContain(`web  https://web.shop.localhost:${other}  running`);
 	await box.basepadWith({ env: { BASEPAD_PROXY_PORT: other } }, shop, "down");
-});
+	// As root on Linux, pitchfork's supervisor takes about 60 s to stop, so a restart does too.
+}, 150_000);
