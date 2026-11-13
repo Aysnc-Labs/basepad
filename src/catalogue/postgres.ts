@@ -148,7 +148,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 				return named(
 					`${database}@${label}`,
 					`snapshot \`${label}\``,
-					`, which leaves ${room > 0 ? `${room} characters` : "no room"} for a label here.`,
+					`, which leaves ${room > 0 ? `${room} character${room === 1 ? "" : "s"}` : "no room"} for a label here.`,
 				);
 			},
 			staging: () =>

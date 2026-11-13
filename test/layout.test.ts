@@ -188,6 +188,12 @@ test("a 63-byte database leaves no room for a snapshot, and still names its snap
 	expect(() => db?.snapshot("a")).toThrow(/Postgres allows 63, which leaves no room for a label/);
 });
 
+test("a database that leaves one character for a snapshot's label says so in the singular", () => {
+	const db = layout(project("shop", [], ["db"]), here, "w".repeat(53)).services.db;
+	expect(db?.snapshot("a")).toHaveLength(63);
+	expect(() => db?.snapshot("ab")).toThrow(/, which leaves 1 character for a label here\./);
+});
+
 test("a shared service's worktree database is main's", () => {
 	const shared = { ...project("shop"), services: { db: postgres({ worktree: "shared" }) } };
 	expect(layout(shared, here, "worktree-1").services.db?.database).toBe("shop_db");
