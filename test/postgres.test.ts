@@ -87,8 +87,7 @@ test("rows written before down are there after up, and down stops the server", a
 	await sql(shop, "create table notes (body text); insert into notes values ('kept')");
 	const down = await box.basepad(shop, "down");
 	expect(down.code).toBe(0);
-	const url = (await readEnv(shop, ".env.local")).DATABASE_URL as string;
-	expect((await box.psql([url], "select 1")).code).not.toBe(0);
+	expect((await box.sql(shop, "select 1")).code).not.toBe(0);
 	expect((await box.basepad(shop, "status")).stdout).toMatch(/^db +\S+ +stopped$/m);
 	const up = await box.basepad(shop, "up");
 	expect(up.stderr).toBe("");
@@ -96,8 +95,7 @@ test("rows written before down are there after up, and down stops the server", a
 });
 
 test("down stops the server promptly while a client is connected", async () => {
-	const url = (await readEnv(shop, ".env.local")).DATABASE_URL as string;
-	const client = box.psql([url], "select pg_sleep(60)");
+	const client = box.sql(shop, "select pg_sleep(60)");
 	await new Promise((resolve) => setTimeout(resolve, 1000));
 	const started = Date.now();
 	expect((await box.basepad(shop, "down")).code).toBe(0);
