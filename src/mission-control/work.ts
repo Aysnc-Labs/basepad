@@ -18,14 +18,15 @@ export type WorkOrder = { kind: "add" } | Removal;
 export type Running = Work & { before?: string[] };
 
 /** A record of work started, in `<id>.json`. */
-interface Record {
-	kind: Work["kind"];
-	title: string;
-	namespace?: string;
-	before?: string[];
-	/** A removal's `basepad worktree rm` arguments, so one stopped partway can say how to finish. */
-	args?: string[];
-}
+type Record =
+	| { kind: "add"; title: string; before?: string[] }
+	| {
+			kind: "remove";
+			title: string;
+			namespace: string;
+			/** Its `basepad worktree rm` arguments, so one stopped partway can say how to finish. */
+			args: string[];
+	  };
 
 /**
  * The shell that runs the command and writes its exit code, in `<id>.pid` once it has started:
@@ -117,7 +118,10 @@ export async function takeWork(dir: string): Promise<{ running: Running[]; finis
 		const code = await exitOf(base);
 		if (code === "" && (await underWay(base))) {
 			const last = lines(await readFile(`${base}.log`, "utf8").catch(() => "")).at(-1);
-			const { args: _, ...work } = record;
+			const work: Running =
+				record.kind === "add"
+					? record
+					: { kind: "remove", title: record.title, namespace: record.namespace };
 			running.push({ ...work, ...(last === undefined ? {} : { line: last }) });
 			continue;
 		}
@@ -193,14 +197,7 @@ function outcome(record: Record, code: string, output: string[]): string {
 	const last = output.at(-1) ?? "";
 	if (code === "0") return last;
 	if (code === "") {
-		const left = record.kind === "add" ? checkedOutIn(output) : undefined;
-		const next =
-			left !== undefined
-				? `, leaving ${left}; run \`basepad worktree rm ${left}\` to remove it`
-				: record.args !== undefined
-					? `; run \`basepad ${record.args.join(" ")}\` to finish it`
-					: "";
-		return `Could not ${what}: it stopped partway${next}. Its last line: ${last}`;
+		return `Could not ${what}: it stopped partway${clearing(record, output)}. Its last line: ${last}`;
 	}
 	// The command says why it failed last, after `basepad: `.
 	const from = output.findLastIndex((l) => l.startsWith("basepad: "));
@@ -209,6 +206,15 @@ function outcome(record: Record, code: string, output: string[]): string {
 			? [last]
 			: [output[from]?.slice("basepad: ".length) ?? "", ...output.slice(from + 1)];
 	return `Could not ${what}: ${firstAndLast(message)}`;
+}
+
+/** How to clear what work stopped partway left: finish a removal, or remove the worktree made. */
+function clearing(record: Record, output: string[]): string {
+	if (record.kind === "remove") return `; run \`basepad ${record.args.join(" ")}\` to finish it`;
+	const left = checkedOutIn(output);
+	return left === undefined
+		? ""
+		: `, leaving ${left}; run \`basepad worktree rm ${left}\` to remove it`;
 }
 
 /** Lines of a message as one: its first and last, which say what failed and what next. */
