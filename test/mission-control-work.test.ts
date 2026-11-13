@@ -152,39 +152,84 @@ test("one whose process was killed partway says so, with its last line", async (
 });
 
 /**
- * A record left on disk as if by an earlier view: `extra` sets its pid and start, or leaves them
- * out as a view that crashed before its command ran does.
+ * A record left on disk as if by an earlier view: `pid`, its process (`{ pid, start }`), or none
+ * when the view crashed before its command ran. `age` in ms.
  */
-function leftover(dir: string, extra: object, age = 0): void {
+function leftover(dir: string, pid: object | undefined, age = 0): void {
 	mkdirSync(dir, { recursive: true });
 	const base = join(dir, "1-1-left");
-	const record = { kind: "add", title: "Adding a worktree", before: [], ...extra };
-	writeFileSync(`${base}.json`, JSON.stringify(record));
+	writeFileSync(
+		`${base}.json`,
+		JSON.stringify({ kind: "add", title: "Adding a worktree", before: [] }),
+	);
 	writeFileSync(`${base}.log`, "Running `npm install`\n");
-	const then = (Date.now() - age) / 1000;
-	utimesSync(`${base}.json`, then, then);
+	if (pid !== undefined) writeFileSync(`${base}.pid`, JSON.stringify(pid));
+	aged(`${base}.json`, age);
 }
+
+/** Makes a file `age` ms old. */
+function aged(file: string, age: number): void {
+	const then = (Date.now() - age) / 1000;
+	utimesSync(file, then, then);
+}
+
+const stopped =
+	"Could not add a worktree: it stopped partway. Its last line: Running `npm install`";
 
 test("a record whose pid is now another process's (reused, after a reboot) is not taken for running work", async () => {
 	const { dir } = basepad("");
 	// This test's own process, alive, but not the one the record started.
 	leftover(dir, { pid: process.pid, start: "not its start" });
-	expect(await takeWork(dir)).toEqual({
-		running: [],
-		finished: [
-			"Could not add a worktree: it stopped partway. Its last line: Running `npm install`",
-		],
-	});
+	expect(await takeWork(dir)).toEqual({ running: [], finished: [stopped] });
 	expect(readdirSync(dir)).toEqual([]);
+});
+
+test("a process whose start could not be read is running while its pid is; once gone, it stopped", async () => {
+	const { dir } = basepad("");
+	leftover(dir, { pid: process.pid });
+	expect((await takeWork(dir)).running).toHaveLength(1);
+	const gone = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], {
+		encoding: "utf8",
+	});
+	leftover(dir, { pid: Number(gone.stdout) });
+	expect(await takeWork(dir)).toEqual({ running: [], finished: [stopped] });
 });
 
 test("a record whose command never started is under way briefly, then given up, never hiding worktrees for good", async () => {
 	const { dir } = basepad("");
-	leftover(dir, {});
+	leftover(dir, undefined);
 	expect((await takeWork(dir)).running).toHaveLength(1);
-	leftover(dir, {}, 60_000);
+	leftover(dir, undefined, 60_000);
 	expect((await takeWork(dir)).finished).toHaveLength(1);
 	expect(readdirSync(dir)).toEqual([]);
+});
+
+test("files left without a record (a view that died while taking one, a command given up) go once a minute old, untold", async () => {
+	const { dir } = basepad("");
+	mkdirSync(dir, { recursive: true });
+	const files = ["1-a.taken", "1-a.log", "1-a.exit", "2-b.log", "2-b.exit", "3-c.pid"];
+	for (const file of files) {
+		writeFileSync(join(dir, file), "0\n");
+		aged(join(dir, file), 120_000);
+	}
+	writeFileSync(join(dir, "4-d.exit"), "0\n");
+	expect(await takeWork(dir)).toEqual({ running: [], finished: [] });
+	expect(readdirSync(dir)).toEqual(["4-d.exit"]);
+});
+
+test("a job that ends at once is told once, however often it is read while it starts", async () => {
+	const { command, dir } = basepad("");
+	const told: string[] = [];
+	let starting = true;
+	const reading = (async () => {
+		while (starting) told.push(...(await takeWork(dir)).finished);
+	})();
+	await startWork({ dir, command, cwd: tmpdir(), order: { kind: "add" } });
+	await new Promise((resolve) => setTimeout(resolve, 300));
+	starting = false;
+	await reading;
+	told.push(...(await until(dir, (w) => w.running.length === 0)).finished);
+	expect(told).toEqual(["ran worktree add"]);
 });
 
 test("two views reading finished work at once: only one tells it, whole", async () => {

@@ -22,14 +22,21 @@ interface Record {
 	title: string;
 	namespace?: string;
 	before?: string[];
-	/** The shell that runs the command and writes its exit code; none until it has started. */
-	pid?: number;
-	/** When that process started, as the system says (`startOf`): a pid alone may be reused. */
+}
+
+/**
+ * The shell that runs the command and writes its exit code, in `<id>.pid` once it has started:
+ * its pid, and when it started as the system says (`startOf`), since a pid alone may be reused.
+ */
+interface Shell {
+	pid: number;
 	start?: string;
 }
 
 /** How long a record waits for its command to start before it is given up as never started. */
 const STARTING_MS = 30_000;
+/** How old a file left without a record (a view gone partway) is when it is swept. */
+const LEFT_MS = 60_000;
 
 /**
  * Starts `command` (the `basepad` command, as argv) with `worktree add` or `worktree rm`, in `cwd`,
@@ -54,7 +61,7 @@ export async function startWork(options: {
 		order.kind === "add"
 			? { kind: "add", title: "Adding a worktree", ...(before ? { before } : {}) }
 			: { kind: "remove", title: `Removing ${order.suffix}`, namespace: order.namespace };
-	// The record first, so whatever happens next leaves no output without one.
+	// The record first, and never written again: a fast job taken meanwhile is not made again.
 	await writeFile(`${base}.json`, JSON.stringify(record));
 	// The shell outlives the view with the command, and writes the exit code once it ends.
 	const child = spawn(
@@ -72,21 +79,31 @@ export async function startWork(options: {
 	});
 	const pid = child.pid as number;
 	const start = await startOf(pid);
-	await writeFile(
-		`${base}.json`,
-		JSON.stringify({ ...record, pid, ...(start === undefined ? {} : { start }) }),
-	);
+	const shell: Shell = { pid, ...(start === undefined ? {} : { start }) };
+	await writeFile(`${base}.pid`, JSON.stringify(shell));
 }
 
 /**
  * The work in `dir`: what runs, oldest first, with the last line each printed; and what has
  * finished, as what to tell the developer. Each finished one is told once: its files go as it is read.
+ * Files a view left without a record are swept untold once a minute old.
  */
 export async function takeWork(dir: string): Promise<{ running: Running[]; finished: string[] }> {
 	const names = await readdir(dir).catch(() => [] as string[]);
 	const running: Running[] = [];
 	const finished: string[] = [];
-	for (const name of names.filter((n) => n.endsWith(".json")).sort()) {
+	const records = new Set(names.filter((n) => n.endsWith(".json")).map((n) => n.slice(0, -5)));
+	for (const name of names) {
+		const id = name.slice(0, name.lastIndexOf("."));
+		if (records.has(id)) continue;
+		const file = join(dir, name);
+		const old = await stat(file).then(
+			(s) => Date.now() - s.mtimeMs > LEFT_MS,
+			() => false,
+		);
+		if (old) await rm(file, { force: true });
+	}
+	for (const name of [...records].sort().map((id) => `${id}.json`)) {
 		const base = join(dir, name.slice(0, -".json".length));
 		const record = await readFile(`${base}.json`, "utf8").then(
 			(text) => JSON.parse(text) as Record,
@@ -95,10 +112,9 @@ export async function takeWork(dir: string): Promise<{ running: Running[]; finis
 		if (record === undefined) continue;
 		// The exit code before the output: once it is written, the output is whole.
 		const code = await exitOf(base);
-		if (code === "" && (await underWay(`${base}.json`, record))) {
+		if (code === "" && (await underWay(base))) {
 			const last = lines(await readFile(`${base}.log`, "utf8").catch(() => "")).at(-1);
-			const { pid: _, start: __, ...work } = record;
-			running.push({ ...work, ...(last === undefined ? {} : { line: last }) });
+			running.push({ ...record, ...(last === undefined ? {} : { line: last }) });
 			continue;
 		}
 		// Taken by renaming its record: of views reading at once, only the one that renames it tells it.
@@ -110,7 +126,7 @@ export async function takeWork(dir: string): Promise<{ running: Running[]; finis
 		const output = lines(await readFile(`${base}.log`, "utf8").catch(() => ""));
 		finished.push(outcome(record, await exitOf(base), output));
 		await Promise.all(
-			[".taken", ".log", ".exit"].map((ext) => rm(`${base}${ext}`, { force: true })),
+			[".taken", ".log", ".exit", ".pid"].map((ext) => rm(`${base}${ext}`, { force: true })),
 		);
 	}
 	return { running, finished };
@@ -129,20 +145,36 @@ function lines(text: string): string[] {
 }
 
 /**
- * Whether a record's command still runs: its process is there and started when the record says,
- * so a pid reused by another process is not taken for it. A record whose command has not started
- * yet is under way for a short while, then given up.
+ * Whether a record's command still runs: its shell is there and started when `.pid` says, so a pid
+ * reused by another process is not taken for it; where its start cannot be read, its pid is there.
+ * A record whose command has not started yet is under way for a short while, then given up.
  */
-async function underWay(file: string, record: Record): Promise<boolean> {
-	if (record.pid === undefined) {
-		const written = await stat(file).then(
+async function underWay(base: string): Promise<boolean> {
+	const shell = await readFile(`${base}.pid`, "utf8").then(
+		(text) => JSON.parse(text) as Shell,
+		() => undefined,
+	);
+	if (shell === undefined) {
+		const written = await stat(`${base}.json`).then(
 			(s) => s.mtimeMs,
 			() => 0,
 		);
 		return Date.now() - written < STARTING_MS;
 	}
-	const start = await startOf(record.pid);
-	return start !== undefined && start === record.start;
+	const start = await startOf(shell.pid);
+	return start === undefined || shell.start === undefined
+		? alive(shell.pid)
+		: start === shell.start;
+}
+
+/** Whether a process of ours is there: one we may not signal is not ours. */
+function alive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /** How finished work ended, from its exit code (none when killed) and its output. */
