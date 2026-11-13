@@ -3,7 +3,15 @@ import { readdir, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { z } from "zod";
-import { kindOf, type Service, type WorktreeData } from "./catalogue.ts";
+import {
+	type Database,
+	databaseOf,
+	kindOf,
+	type NamesOf,
+	type Place,
+	type Service,
+	type WorktreeData,
+} from "./catalogue.ts";
 import { readHookInput } from "./claude-hooks.ts";
 import { CONFIG_FILE, LABEL, loadProject, type Project } from "./config.ts";
 import { copyEnvFiles, writeEnvFiles } from "./env-files.ts";
@@ -66,6 +74,12 @@ export interface Command {
 	flags: Record<string, Flag>;
 	run(invocation: Invocation): Promise<void>;
 }
+
+const SERVICE_FLAG: Flag = {
+	short: "s",
+	value: "key",
+	description: "The database service to act on; needed when there are several",
+};
 
 export const COMMANDS: Record<string, Command> = {
 	init: {
@@ -149,6 +163,29 @@ export const COMMANDS: Record<string, Command> = {
 			},
 		},
 		run: prune,
+	},
+	"db save": {
+		summary: "Save this environment's database as a snapshot, replacing one of the same label",
+		args: ["label?"],
+		flags: { service: SERVICE_FLAG },
+		run: dbSave,
+	},
+	"db load": {
+		summary: "Replace this environment's database with a snapshot, which is kept",
+		args: ["label?"],
+		flags: { service: SERVICE_FLAG },
+		run: dbLoad,
+	},
+	"db snapshots": {
+		summary: "List this environment's snapshots",
+		flags: {},
+		run: dbSnapshots,
+	},
+	"db rm": {
+		summary: "Delete one of this environment's snapshots",
+		args: ["label"],
+		flags: { service: SERVICE_FLAG },
+		run: dbRm,
 	},
 };
 
@@ -876,4 +913,124 @@ async function ask(question: string): Promise<boolean | undefined> {
 	const answer = await prompt.question(`${question} [y/N] `);
 	prompt.close();
 	return /^y(es)?$/i.test(answer.trim());
+}
+
+/** The label `db save` and `db load` use when given none. */
+const DEFAULT_LABEL = "default";
+
+/** One database service of the environment a `db` command runs in, on its running server. */
+interface DatabaseTarget {
+	key: string;
+	service: Service;
+	place: Place<NamesOf<Service>>;
+	database: Database<Service, NamesOf<Service>>;
+}
+
+/**
+ * The environment `cwd` is in, made ready as `up` makes it (main's servers started, its database
+ * there), without starting apps or a worktree's own servers; with its database services by key.
+ */
+async function databasesAt(
+	cwd: string,
+	print: Invocation["print"],
+): Promise<{ project: Project; targets: DatabaseTarget[] }> {
+	const environment = await environmentAt(cwd);
+	const { project } = environment;
+	const context = await open(environment, {}, print);
+	const lay = await ready(environment, context, environment.suffix === undefined);
+	const targets: DatabaseTarget[] = [];
+	for (const [key, service] of Object.entries(project.services)) {
+		const database = databaseOf(service);
+		if (database === undefined) continue;
+		targets.push({ key, service, place: placeOf(project, lay, context.here, key), database });
+	}
+	if (targets.length === 0) {
+		throw new BasepadError(`${project.file} names no database service.`);
+	}
+	return { project, targets };
+}
+
+/**
+ * The database a `db` command acts on: `--service`'s, or the environment's one database. With
+ * several and no `--service`, says which there are.
+ */
+async function databaseAt({ cwd, flags, print }: Invocation): Promise<DatabaseTarget> {
+	const { project, targets } = await databasesAt(cwd, print);
+	const keys = targets.map((target) => `\`${target.key}\``).join(", ");
+	const wanted = flags.service;
+	if (typeof wanted === "string") {
+		const target = targets.find((t) => t.key === wanted);
+		if (target === undefined) {
+			throw new BasepadError(
+				`${project.file} has no database service \`${wanted}\`. Its databases: ${keys}.`,
+			);
+		}
+		return target;
+	}
+	if (targets.length > 1) {
+		throw new BasepadError(
+			`${project.file} has several databases: ${keys}. Name one with \`--service <key>\`.`,
+		);
+	}
+	return targets[0] as DatabaseTarget;
+}
+
+/** A snapshot label given, or the default; a lowercase DNS label, as suffixes are. */
+function labelOf(args: string[]): string {
+	const [label = DEFAULT_LABEL] = args;
+	if (!LABEL.test(label)) {
+		throw new BasepadError(
+			`A snapshot label must be lowercase letters, digits and inner hyphens; got \`${label}\`.`,
+		);
+	}
+	return label;
+}
+
+async function dbSave(invocation: Invocation): Promise<void> {
+	const label = labelOf(invocation.args);
+	const { key, service, place, database } = await databaseAt(invocation);
+	await database.save(service, place, label);
+	invocation.print(`Saved \`${key}\` as snapshot ${label}.`);
+}
+
+async function dbLoad(invocation: Invocation): Promise<void> {
+	const label = labelOf(invocation.args);
+	const { key, service, place, database } = await databaseAt(invocation);
+	await database.load(service, place, label);
+	invocation.print(`Loaded snapshot ${label} into \`${key}\`.`);
+}
+
+async function dbRm(invocation: Invocation): Promise<void> {
+	const label = labelOf(invocation.args);
+	const { key, service, place, database } = await databaseAt(invocation);
+	await database.remove(service, place, label);
+	invocation.print(`Deleted snapshot ${label} of \`${key}\`.`);
+}
+
+/** Every database's snapshots in the environment. */
+async function dbSnapshots({ cwd, print }: Invocation): Promise<void> {
+	const { targets } = await databasesAt(cwd, print);
+	const rows: string[][] = [];
+	for (const { key, service, place, database } of targets) {
+		for (const snapshot of await database.snapshots(service, place)) {
+			rows.push([snapshot.label, key, snapshot.database, size(snapshot.bytes)]);
+		}
+	}
+	if (rows.length === 0) {
+		print("No snapshots. Make one with `basepad db save [label]`.");
+		return;
+	}
+	print(table([["LABEL", "SERVICE", "DATABASE", "SIZE"], ...rows]));
+}
+
+/** Bytes as a person reads them: `7.5 MB`. */
+function size(bytes: number): string {
+	const units = ["B", "kB", "MB", "GB", "TB"];
+	let value = bytes;
+	let unit = 0;
+	while (value >= 1000 && unit < units.length - 1) {
+		value /= 1000;
+		unit++;
+	}
+	return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
 }

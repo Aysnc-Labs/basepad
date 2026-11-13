@@ -11,13 +11,14 @@ A feature is anything a user starts from: an import, a config key, a command or 
 
 ```mermaid
 flowchart LR
-  CLI["basepad (launcher, cli)"] --> Commands["commands: init, up, down, status, setup, worktree add, ls, rm, prune"]
+  CLI["basepad (launcher, cli)"] --> Commands["commands: init, up, down, status, setup, worktree add, ls, rm, prune, db save, load, snapshots, rm"]
   Commands --> Worktrees["worktrees"]
   Worktrees -- "git" --> Git["git"]
   Commands --> Config["config: basepad.config.ts"]
   Commands --> Layout["layout (pure)"]
   Layout --> Catalogue
   Commands --> Catalogue["catalogue: postgres, redis, mailpit"]
+  Commands -- "db verbs, where a kind offers them" --> Catalogue
   Commands --> Supervisor
   Commands -- "up, on a terminal" --> MissionControl["mission control (Ink)"]
   MissionControl -- "reads states, follows logs; start, stop" --> Supervisor
@@ -86,6 +87,12 @@ Paths: src/commands.ts, src/worktrees.ts, src/catalogue.ts, src/catalogue/postgr
 Purpose: Claude Code's `WorktreeCreate` and `WorktreeRemove` hooks go through basepad, so every agent session gets a full worktree: `worktree add --claude` reads the hook input, uses its name as the branch and prints only the path; `worktree rm --claude` removes the worktree at its path, as `--force` does.
 Entry: `basepad worktree add --claude`, `basepad worktree rm --claude`
 Paths: src/claude-hooks.ts, src/commands.ts
+
+### `basepad db save`, `load`, `snapshots` and `rm`
+
+Purpose: snapshots of the database of the environment the command runs in (a worktree's, never main's, from inside one): save one by label (`default` when none), load it back while the app runs, list them with their size, delete one. A snapshot is a database `<database>@<label>` on the same server, found by name with no list kept, made by the Worktrees copy routine; a worktree's go with it on `worktree rm` and `prune`. The verbs are the Catalogue's optional `database` capability on a kind, so commands pick the service (`--service`, implied with one database) and the kind does the rest; `db import` and `export` join them there.
+Entry: `basepad db save [label]`, `basepad db load [label]`, `basepad db snapshots`, `basepad db rm <label>`, each with `--service <key>`
+Paths: src/commands.ts, src/catalogue.ts, src/catalogue/postgres.ts
 
 ### `basepad setup`
 
