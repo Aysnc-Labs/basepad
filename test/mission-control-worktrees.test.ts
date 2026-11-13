@@ -3,6 +3,7 @@ import {
 	type EnvironmentView,
 	initialView,
 	type Part,
+	type Press,
 	reduce,
 	type Snapshot,
 	type View,
@@ -30,7 +31,7 @@ const snapshot: Snapshot = {
 };
 
 /** The keys pressed in turn, from `from`: the last view, and the intent of the last key. */
-function press(keys: string[], from: View = initialView("shop.shop-1"), on = snapshot) {
+function press(keys: Press[], from: View = initialView("shop.shop-1"), on = snapshot) {
 	let step = { view: from } as ReturnType<typeof reduce>;
 	for (const key of keys) step = reduce(step.view, key, on);
 	return step;
@@ -90,6 +91,20 @@ test("uncommitted changes need a second word: the worktree's name typed out, the
 	expect(typed.view.confirm).toBeUndefined();
 	// Typing goes to the name: y, q and d are letters, not keys; backspace takes one back.
 	expect(press(["d", "y", "s", "q", "backspace"], from).view.confirm?.typed).toBe("s");
+});
+
+test("the worktree's name pasted is typed: enter then removes it", () => {
+	const from = initialView("shop.shop-2");
+	const pasted = press(["d", "y", { paste: "shop-2" }], from);
+	expect(pasted.view.confirm?.typed).toBe("shop-2");
+	expect(press(["d", "y", { paste: "shop-2" }, "return"], from).intent).toEqual({
+		kind: "remove",
+		suffix: "shop-2",
+		namespace: "shop.shop-2",
+		force: true,
+	});
+	// Asked y or n, a paste is no answer: the question stays.
+	expect(press(["d", { paste: "yes" }], from).view.confirm?.step).toBe("remove");
 });
 
 test("a second y, a wrong name or escape keeps a worktree with uncommitted changes", () => {
