@@ -59,8 +59,8 @@ Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### `basepad worktree add`
 
-Purpose: makes a worktree of main: a git worktree named `<prefix>-<n>` beside the project, its own databases (copied from main's, empty or shared), domains `<app>.<suffix>.<name>.localhost` and env files from main's. `up`, `down` and `status` in its folder act on it. Worktrees are found from git; nothing is listed.
-Entry: `basepad worktree add [--json]`, `worktrees` in the config, `postgres({ worktree })`
+Purpose: makes a worktree of main, ready to use: a git worktree named `<prefix>-<n>` beside the project, on a new branch or `--branch`'s, with `worktrees.clone` copied from main, its own databases (copied from main's, empty or shared), domains `<app>.<suffix>.<name>.localhost`, env files from main's, and `worktrees.setup` run in it. Its apps start on the first request to their domains (the supervisor's proxy, with main's services as dependencies), or at once with `--start`. `up`, `down` and `status` in its folder act on it. Worktrees are found from git; nothing is listed.
+Entry: `basepad worktree add [--json] [--branch <name>] [--start]`, `worktrees` in the config, `postgres({ worktree })`
 Paths: src/worktrees.ts, src/commands.ts, src/layout.ts, src/catalogue/postgres.ts
 
 ### `basepad setup`

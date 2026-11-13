@@ -149,6 +149,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			dir: place.dir,
 			// Fast shutdown: SIGTERM's smart shutdown would wait for every app's connections to close.
 			stopSignal: "SIGINT",
+			listens: port,
 		};
 	},
 

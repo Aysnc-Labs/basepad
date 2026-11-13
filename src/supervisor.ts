@@ -26,6 +26,10 @@ export interface Daemon {
 	port?: number;
 	/** The signal that stops it, sent to its process group; pitchfork's default is SIGTERM. */
 	stopSignal?: "SIGINT";
+	/** A port it listens on once ready, for a daemon without `port` (a service's server). */
+	listens?: number;
+	/** Daemons, as `<namespace>/<name>`, that start before it when the proxy starts it. */
+	depends?: string[];
 }
 
 /** A daemon's state, as `status` shows it. */
@@ -77,7 +81,8 @@ export interface Supervisor {
 	/** The folder a namespace is registered against, if it is. */
 	owner(namespace: string): Promise<string | undefined>;
 	/**
-	 * Starts the named daemons that are not running, then waits up to `waitMs` for each to listen
+	 * Starts the named daemons that are not running (and lets the proxy start them again on a first
+	 * request, if `stop` kept them stopped), then waits up to `waitMs` for each to listen
 	 * (when it has a port) or fail, and for the proxy to route each of `hosts` (daemon to domain)
 	 * that runs. Returns every daemon's state in the namespace.
 	 */
@@ -87,8 +92,12 @@ export interface Supervisor {
 		waitMs: number,
 		hosts: Record<string, string>,
 	): Promise<Record<string, DaemonState>>;
-	/** Stops every running daemon in the namespace. Deletes nothing. */
-	stop(namespace: string): Promise<void>;
+	/**
+	 * Stops every running daemon in the namespace, and keeps `apps` stopped whatever opens their
+	 * domains, until `start`. A service is left startable: another environment's app may depend on
+	 * it. Deletes nothing.
+	 */
+	stop(namespace: string, apps?: string[]): Promise<void>;
 	/** Every registered daemon's state in the namespace. */
 	status(namespace: string): Promise<Record<string, DaemonState>>;
 	/** A daemon's output lines since `since`, the last `lines` of them. */
@@ -115,8 +124,9 @@ function settings(machine: Machine): Record<string, string> {
 		"proxy.dns": "false",
 		"proxy.sync_hosts": "false",
 		"proxy.auto_trust": "false",
-		// A stopped app stays stopped until `basepad up`, whatever opens its URL.
-		"proxy.auto_start": "false",
+		// A first request to an app's domain starts it, and what it depends on. `stop` keeps an app
+		// stopped, until `start`.
+		"proxy.auto_start": "true",
 	};
 }
 
@@ -176,6 +186,15 @@ export async function openSupervisor(
 	const stopAll = async (namespace: string) => {
 		const running = (await list(namespace)).filter((d) => LIVE.has(d.status));
 		if (running.length > 0) await run("stop", ...running.map((d) => d.id));
+	};
+
+	/** Stops the namespace's daemons and disables `apps`, so the proxy does not start them. */
+	const stop = async (namespace: string, apps: string[] = []) => {
+		const listed = await list(namespace);
+		await stopAll(namespace);
+		for (const daemon of listed) {
+			if (apps.includes(daemon.name) && !daemon.disabled) await run("disable", daemon.id);
+		}
 	};
 
 	const registeredDir = async (namespace: string): Promise<string | undefined> => {
@@ -253,10 +272,16 @@ export async function openSupervisor(
 
 		async start(namespace, names, waitMs, hosts) {
 			const listed = await list(namespace);
+			for (const daemon of listed) {
+				if (daemon.disabled && names.includes(daemon.name)) await run("enable", daemon.id);
+			}
 			const idle = names.filter(
 				(name) => !listed.some((d) => d.name === name && LIVE.has(d.status)),
 			);
-			if (idle.length > 0) await run("start", ...idle.map((name) => `${namespace}/${name}`));
+			// basepad waits on them itself, below, so pitchfork's readiness here is immediate.
+			if (idle.length > 0) {
+				await run("start", ...idle.map((name) => `${namespace}/${name}`), "--cmd", "true");
+			}
 			const until = Date.now() + waitMs;
 			for (;;) {
 				const now = await states(namespace);
@@ -275,7 +300,7 @@ export async function openSupervisor(
 			}
 		},
 
-		stop: stopAll,
+		stop,
 
 		status: states,
 
@@ -386,6 +411,7 @@ const Listed = z.looseObject({
 	id: z.string(),
 	name: z.string(),
 	status: z.string(),
+	disabled: z.boolean().optional(),
 	active_port: z.number().nullable().optional(),
 	port: z.array(z.number()).optional(),
 });
@@ -417,10 +443,11 @@ function listening(port: number): Promise<boolean> {
  * The definitions file. pitchfork's own `dir` key would make the proxy refuse a daemon that runs
  * outside the registered folder, so each daemon `cd`s into its folder itself.
  *
- * Each daemon is ready once `true` runs. pitchfork 2.34.0's delay readiness, the default, asks
- * whether the process is live as the delay ends; with no delay that is mid-`exec` on macOS, which
- * can read as dead, and then `pitchfork start` waits forever on a daemon that runs. basepad waits
- * on daemons itself (`start`, a kind's `provision`), so readiness only has to be immediate.
+ * Each daemon is ready once it listens on its port, so the proxy, starting it on a first request,
+ * forwards that request only once it can answer; a daemon with no port is ready at once. Never
+ * pitchfork's delay readiness, the default: it asks whether the process is live as the delay
+ * ends, which with no delay is mid-`exec` on macOS and can read as dead, and then `pitchfork start`
+ * waits forever on a daemon that runs. basepad's own `start` waits on daemons itself.
  */
 function toml(daemons: Record<string, Daemon>): string {
 	return Object.entries(daemons)
@@ -428,8 +455,11 @@ function toml(daemons: Record<string, Daemon>): string {
 			const lines = [
 				`[daemons.${name}]`,
 				`run = ${JSON.stringify(`cd ${shellQuote(daemon.dir)} && ${daemon.run}`)}`,
-				`ready_cmd = "true"`,
+				`ready_cmd = ${JSON.stringify(readyCommand(daemon))}`,
 			];
+			if (daemon.depends !== undefined && daemon.depends.length > 0) {
+				lines.push(`depends = ${JSON.stringify(daemon.depends)}`);
+			}
 			if (daemon.port !== undefined) {
 				lines.push(`port = { expect = [${daemon.port}], bump = true }`);
 			}
@@ -439,6 +469,17 @@ function toml(daemons: Record<string, Daemon>): string {
 			return `${lines.join("\n")}\n`;
 		})
 		.join("\n");
+}
+
+/**
+ * A shell command that succeeds once the daemon listens on either loopback address: on `PORT`,
+ * which pitchfork gives a daemon with a port, else on the port it `listens` on.
+ */
+function readyCommand(daemon: Daemon): string {
+	const port = daemon.port !== undefined ? "$PORT" : daemon.listens;
+	if (port === undefined) return "true";
+	const probe = `: <>/dev/tcp/127.0.0.1/${port} || : <>/dev/tcp/::1/${port}`;
+	return `bash -c '${probe}' 2>/dev/null`;
 }
 
 /** `YYYY-MM-DD HH:MM:SS` in local time, as `pitchfork logs --since` reads it. */

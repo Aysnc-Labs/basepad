@@ -46,22 +46,35 @@ async function main(argv: string[]): Promise<number> {
 	return 0;
 }
 
-/** Reads switches by long or short name; anything else is an error naming the nearest flag. */
+/**
+ * Reads flags by long or short name: a switch, or a flag with a value, which takes the next
+ * argument. Anything else is an error naming the nearest flag.
+ */
 function parseFlags(
 	args: string[],
 	known: Record<string, Flag>,
 	usage: string,
-): Record<string, boolean> {
-	const flags: Record<string, boolean> = {};
+): Record<string, boolean | string> {
+	const flags: Record<string, boolean | string> = {};
 	const spellings = Object.entries(known).flatMap(([name, flag]) => [
 		[`--${name}`, name],
 		...(flag.short ? [[`-${flag.short}`, name]] : []),
 	]) as [string, string][];
 	const byArg = new Map(spellings);
-	for (const arg of args) {
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i] as string;
 		const name = byArg.get(arg);
-		if (name !== undefined) {
+		const value = name === undefined ? undefined : known[name]?.value;
+		if (name !== undefined && value === undefined) {
 			flags[name] = true;
+			continue;
+		}
+		if (name !== undefined) {
+			const given = args[++i];
+			if (given === undefined || given.startsWith("-")) {
+				throw new BasepadError(`\`${arg}\` needs a ${value}: \`${usage} ${arg} <${value}>\`.`);
+			}
+			flags[name] = given;
 			continue;
 		}
 		if (!arg.startsWith("-"))
@@ -132,7 +145,7 @@ function commandHelp(name: string, command: Command): string {
 function flagLines(flags: Record<string, Flag>): string[] {
 	return columns(
 		Object.entries(flags).map(([name, flag]) => [
-			flag.short ? `-${flag.short}, --${name}` : `    --${name}`,
+			`${flag.short ? `-${flag.short}, --${name}` : `    --${name}`}${flag.value ? ` <${flag.value}>` : ""}`,
 			flag.description,
 		]),
 	);

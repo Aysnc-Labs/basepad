@@ -21,17 +21,19 @@ import {
 } from "./layout.ts";
 import { setup, trustAsRoot } from "./setup.ts";
 import { type Daemon, type DaemonState, openSupervisor, type Supervisor } from "./supervisor.ts";
-import { checkOutWorktree, checkoutOf } from "./worktrees.ts";
+import { checkOutWorktree, checkoutOf, clonePaths, runSetup } from "./worktrees.ts";
 
 export interface Flag {
 	short?: string;
 	description: string;
+	/** What the flag's value is, for one that takes one (`--branch <name>`); a switch has none. */
+	value?: string;
 }
 
 export interface Invocation {
 	cwd: string;
-	/** The flags given, by long name. Every flag is a switch. */
-	flags: Record<string, boolean>;
+	/** The flags given, by long name: `true` for a switch, the value for a flag that takes one. */
+	flags: Record<string, boolean | string>;
 	/** Prints one line of the command's output. */
 	print(line: string): void;
 }
@@ -82,6 +84,11 @@ export const COMMANDS: Record<string, Command> = {
 		summary: "Make a worktree of main, with its own databases, domains and env files",
 		flags: {
 			json: { description: "Print only the worktree's name and path, as JSON" },
+			branch: {
+				value: "name",
+				description: "Check out this branch, or make it from main's HEAD when it does not exist",
+			},
+			start: { description: "Start its apps now, not on the first request to their domains" },
 		},
 		run: worktreeAdd,
 	},
@@ -162,6 +169,8 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 			run: withLocalBins(project, app.cwd, app.run),
 			dir: app.cwd,
 			port: ports.apps[key]?.port,
+			// So the proxy's start on a first request starts the servers first, wherever they run.
+			depends: services.map((service) => `${project.name}/${service}`),
 		};
 	}
 	await supervisor.register({
@@ -226,11 +235,7 @@ async function copyEnvFiles(from: string, to: string, paths: string[]): Promise<
 }
 
 /** Opens the supervisor, and readies main first when the environment is a worktree. */
-async function open(
-	environment: Environment,
-	flags: Record<string, boolean>,
-	print: Context["print"],
-) {
+async function open(environment: Environment, flags: Invocation["flags"], print: Context["print"]) {
 	const here = machine(process.env);
 	const supervisor = await openSupervisor(here, print);
 	const context: Context = { here, supervisor, claim: flags.claim === true, print };
@@ -246,22 +251,36 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const { project } = environment;
 	const context = await open(environment, flags, print);
 	const { supervisor, here } = context;
-	const since = new Date(Date.now() - 1000);
 	const lay = await ready(environment, context);
-	const apps = Object.keys(project.apps);
-	const hosts = Object.fromEntries(Object.entries(lay.apps).map(([key, app]) => [key, app.host]));
-	const states = await supervisor.start(lay.namespace, apps, APP_WAIT_MS, hosts);
+	const { states, failure } = await startApps(supervisor, project, lay);
 	print(
 		await stateTables(environment, lay, here, await withServices(supervisor, environment, states)),
 	);
-	const failed = apps.filter((key) => states[key] === "failed");
-	if (failed.length > 0)
-		throw new BasepadError(await failures(supervisor, lay.namespace, failed, since));
+	if (failure !== undefined) throw new BasepadError(failure);
 }
 
 /**
- * `worktree add`: checks out a new worktree of main and readies it (its databases from main's, its
- * env files from main's), starting nothing. Prints where it is.
+ * Starts the environment's apps and waits briefly for them. Returns their states, and the report
+ * of those that failed, if any did.
+ */
+async function startApps(
+	supervisor: Supervisor,
+	project: Project,
+	lay: Layout,
+): Promise<{ states: Record<string, DaemonState>; failure?: string }> {
+	const since = new Date(Date.now() - 1000);
+	const apps = Object.keys(project.apps);
+	const hosts = Object.fromEntries(Object.entries(lay.apps).map(([key, app]) => [key, app.host]));
+	const states = await supervisor.start(lay.namespace, apps, APP_WAIT_MS, hosts);
+	const failed = apps.filter((key) => states[key] === "failed");
+	if (failed.length === 0) return { states };
+	return { states, failure: await failures(supervisor, lay.namespace, failed, since) };
+}
+
+/**
+ * `worktree add`: checks out a new worktree of main, copies the paths its config clones, readies it
+ * (its databases from main's, its env files from main's) and runs its setup commands. Its apps
+ * start on the first request to their domains, or now with `--start`. Prints where it is.
  */
 async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	// With `--json`, stdout carries the answer alone.
@@ -271,28 +290,46 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	const context = await open({ project: main }, {}, say);
 	await ready({ project: main }, context);
 	// Main's config is read before checking out, so a name too long fails before anything is made.
-	const { suffix, root } = await checkOutWorktree(main);
+	const requested = typeof flags.branch === "string" ? flags.branch : undefined;
+	const { suffix, branch, root } = await checkOutWorktree(main, requested);
+	const kept = `Worktree ${suffix} is checked out at ${root}`;
 	let environment: Environment;
 	let lay: Layout;
 	try {
 		environment = await environmentAt(root);
+		const { project } = environment;
+		for (const note of await clonePaths(main.root, project.root, project.worktrees.clone))
+			say(note);
 		lay = await ready(environment, context);
 	} catch (error) {
 		if (!(error instanceof BasepadError)) throw error;
 		throw new BasepadError(
-			`${error.message}\nWorktree ${suffix} is checked out at ${root}; once that is fixed, run \`basepad up\` there.`,
+			`${error.message}\n${kept}; once that is fixed, run \`basepad up\` there.`,
 		);
 	}
+	try {
+		await runSetup(environment.project.root, environment.project.worktrees.setup, say);
+	} catch (error) {
+		if (!(error instanceof BasepadError)) throw error;
+		throw new BasepadError(
+			`${error.message}\n${kept}; once that is fixed, run the rest of \`worktrees.setup\` there.`,
+		);
+	}
+	const { states, failure } =
+		flags.start === true
+			? await startApps(context.supervisor, environment.project, lay)
+			: { states: {}, failure: undefined };
 	if (flags.json === true) {
 		print(JSON.stringify({ name: suffix, path: root }));
-		return;
+	} else {
+		const all = await withServices(context.supervisor, environment, states);
+		print(await stateTables(environment, lay, context.here, all));
+		print("");
+		print(
+			`Made worktree ${suffix} at ${root}, on branch ${branch}. ${flags.start === true ? "Its apps are started." : "Its apps start when their domains are first opened, or with `basepad up` there."}`,
+		);
 	}
-	const states = await withServices(context.supervisor, environment, {});
-	print(await stateTables(environment, lay, context.here, states));
-	print("");
-	print(
-		`Made worktree ${suffix} at ${root}, on branch ${suffix}. Run \`basepad up\` there to start it.`,
-	);
+	if (failure !== undefined) throw new BasepadError(failure);
 }
 
 /** A worktree's daemon states with its services', which run in main's namespace. */
@@ -406,7 +443,7 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 	const { project, suffix } = await environmentAt(cwd);
 	const supervisor = await openSupervisor(machine(process.env), print);
 	const { namespace } = layout(project, machine(process.env), suffix);
-	await supervisor.stop(namespace);
+	await supervisor.stop(namespace, Object.keys(project.apps));
 	// A worktree's services are main's, which keeps them.
 	print(
 		suffix === undefined

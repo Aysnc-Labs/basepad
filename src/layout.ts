@@ -104,7 +104,9 @@ const LONGEST_NUMBER = 999;
  * fit, with the longest suffix the prefix makes.
  */
 export function layout(
-	project: Pick<Project, "file" | "name" | "apps" | "services" | "worktrees">,
+	project: Pick<Project, "file" | "name" | "apps" | "services"> & {
+		worktrees: Pick<Project["worktrees"], "prefix">;
+	},
 	machine: Machine,
 	suffix?: string,
 ): Layout {
