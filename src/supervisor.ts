@@ -93,8 +93,7 @@ export interface Supervisor {
  */
 function settings(machine: Machine): Record<string, string> {
 	return {
-		// Every daemon basepad runs is waited on by basepad itself, never by a fixed delay (and each
-		// has a `ready_cmd`, which pitchfork prefers to the delay; see `toml`).
+		// Every daemon basepad runs is waited on by basepad itself, never by a fixed delay.
 		"general.ready_delay": "0s",
 		// Domains are <daemon>.<name>.localhost; a git worktree must not add its label to them.
 		"general.worktree": "false",
