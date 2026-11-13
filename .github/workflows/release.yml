@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: write
+  pull-requests: write
+  # npm trusted publishing (OIDC); also signs provenance.
+  id-token: write
+
+jobs:
+  release:
+    name: Version or publish
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      # Trusted publishing needs npm 11.5+, which Node 24 ships.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # The PR's CI already ran the full check; `prepare` builds dist.
+      - run: npm ci
+      - uses: changesets/action@v1
+        with:
+          version: npx changeset version
+          publish: npx changeset publish
+          title: Version Packages
+          commit: Version Packages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -30,7 +30,8 @@
 		"check": "biome check . && tsc --noEmit && node scripts/check-feature-map.ts && node --test scripts/check-feature-map.test.ts && node scripts/rocket-svg.ts --check && npm test",
 		"lint": "biome check .",
 		"prepare": "npm run build",
-		"test": "vitest run"
+		"test": "vitest run",
+		"changeset": "changeset"
 	},
 	"dependencies": {
 		"chalk": "^6.0.1",
@@ -40,6 +41,8 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.6.6",
+		"@changesets/changelog-github": "^1.0.1",
+		"@changesets/cli": "^3.0.3",
 		"@types/node": "^24.19.2",
 		"@types/react": "^19.3.0",
 		"typescript": "^7.0.2",
