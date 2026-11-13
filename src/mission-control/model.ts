@@ -74,6 +74,8 @@ export interface View {
 	notice?: string;
 	/** Scrolled back, the stream is paused: the arrival number (`seq`) of the newest line shown. */
 	until?: number;
+	/** A search of the stream: while `typing`, keys go to the query; after, `until` is its match. */
+	search?: { query: string; typing: boolean };
 }
 
 /**
@@ -153,6 +155,7 @@ function indexOf(lines: readonly LogLine[], seq: number): number {
  */
 export function reduce(previous: View, key: string, snapshot: Snapshot, page = 10): Step {
 	const { notice: _, ...view } = previous;
+	if (view.search?.typing) return { view: typing(view, view.search.query, key, snapshot) };
 	const envs = snapshot.environments;
 	const env = selectedOf(snapshot, view);
 	const at = env === undefined ? 0 : envs.indexOf(env);
@@ -224,11 +227,62 @@ export function reduce(previous: View, key: string, snapshot: Snapshot, page = 1
 		case "end":
 		case "G":
 			return { view: scroll("live") };
-		case "escape":
+		case "/":
+			return { view: { ...view, search: { query: "", typing: true } } };
+		case "n":
+		case "N":
+			return {
+				view: view.search === undefined ? view : find(view, key === "n" ? -1 : 1, snapshot),
+			};
+		case "escape": {
+			// One layer at a time: the search or the pause, then the focus.
+			const { until, search, ...rest } = view;
+			if (until !== undefined || search !== undefined) return { view: rest };
 			return { view: { selected: view.selected, quit: view.quit } };
+		}
 		default:
 			return { view };
 	}
+}
+
+/** A key while a search is typed: text, or `return` to search, or `escape` to cancel. */
+function typing(view: View, query: string, key: string, snapshot: Snapshot): View {
+	const { search: _, ...rest } = view;
+	switch (key) {
+		case "ctrl-c":
+			return { ...view, quit: true };
+		case "escape":
+			return rest;
+		case "backspace":
+			return { ...view, search: { query: [...query].slice(0, -1).join(""), typing: true } };
+		case "return": {
+			if (query === "") return rest;
+			const { until: __, ...live } = rest;
+			const found = find({ ...live, search: { query, typing: false } }, -1, snapshot);
+			return found.until === undefined ? { ...live, notice: `No line matches “${query}”.` } : found;
+		}
+		default:
+			// A named key (an arrow, page up) is not text.
+			return [...key].length === 1
+				? { ...view, search: { query: query + key, typing: true } }
+				: view;
+	}
+}
+
+/**
+ * The view at the next line that matches the search, ignoring case: older (`-1`) or newer (`1`)
+ * than the one shown, or the newest when live.
+ */
+function find(view: View, by: -1 | 1, snapshot: Snapshot): View {
+	const query = view.search?.query.toLowerCase() ?? "";
+	const lines = streamLines(snapshot, view);
+	const from = view.until === undefined ? lines.length : indexOf(lines, view.until);
+	for (let i = from + by; i >= 0 && i < lines.length; i += by) {
+		const line = lines[i] as LogLine;
+		if (line.text.toLowerCase().includes(query)) return { ...view, until: line.seq };
+	}
+	const which = by < 0 ? "older" : "newer";
+	return { ...view, notice: `No ${which} line matches “${view.search?.query}”.` };
 }
 
 /** A start, stop or restart of one part, or of the whole environment when none is given. */

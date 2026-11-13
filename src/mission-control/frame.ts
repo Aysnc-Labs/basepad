@@ -164,6 +164,8 @@ interface Run {
 	color?: string | undefined;
 	bg?: string | undefined;
 	bold?: boolean;
+	/** Drawn in reverse: a search's matches, which needs no colour. */
+	inverse?: boolean;
 }
 
 const run = (text: string, color?: string, more: Omit<Run, "text" | "color"> = {}): Run => ({
@@ -183,7 +185,11 @@ function line(key: string, width: number, runs: Run[]): ReactElement {
 			Text,
 			{ wrap: "truncate-end" },
 			...runs.map((r, i) =>
-				h(Text, { key: i, color: r.color, backgroundColor: r.bg, bold: r.bold }, r.text),
+				h(
+					Text,
+					{ key: i, color: r.color, backgroundColor: r.bg, bold: r.bold, inverse: r.inverse },
+					r.text,
+				),
 			),
 		),
 	);
@@ -363,6 +369,8 @@ const KEYS: [string, string][] = [
 	["←→", "app or service"],
 	["esc", "all logs"],
 	["PgUp PgDn", "scroll"],
+	["/", "search"],
+	["n N", "next match"],
 	["s", "start"],
 	["x", "stop"],
 	["r", "restart"],
@@ -516,6 +524,38 @@ function partsPanel(
 	);
 }
 
+/** The search in the stream's title: the query being typed, or the one found and how to go on. */
+function searchTitle(view: View, c: Palette): Run[] {
+	const { search } = view;
+	if (search === undefined) return [];
+	if (search.typing) {
+		return [
+			run("  / ", c.accent, { bold: true }),
+			run(`${search.query}▏`, c.text, { bold: true }),
+			run("  enter find · esc cancel", c.mute),
+		];
+	}
+	return [run(`  “${search.query}”`, c.accent, { bold: true }), run("  n older · N newer", c.mute)];
+}
+
+/** `text` with each match of `query` (ignoring case) drawn in reverse. */
+function marked(text: string, query: string, color: string | undefined): Run[] {
+	if (query === "") return [run(text, color)];
+	const runs: Run[] = [];
+	const lower = text.toLowerCase();
+	const q = query.toLowerCase();
+	let from = 0;
+	for (let at = lower.indexOf(q); at >= 0; at = lower.indexOf(q, at + q.length)) {
+		runs.push(
+			run(text.slice(from, at), color),
+			run(text.slice(at, at + q.length), color, { inverse: true }),
+		);
+		from = at + q.length;
+	}
+	runs.push(run(text.slice(from), color));
+	return runs;
+}
+
 /** One merged, colour-coded stream of the environment's parts, or of the focused one alone. */
 function stream(
 	env: EnvironmentView,
@@ -532,17 +572,25 @@ function stream(
 	const n = Math.max(0, height - 2);
 	const nameWidth = Math.max(...parts.map((p) => [...p.name].length), 3) + 2;
 	// Live, only the newest lines of each part are merged; paused, all of them, up to its line.
+	// Paused, the page ends at its line, or fills with the lines after it near the oldest.
 	const paused = view.until;
 	const all = paused === undefined ? [] : streamLines(snapshot, view);
-	const upTo = all.filter((l) => l.seq <= (paused as number));
-	const shown = paused === undefined ? merged(snapshot.logs, ids, n) : upTo.slice(-n);
+	const end = Math.max(
+		all.filter((l) => l.seq <= (paused as number)).length,
+		Math.min(n, all.length),
+	);
+	const shown =
+		paused === undefined ? merged(snapshot.logs, ids, n) : all.slice(Math.max(0, end - n), end);
+	const search = view.search !== undefined && !view.search.typing ? view.search.query : "";
 	const rows = shown.map((l) => {
 		const color = partColor(env, l.id, c);
 		const name = parts.find((part) => part.id === l.id)?.name ?? l.id;
+		const match = search !== "" && l.seq === paused;
 		return line(`${l.seq}`, inner, [
-			run(`${l.time}  `, c.dim),
+			run(`${l.time} `, c.dim),
+			run(match ? "› " : "  ", c.warn, { bold: true }),
 			...(focused === undefined ? [run("▎", color), run(pad(name, nameWidth), color)] : []),
-			run(clean(l.text), tone(l.text, c)),
+			...marked(clean(l.text), search, tone(l.text, c)),
 		]);
 	});
 	if (rows.length === 0) {
@@ -573,8 +621,9 @@ function stream(
 				? []
 				: [
 						run("  ⏸ paused", c.warn, { bold: true }),
-						run(` · ${all.length - upTo.length} newer · end for live`, c.soft),
+						run(` · ${all.length - end} newer · end for live`, c.soft),
 					]),
+			...searchTitle(view, c),
 		],
 		legend,
 		rows,

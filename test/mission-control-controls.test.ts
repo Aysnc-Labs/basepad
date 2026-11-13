@@ -152,3 +152,42 @@ test("narrowed to one part, scrolling moves through its lines alone", () => {
 	// api has fewer lines than a page: they all show already, so it stays live.
 	expect(scroll(["right", "right", "pageup"]).until).toBeUndefined();
 });
+
+const type = (text: string) => ["/", ...text];
+
+test("/ starts a search; enter jumps to the newest matching line, n to older ones and N back", () => {
+	const found = scroll([...type("Line 4"), "return"]);
+	expect(found.search).toEqual({ query: "Line 4", typing: false });
+	expect(found.until).toBe(98); // line 49: matching ignores case
+	expect(scroll([...type("line 4"), "return", "n"]).until).toBe(96); // line 48
+	expect(scroll([...type("line 4"), "return", "n", "n", "N"]).until).toBe(96);
+});
+
+test("while typing, keys are text: q does not close, backspace deletes, escape cancels", () => {
+	const typing = scroll([...type("aqx"), "backspace"]);
+	expect(typing.quit).toBe(false);
+	expect(typing.search).toEqual({ query: "aq", typing: true });
+	expect(scroll([...type("aq"), "escape"]).search).toBeUndefined();
+	expect(scroll([...type("aq"), "ctrl-c"]).quit).toBe(true);
+});
+
+test("a search with no match says so and leaves the stream live", () => {
+	const none = reduce(scroll(type("zz")), "return", chatty(), 10).view;
+	expect(none.notice).toBe("No line matches “zz”.");
+	expect(none.search).toBeUndefined();
+	expect(none.until).toBeUndefined();
+	const end = scroll([...type("line 0"), "return", "n"]);
+	expect(end.notice).toBe("No older line matches “line 0”.");
+	expect(end.until).toBe(0);
+});
+
+test("escape steps back one layer at a time: the search, then the pause, then the focus", () => {
+	const searched = scroll(["right", ...type("line 4"), "return"]);
+	expect(scroll(["escape"], searched)).toMatchObject({ focus: "shop/web" });
+	expect(scroll(["escape"], searched).search).toBeUndefined();
+	expect(scroll(["escape"], searched).until).toBeUndefined();
+	const paused = scroll(["right", "pageup"]);
+	expect(scroll(["escape"], paused)).toMatchObject({ focus: "shop/web" });
+	expect(scroll(["escape"], paused).until).toBeUndefined();
+	expect(scroll(["escape", "escape"], paused).focus).toBeUndefined();
+});

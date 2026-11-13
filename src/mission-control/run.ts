@@ -79,21 +79,28 @@ function App(props: {
 	}, [listeners]);
 	const snapshot = feed.snapshot();
 	useInput((input, key) => {
-		const now = latest.current;
-		const page = pageOf(snapshot, now, columns, rows);
-		const { view: next, intent } = reduce(now, keyName(input, key), snapshot, page);
-		if (next.quit) {
-			exit();
-			return;
+		const name = keyName(input, key);
+		// Text pasted into a search arrives at once: each character is a key. Elsewhere a paste is
+		// no key, so it never starts or stops anything.
+		const typing = latest.current.search?.typing === true;
+		const pasted = name === input && [...input].length > 1;
+		for (const one of pasted && typing ? [...input] : [name]) {
+			const now = latest.current;
+			const page = pageOf(snapshot, now, columns, rows);
+			const { view: next, intent } = reduce(now, one, snapshot, page);
+			if (next.quit) {
+				exit();
+				return;
+			}
+			latest.current = next;
+			setView(next);
+			if (intent === undefined) continue;
+			// Done in the background, so the view stays live; the outcome shows when it is known.
+			perform(intent, hands).then((notice) => {
+				feed.refresh();
+				setView((then) => ({ ...then, notice }));
+			});
 		}
-		latest.current = next;
-		setView(next);
-		if (intent === undefined) return;
-		// Done in the background, so the view stays live; the outcome shows when it is known.
-		perform(intent, hands).then((notice) => {
-			feed.refresh();
-			setView((now) => ({ ...now, notice }));
-		});
 	});
 	return frame({ snapshot, view, cols: columns, rows, now: clock(), color });
 }
@@ -110,6 +117,8 @@ function keyName(input: string, key: Key): string {
 	if (key.pageDown) return "pagedown";
 	if (key.home) return "home";
 	if (key.end) return "end";
+	if (key.return) return "return";
+	if (key.backspace || key.delete) return "backspace";
 	return input;
 }
 

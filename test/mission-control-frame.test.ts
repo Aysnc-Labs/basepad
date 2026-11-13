@@ -216,3 +216,23 @@ test("scrolled back, the stream holds still at its line and says how many newer 
 	expect(out).toMatch(/LOGS +all +⏸ paused · 49 newer · end for live/);
 	expect(out).toMatch(/PgUp PgDn +scroll/);
 });
+
+test("a search being typed shows in the stream's title; a found one marks its line", () => {
+	const web = lines("shop/web", "GET / 200", "TypeError: boom", "GET /cart 200", "GET / 200");
+	const typing = draw(snap([main], [web]), {
+		...initialView("shop"),
+		search: { query: "typeerr", typing: true },
+	});
+	expect(typing).toMatch(/LOGS +all +\/ typeerr▏ +enter find · esc cancel/);
+	const until = (web[1][1] as LogLine).seq;
+	const found = draw(snap([main], [web]), {
+		...initialView("shop"),
+		until,
+		search: { query: "typeerr", typing: false },
+	});
+	// Found near the top, the page still fills with the lines after it.
+	expect(found).toMatch(/10:00:00 › ▎web +TypeError: boom +│\n.*GET \/cart 200/);
+	expect(found).toContain("0 newer");
+	expect(found).toMatch(/“typeerr” +n older · N newer/);
+	expect(found).toMatch(/\/ +search +n N +next match/);
+});
