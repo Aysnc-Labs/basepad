@@ -7,21 +7,39 @@ import { BasepadError } from "./internal/exec.ts";
 export interface Machine {
 	/** basepad's home: generated definitions and the supervisor's state, nothing else. */
 	home: string;
-	/** The port basepad's HTTPS proxy listens on; app URLs carry it unless it is 443. */
+	/** The port basepad's HTTPS proxy listens on. */
 	proxyPort: number;
+	/**
+	 * Whether port 443 reaches the proxy, so app URLs carry no port: the proxy listens there, or
+	 * `basepad setup` redirected it. Asked from the machine (`Supervisor.standardPort`), never stored.
+	 */
+	portFree: boolean;
 }
 
 /** The proxy's default port: high, so it needs no privilege, and unlike pitchfork's own suggestion. */
 const PROXY_PORT = 7443;
 
-/** Reads `BASEPAD_HOME` (default `~/.basepad`) and `BASEPAD_PROXY_PORT` (default 7443). */
-export function machine(env: NodeJS.ProcessEnv): Machine {
+/**
+ * Reads `BASEPAD_HOME` (default `~/.basepad`) and `BASEPAD_PROXY_PORT` (default 7443, or 443 as root
+ * on Linux, where the proxy binds it itself). `portFree` starts as what the port alone tells.
+ */
+export function machine(env: NodeJS.ProcessEnv, rootOnLinux = isRootOnLinux()): Machine {
 	const raw = env.BASEPAD_PROXY_PORT;
-	const proxyPort = raw === undefined || raw === "" ? PROXY_PORT : Number(raw);
+	const unset = raw === undefined || raw === "";
+	const proxyPort = unset ? (rootOnLinux ? 443 : PROXY_PORT) : Number(raw);
 	if (!Number.isInteger(proxyPort) || proxyPort < 1 || proxyPort > 65535) {
 		throw new BasepadError(`BASEPAD_PROXY_PORT must be a port number; got \`${raw}\`.`);
 	}
-	return { home: env.BASEPAD_HOME || join(env.HOME || homedir(), ".basepad"), proxyPort };
+	return {
+		home: env.BASEPAD_HOME || join(env.HOME || homedir(), ".basepad"),
+		proxyPort,
+		portFree: proxyPort === 443,
+	};
+}
+
+/** Root on Linux needs no prompt for anything machine setup does: `up` does it itself. */
+export function isRootOnLinux(): boolean {
+	return process.platform === "linux" && process.getuid?.() === 0;
 }
 
 /**
@@ -74,7 +92,7 @@ export function layout(
 			fail(`app \`${key}\` is ${key.length} characters; a domain label allows ${LABEL_MAX}.`);
 		}
 		const host = `${key}.${name}.localhost`;
-		const port = machine.proxyPort === 443 ? "" : `:${machine.proxyPort}`;
+		const port = machine.portFree ? "" : `:${machine.proxyPort}`;
 		apps[key] = { host, url: `https://${host}${port}`, port: block + (i % APP_PORT_BLOCK) };
 	}
 	const services: Layout["services"] = {};
