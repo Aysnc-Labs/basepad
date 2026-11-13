@@ -204,8 +204,8 @@ const STARS: [number, number][] = [
 	[17, 0],
 ];
 
-/** The pad as pixels, a row of letters each: the tower, the rocket risen `lift`, its flame. */
-function scene({ checks, tick, lift }: LaunchInput): string[] {
+/** A blank sky, `put` to draw a pixel into it, and `stamp` to draw rows of them. */
+function canvas() {
 	const px = Array.from({ length: TALL }, () => Array<string>(WIDE).fill("."));
 	const put = (x: number, y: number, ch: string) => {
 		const row = px[y];
@@ -215,27 +215,64 @@ function scene({ checks, tick, lift }: LaunchInput): string[] {
 		for (const [dy, row] of rows.entries())
 			for (const [dx, ch] of [...row].entries()) put(x + dx, y + dy, ch);
 	};
+	return { rows: () => px.map((row) => row.join("")), put, stamp };
+}
+
+const TOWER_TOP = ROCKET_TOP - 2;
+/** Where the tower's beacon blinks. */
+const BEACON: [number, number] = [5, TOWER_TOP - 2];
+
+/** The stars, the tower (its beacon dark, its arms away from the rocket) and the pad. */
+function ground(put: (x: number, y: number, ch: string) => void, armsIn: boolean) {
 	for (const [x, y] of STARS) put(x, y, "*");
-	// The umbilical tower: two legs and a lattice, its beacon blinking on top.
-	const towerTop = ROCKET_TOP - 2;
-	for (let y = towerTop; y < PAD; y++) {
+	// The umbilical tower: two legs and a lattice.
+	for (let y = TOWER_TOP; y < PAD; y++) {
 		put(3, y, "T");
 		put(7, y, "T");
-		put(4 + ((y - towerTop) % 3), y, "t");
+		put(4 + ((y - TOWER_TOP) % 3), y, "t");
 	}
-	put(5, towerTop - 1, "T");
-	put(5, towerTop - 2, tick % 10 < 5 ? "R" : "t");
-	// Its arms hold the rocket until every check is go.
-	const go = checks.every((check) => check.state === "go");
+	put(5, TOWER_TOP - 1, "T");
+	put(...BEACON, "t");
+	// Its arms hold the rocket until it is cleared to go.
 	for (const y of [ROCKET_TOP + 4, ROCKET_TOP + 10, ROCKET_TOP + 16])
-		for (let x = 8; x < (go ? 10 : ROCKET_X + 2); x++) put(x, y, "T");
+		for (let x = 8; x < (armsIn ? ROCKET_X + 2 : 10); x++) put(x, y, "T");
+	for (let x = 0; x < WIDE; x++) put(x, PAD, "D");
+	for (let x = 1; x < WIDE - 1; x++) put(x, PAD + 1, x > 10 && x < 22 ? "K" : "D");
+}
+
+/** The pad as pixels, a row of letters each: the tower, the rocket risen `lift`, its flame. */
+function scene({ checks, tick, lift }: LaunchInput): string[] {
+	const { rows, put, stamp } = canvas();
+	const go = checks.every((check) => check.state === "go");
+	ground(put, !go);
+	if (tick % 10 < 5) put(...BEACON, "R");
 	const top = ROCKET_TOP - lift;
 	stamp(ROCKET, ROCKET_X, top);
 	if (go) stamp((lift > 0 ? PLUME : FLAME)[tick % 2] as string[], ROCKET_X, top + ROCKET.length);
-	for (let x = 0; x < WIDE; x++) put(x, PAD, "D");
-	for (let x = 1; x < WIDE - 1; x++) put(x, PAD + 1, x > 10 && x < 22 ? "K" : "D");
 	if (lift > 0) for (let x = 0; x < WIDE; x++) if ((x + tick) % 3 !== 0) put(x, PAD - 1, "S");
-	return px.map((row) => row.join(""));
+	return rows();
+}
+
+/**
+ * The art in layers, for drawing it elsewhere (the README's rocket, `scripts/rocket-svg.ts`): the
+ * ground with the tower's arms away, the rocket and its flames as stamped at `x`, `top`, and each
+ * letter's colour.
+ */
+export function rocketArt() {
+	const { rows, put } = canvas();
+	ground(put, false);
+	return {
+		wide: WIDE,
+		tall: TALL,
+		ground: rows(),
+		beacon: BEACON,
+		rocket: ROCKET,
+		flames: FLAME,
+		plumes: PLUME,
+		x: ROCKET_X,
+		top: ROCKET_TOP,
+		colours: colours(palette("rgb")),
+	};
 }
 
 function colours(c: Palette): Record<string, string | undefined> {
