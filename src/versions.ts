@@ -14,6 +14,6 @@ export const PITCHFORK_VERSION = "2.34.0";
 
 /**
  * pgvector, per Postgres major, from conda-forge (mise's Postgres is conda-forge's build). 0.8.0 is
- * the last build for 17. conda-forge may stop building for 18 once its pin moves on.
+ * the last build for 17.
  */
 export const PGVECTOR_VERSIONS = { 17: "0.8.0", 18: "0.8.6" } as const;

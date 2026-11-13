@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { kindOf, type NamesOf, type Service } from "./catalogue.ts";
 import type { Project } from "./config.ts";
 import { BasepadError } from "./internal/exec.ts";
 
@@ -44,8 +45,9 @@ export function isRootOnLinux(): boolean {
 
 /**
  * Every fact derived from the project's description and the machine: domains, URLs, starting ports,
- * database names and paths in basepad's home. The only place such names are computed. It rejects
- * names past their limits with the reason, and never truncates.
+ * paths in basepad's home, and each service kind's names (computed by its kind in the catalogue).
+ * The only place such names are computed. It rejects names past their limits with the reason, and
+ * never truncates.
  */
 export interface Layout {
 	apps: Record<
@@ -58,24 +60,22 @@ export interface Layout {
 			port: number;
 		}
 	>;
-	services: Record<
-		string,
-		{
-			database: string;
-			/** The port the service is first tried on; the next free one is used when it is taken. */
-			port: number;
-			/** The service's data folder in the home. */
-			dir: string;
-		}
-	>;
+	/** Each service's port and folder, with the names its kind derives. */
+	services: Record<string, ServicePlace>;
 	/** The environment's supervisor definitions, generated into the home. */
 	definitions: string;
 }
 
+/** One service's place in the environment, with the names its kind derives. */
+export type ServicePlace = {
+	/** The port the service is first tried on; the next free one is used when it is taken. */
+	port: number;
+	/** The service's data folder in the home. */
+	dir: string;
+} & NamesOf<Service>;
+
 /** A DNS label's limit, in characters. */
 const LABEL_MAX = 63;
-/** Postgres silently truncates identifiers past this many bytes. */
-const IDENTIFIER_MAX = 63;
 
 /** App ports start in [20000, 32000): clear of common dev ports and of Linux's ephemeral range. */
 const APP_PORT_BASE = 20000;
@@ -103,26 +103,49 @@ export function layout(
 		if (key.length > LABEL_MAX) {
 			fail(`app \`${key}\` is ${key.length} characters; a domain label allows ${LABEL_MAX}.`);
 		}
-		const host = `${key}.${name}.localhost`;
+		const host = appHost(key, name);
 		const port = machine.portFree ? "" : `:${machine.proxyPort}`;
 		apps[key] = { host, url: `https://${host}${port}`, port: block + (i % APP_PORT_BLOCK) };
 	}
 	const services: Layout["services"] = {};
-	for (const key of Object.keys(project.services)) {
-		const database = `${name}_${key}`.replaceAll("-", "_");
-		const bytes = Buffer.byteLength(database);
-		if (bytes > IDENTIFIER_MAX) {
-			fail(
-				`\`name\` and service \`${key}\` make the database name "${database}", which is ${bytes} bytes; Postgres allows ${IDENTIFIER_MAX}. Shorten \`name\` or the service key.`,
-			);
+	for (const [key, service] of Object.entries(project.services)) {
+		const dir = join(machine.home, "services", name, key);
+		let names: NamesOf<Service>;
+		try {
+			names = kindOf(service).names({ name, key, dir });
+		} catch (error) {
+			if (error instanceof BasepadError) fail(error.message);
+			throw error;
 		}
 		services[key] = {
-			database,
+			...names,
 			port: SERVICE_PORT_BASE + (hash(`${name}.${key}`) % SERVICE_PORTS),
-			dir: join(machine.home, "services", name, key),
+			dir,
 		};
 	}
 	return { apps, services, definitions: join(machine.home, "environments", `${name}.toml`) };
+}
+
+/** An app's domain: `<app>.<name>.localhost`, as the supervisor's proxy serves it. */
+export function appHost(app: string, name: string): string {
+	return `${app}.${name}.localhost`;
+}
+
+/** basepad's own pitchfork's folders in the home, and the CA its proxy signs with. */
+export function supervisorPaths(machine: Pick<Machine, "home">): {
+	state: string;
+	config: string;
+	logs: string;
+	ca: string;
+} {
+	const root = join(machine.home, "pitchfork");
+	const state = join(root, "state");
+	return {
+		state,
+		config: join(root, "config"),
+		logs: join(root, "logs"),
+		ca: join(state, "proxy", "ca.pem"),
+	};
 }
 
 /** FNV-1a: a stable spread of names over port blocks. */

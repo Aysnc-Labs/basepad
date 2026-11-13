@@ -3,33 +3,23 @@
  * config is the only way a project talks to basepad.
  */
 
+import type { OutputsOf, Service } from "./catalogue.ts";
+
+// Each service kind's factory and types, from its module in the catalogue.
+export type {
+	PostgresOutputs,
+	PostgresService,
+	PostgresVersion,
+} from "./catalogue/postgres.ts";
+export { postgres } from "./catalogue/postgres.ts";
+export type { Service };
+
 /** A process of the project's own that basepad runs and gives a domain. */
 export interface App {
 	/** The shell command that starts it. It is given a free port as `PORT`. */
 	run: string;
 	/** The folder it runs in, relative to the config. Defaults to the config's folder. */
 	cwd?: string;
-}
-
-/** A Postgres server of the project's own, with one database for this service. */
-export interface PostgresService {
-	kind: "postgres";
-	version: PostgresVersion;
-}
-
-export type PostgresVersion = 17 | 18;
-
-/** Something basepad provides to an environment from its catalogue. */
-export type Service = PostgresService;
-
-/** What a service gives to `env`. The password is a placeholder: local connections are trusted. */
-export interface ServiceOutputs {
-	url: string;
-	host: string;
-	port: number;
-	user: string;
-	password: string;
-	database: string;
 }
 
 /** What an app gives to `env`. Its port is not given: it changes from run to run. */
@@ -42,7 +32,7 @@ export interface AppOutputs {
 export type EnvFiles = Record<string, Record<string, string | number>>;
 
 export type Outputs<S extends Record<string, Service>, A extends Record<string, App>> = {
-	[K in keyof S]: ServiceOutputs;
+	[K in keyof S]: OutputsOf<S[K]>;
 } & { [K in keyof A]: AppOutputs };
 
 export interface Config<
@@ -66,11 +56,6 @@ export function defineConfig<
 	const A extends Record<string, App> = Record<never, App>,
 >(config: Config<S, A>): Config<S, A> {
 	return config;
-}
-
-/** A Postgres server of the project's own. `version` is 17 or 18; it defaults to 18. */
-export function postgres(options: { version?: PostgresVersion } = {}): PostgresService {
-	return { kind: "postgres", version: options.version ?? 18 };
 }
 
 /** What `basepad.config.local.ts` exports: a function from the project's config to a config. */

@@ -1,12 +1,12 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { request as httpsRequest } from "node:https";
-import { createConnection } from "node:net";
 import { dirname, join } from "node:path";
 import { connect } from "node:tls";
 import { z } from "zod";
 import { interactive, must, shellQuote } from "./internal/exec.ts";
-import type { Machine } from "./layout.ts";
+import { answers } from "./internal/ports.ts";
+import { appHost, type Machine, supervisorPaths } from "./layout.ts";
 import { install } from "./tools.ts";
 import { PITCHFORK_VERSION } from "./versions.ts";
 
@@ -109,20 +109,30 @@ function settings(machine: Machine): Record<string, string> {
 	};
 }
 
-/** Installs pitchfork through mise and opens basepad's supervisor. Nothing starts until asked. */
-export async function openSupervisor(machine: Machine): Promise<Supervisor> {
-	const root = join(machine.home, "pitchfork");
+/** What `serve` prints before a settings change restarts a running supervisor. */
+export const RESTART_WARNING =
+	"basepad's supervisor restarts to take new settings, which stops every project's running apps and services. Run `basepad up` in a project to start it again.";
+
+/**
+ * Installs pitchfork through mise and opens basepad's supervisor. Nothing starts until asked.
+ * `print` gets what the developer must know before it happens: a restart that stops their apps.
+ */
+export async function openSupervisor(
+	machine: Machine,
+	print: (line: string) => void,
+): Promise<Supervisor> {
+	const paths = supervisorPaths(machine);
 	const dirs = {
-		PITCHFORK_STATE_DIR: join(root, "state"),
-		PITCHFORK_CONFIG_DIR: join(root, "config"),
-		PITCHFORK_LOGS_DIR: join(root, "logs"),
+		PITCHFORK_STATE_DIR: paths.state,
+		PITCHFORK_CONFIG_DIR: paths.config,
+		PITCHFORK_LOGS_DIR: paths.logs,
 	};
 	const pitchfork = (await install("pitchfork", PITCHFORK_VERSION, machine.home)).bin("pitchfork");
 	const env = supervisorEnv(dirs);
 	const run = (...args: string[]) => must(pitchfork, args, { cwd: machine.home, env });
 
 	const running = () => existsSync(join(dirs.PITCHFORK_STATE_DIR, "sock"));
-	const ca = join(dirs.PITCHFORK_STATE_DIR, "proxy", "ca.pem");
+	const { ca } = paths;
 
 	/** Sets what differs; a running supervisor restarts to take changed settings (its daemons stop). */
 	const applySettings = async () => {
@@ -134,7 +144,10 @@ export async function openSupervisor(machine: Machine): Promise<Supervisor> {
 			([key, value]) => now.get(key) !== value,
 		);
 		for (const [key, value] of changes) await run("settings", "set", key, value, "--global");
-		if (changes.length > 0 && running()) await run("supervisor", "start", "--force");
+		if (changes.length > 0 && running()) {
+			print(RESTART_WARNING);
+			await run("supervisor", "start", "--force");
+		}
 	};
 
 	/** The namespace's daemons. With no supervisor running there are none, and none is started. */
@@ -243,7 +256,7 @@ export async function openSupervisor(machine: Machine): Promise<Supervisor> {
 					const ported = (await list(namespace)).filter((d) => (d.port ?? []).length > 0);
 					for (const daemon of ported) {
 						if (now[daemon.name] !== "running") continue;
-						const host = `${daemon.name}.${namespace}.localhost`;
+						const host = appHost(daemon.name, namespace);
 						while (!(await routed(machine.proxyPort, host)) && Date.now() < until + 3000) {
 							await new Promise((resolve) => setTimeout(resolve, 200));
 						}
@@ -387,29 +400,19 @@ async function stateOf(daemon: Listed): Promise<DaemonState> {
 	return "stopped";
 }
 
-async function listening(port: number): Promise<boolean> {
-	for (const host of ["127.0.0.1", "::1"]) {
-		const ok = await new Promise<boolean>((resolve) => {
-			const socket = createConnection({ host, port });
-			socket.setTimeout(500);
-			socket.on("connect", () => {
-				socket.destroy();
-				resolve(true);
-			});
-			socket.on("timeout", () => {
-				socket.destroy();
-				resolve(false);
-			});
-			socket.on("error", () => resolve(false));
-		});
-		if (ok) return true;
-	}
-	return false;
+/** Whether a daemon listens on `port`, on either loopback address. */
+function listening(port: number): Promise<boolean> {
+	return answers(port, ["127.0.0.1", "::1"]);
 }
 
 /**
  * The definitions file. pitchfork's own `dir` key would make the proxy refuse a daemon that runs
  * outside the registered folder, so each daemon `cd`s into its folder itself.
+ *
+ * Each daemon is ready once `true` runs. pitchfork 2.34.0's delay readiness, the default, asks
+ * whether the process is live as the delay ends; with no delay that is mid-`exec` on macOS, which
+ * can read as dead, and then `pitchfork start` waits forever on a daemon that runs. basepad waits
+ * on daemons itself (`start`, a kind's `provision`), so readiness only has to be immediate.
  */
 function toml(daemons: Record<string, Daemon>): string {
 	return Object.entries(daemons)
@@ -417,6 +420,7 @@ function toml(daemons: Record<string, Daemon>): string {
 			const lines = [
 				`[daemons.${name}]`,
 				`run = ${JSON.stringify(`cd ${shellQuote(daemon.dir)} && ${daemon.run}`)}`,
+				`ready_cmd = "true"`,
 			];
 			if (daemon.port !== undefined) {
 				lines.push(`port = { expect = [${daemon.port}], bump = true }`);

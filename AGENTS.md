@@ -8,7 +8,7 @@ All tests are the `test` kind; there is no `e2e` or `check` kind yet.
 
 - `npm test`: every test. Builds `dist` first (`test/build.ts`), since CLI tests run the built bin. One file: `npx vitest run test/<file>.test.ts`.
 - `npm run check`: the gate CI runs: `biome check`, `tsc --noEmit` (which also checks the `@ts-expect-error` lines in `test/define-config.test.ts`), then `npm test`.
-- `npx biome check --write .`: format and fix lint.
+- `npx biome check --write .`: format and fix lint. Biome skips Markdown, whose front matter and tables its formatter mangles.
 
 Two seams, both `test`: pure modules called in process (Config, Layout, Hosts), and the built CLI in a sandbox (`test/sandbox.ts`). In-process config loading goes through Vite's TypeScript transform, not basepad's load hook, so anything about how a config file is loaded is tested through the CLI.
 

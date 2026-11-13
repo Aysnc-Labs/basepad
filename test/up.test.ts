@@ -4,7 +4,8 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { request } from "node:https";
 import { join, relative } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { configFile, type Result, type Sandbox, sandbox } from "./sandbox.ts";
+import { RESTART_WARNING } from "../src/supervisor.ts";
+import { configFile, freePort, type Result, type Sandbox, sandbox } from "./sandbox.ts";
 
 const echo = join(import.meta.dirname, "apps/echo.mjs");
 const node = (script: string) => `exec '${process.execPath}' '${script}'`;
@@ -53,36 +54,8 @@ async function files(dir: string): Promise<Map<string, { text: string; mtime: nu
 	return out;
 }
 
-/** GETs a URL through basepad's proxy, trusting only the sandbox's certificate authority. */
-async function get(url: string): Promise<{ cwd: string; port: number; pid: number }> {
-	const { hostname, port } = new URL(url);
-	const ca = await box.ca();
-	return new Promise((resolve, reject) => {
-		const req = request(
-			{
-				host: "127.0.0.1",
-				port,
-				servername: hostname,
-				headers: { host: `${hostname}:${port}` },
-				ca,
-			},
-			(res) => {
-				let body = "";
-				res.setEncoding("utf8").on("data", (chunk: string) => {
-					body += chunk;
-				});
-				res.on("end", () =>
-					res.statusCode === 200
-						? resolve(JSON.parse(body))
-						: reject(new Error(`${url}: ${res.statusCode} ${body}`)),
-				);
-			},
-		);
-		req.setTimeout(5000, () => req.destroy(new Error(`${url}: timed out`)));
-		req.on("error", reject);
-		req.end();
-	});
-}
+type Echo = { cwd: string; port: number; pid: number };
+const get = (url: string) => box.get<Echo>(url);
 
 /** Opens a WebSocket through the proxy, as a hot-reload client does, and returns its first message. */
 async function websocket(url: string): Promise<string> {
@@ -233,3 +206,15 @@ test("down stops the project's apps and deletes nothing", async () => {
 	expect(status.stdout).toContain(`web  ${url("web")}  stopped`);
 	expect(status.stdout).toContain(`cms  ${url("cms")}  stopped`);
 });
+
+test("up says so before a settings change restarts the supervisor, and only then", async () => {
+	expect(firstUp.stdout).not.toContain(RESTART_WARNING);
+	const other = String(await freePort());
+	const out = await box.basepadWith({ env: { BASEPAD_PROXY_PORT: other } }, shop, "up");
+	expect(out.stderr).toBe("");
+	expect(out.code).toBe(0);
+	expect(out.stdout.indexOf(RESTART_WARNING)).toBe(0);
+	expect(out.stdout).toContain(`web  https://web.shop.localhost:${other}  running`);
+	// Back on the sandbox's own port, so the supervisor is left as the file found it.
+	expect((await box.basepad(shop, "down")).code).toBe(0);
+}, 240_000); // Two restarts, and as root on Linux pitchfork's supervisor takes about 60 s to stop.

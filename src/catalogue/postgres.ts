@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
 import type { Kind } from "../catalogue.ts";
-import type { PostgresService, PostgresVersion } from "../index.ts";
 import { BasepadError, must, shellQuote } from "../internal/exec.ts";
 import { freePort, waitFor } from "../internal/ports.ts";
 import { serviceUser } from "../internal/service-user.ts";
@@ -22,11 +22,63 @@ const PASSWORD = "basepad";
 /** How long `up` waits for the server to answer before it gives up. */
 const READY_MS = 60_000;
 
-export const postgres: Kind<PostgresService> = {
+export type PostgresVersion = 17 | 18;
+
+/** A Postgres server of the project's own, with one database for this service. */
+export interface PostgresService {
+	kind: "postgres";
+	version: PostgresVersion;
+}
+
+/** A Postgres server of the project's own. `version` is 17 or 18; it defaults to 18. */
+export function postgres(options: { version?: PostgresVersion } = {}): PostgresService {
+	return { kind: "postgres", version: options.version ?? 18 };
+}
+
+/** What a Postgres service gives to `env`. The password is a placeholder: local connections are trusted. */
+export interface PostgresOutputs {
+	url: string;
+	host: string;
+	port: number;
+	user: string;
+	password: string;
+	database: string;
+}
+
+/** The names a Postgres service derives. */
+export interface PostgresNames {
+	/** The environment's database: `<name>_<key>`, hyphens made underscores. */
+	database: string;
+	/** The server's data folder, in the service's folder. */
+	data: string;
+}
+
+/** Postgres silently truncates identifiers past this many bytes. */
+const IDENTIFIER_MAX = 63;
+
+export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames> = {
+	schema: z.strictObject({
+		kind: z.literal("postgres"),
+		version: z.union([z.literal(17), z.literal(18)], {
+			error: "Postgres version must be 17 or 18",
+		}),
+	}),
+
+	names({ name, key, dir }) {
+		const database = `${name}_${key}`.replaceAll("-", "_");
+		const bytes = Buffer.byteLength(database);
+		if (bytes > IDENTIFIER_MAX) {
+			throw new BasepadError(
+				`\`name\` and service \`${key}\` make the database name "${database}", which is ${bytes} bytes; Postgres allows ${IDENTIFIER_MAX}. Shorten \`name\` or the service key.`,
+			);
+		}
+		return { database, data: join(dir, "data") };
+	},
+
 	async prepare(service, place) {
 		const pg = await installPostgres(service.version, place.machine.home);
 		const user = await serviceUser();
-		const data = join(place.dir, "data");
+		const { data } = place;
 		await mkdir(place.dir, { recursive: true });
 		await user.grant({ traverse: [pg.dir, place.dir], owned: [place.dir] });
 		const initialised = await readFile(join(data, "PG_VERSION"), "utf8").catch(() => undefined);
@@ -72,9 +124,9 @@ export const postgres: Kind<PostgresService> = {
 		};
 	},
 
-	async provision(service, place, { claim }) {
+	async provision(service, place, { claim, stopped }) {
 		const pg = await installPostgres(service.version, place.machine.home);
-		const data = join(place.dir, "data");
+		const { data } = place;
 		const port = await waitFor(
 			async () => {
 				const port = await runningPort(data);
@@ -84,6 +136,7 @@ export const postgres: Kind<PostgresService> = {
 			},
 			`Postgres for \`${place.key}\` didn't answer within ${READY_MS / 1000} s.`,
 			READY_MS,
+			stopped,
 		);
 		const sql = (text: string) => query(pg, port, text);
 		const db = place.database;
@@ -118,7 +171,7 @@ export const postgres: Kind<PostgresService> = {
 	},
 
 	async address(_service, place) {
-		const port = (await runningPort(join(place.dir, "data"))) ?? place.port;
+		const port = (await runningPort(place.data)) ?? place.port;
 		return `postgresql://${USER}@${HOST}:${port}/${place.database}`;
 	},
 };

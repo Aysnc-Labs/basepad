@@ -16,7 +16,7 @@ import { openSupervisor, type Supervisor } from "./supervisor.ts";
  */
 export async function setup({ flags, print }: Invocation): Promise<void> {
 	const here = machine(process.env);
-	const supervisor = await openSupervisor(here);
+	const supervisor = await openSupervisor(here, print);
 	await supervisor.serve();
 	const root = isRootOnLinux();
 	const stores = process.platform === "linux" ? await nssStores() : [];
