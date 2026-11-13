@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The mise basepad is tested against. The floor it supports is MISE_MIN_VERSION in src/versions.ts.
+  MISE_VERSION: 2026.11.5
+  # mise downloads tools from GitHub releases; a token avoids anonymous rate limits.
+  GITHUB_TOKEN: ${{ github.token }}
+
+jobs:
+  macos:
+    name: Check (macOS, as a user)
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install mise
+        # mise's own installer, which falls back to mise's mirror when a GitHub download fails.
+        run: |
+          curl -fsSL https://mise.run | MISE_VERSION="v$MISE_VERSION" MISE_QUIET=1 sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+      - run: mise trust --quiet && mise install
+      - run: npm ci
+      - run: npm run check
+
+  linux-root:
+    name: Check (Linux, as root)
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq curl ca-certificates git xz-utils >/dev/null
+      - uses: actions/checkout@v7
+      # The checkout is owned by the runner's user, not root; git refuses it otherwise.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install mise
+        # mise's own installer, which falls back to mise's mirror when a GitHub download fails.
+        run: |
+          curl -fsSL https://mise.run | MISE_VERSION="v$MISE_VERSION" MISE_QUIET=1 sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+      - run: mise trust --quiet && mise install
+      - run: id -u && npm ci
+      - run: npm run check

@@ -1,0 +1,44 @@
+{
+	"name": "@aysnc-labs/basepad",
+	"version": "0.0.0",
+	"description": "Local environments for a project, described in one committed config and run natively through mise.",
+	"license": "MIT",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Aysnc-Labs/basepad.git"
+	},
+	"bin": {
+		"basepad": "dist/launcher.js"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"dist"
+	],
+	"os": [
+		"darwin",
+		"linux"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"check": "biome check . && tsc --noEmit && node scripts/check-feature-map.ts && node --test scripts/check-feature-map.test.ts && npm test",
+		"lint": "biome check .",
+		"prepare": "npm run build",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"zod": "^4.6.7"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.6.6",
+		"@types/node": "^24.19.2",
+		"typescript": "^7.0.2",
+		"vitest": "^5.1.0"
+	}
+}

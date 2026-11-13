@@ -1,0 +1,17 @@
+{
+	"compilerOptions": {
+		"target": "es2024",
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"erasableSyntaxOnly": true,
+		"verbatimModuleSyntax": true,
+		"rewriteRelativeImportExtensions": true,
+		"skipLibCheck": true,
+		"types": ["node"],
+		"outDir": "dist",
+		"rootDir": "."
+	},
+	"include": ["src", "test", "vitest.config.ts"]
+}
