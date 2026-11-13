@@ -1,9 +1,10 @@
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Kind, Place, Snapshot } from "../catalogue.ts";
-import { BasepadError, must, shellQuote } from "../internal/exec.ts";
+import { BasepadError, exec, must, shellQuote } from "../internal/exec.ts";
 import { freePort, waitFor } from "../internal/ports.ts";
 import { serviceUser } from "../internal/service-user.ts";
 import { install, type Tool } from "../tools.ts";
@@ -298,8 +299,172 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			}
 			await sql(`drop database ${identifier(name)} with (force)`);
 		},
+
+		async import(service, place, source, confirm) {
+			const { pg, port, sql } = await own(service, place);
+			const from = await sourceOf(source);
+			const beside = importName(place);
+			await confirm(place.database);
+			// Left by an import that was interrupted.
+			await sql(`drop database if exists ${identifier(beside)} with (force)`);
+			await sql(`create database ${identifier(beside)}`);
+			try {
+				await restore(pg, port, beside, from);
+			} catch (error) {
+				await sql(`drop database if exists ${identifier(beside)} with (force)`);
+				if (!(error instanceof BasepadError)) throw error;
+				throw new BasepadError(
+					`Could not import ${from.description}; \`${place.database}\` is as it was.\n${error.message}${from.format === "plain" ? "\nA plain SQL file must load as is: one with other roles' owners or grants needs `pg_dump --no-owner --no-privileges`, or use a custom-format dump." : ""}`,
+				);
+			}
+			// Its clients are ended with it; they connect again to the import once it is renamed.
+			await sql(`drop database if exists ${identifier(place.database)} with (force)`);
+			await sql(`alter database ${identifier(beside)} rename to ${identifier(place.database)}`);
+			await stamp(sql, place.database, place.owner);
+			return from.description;
+		},
+
+		async export(service, place, file) {
+			const { pg, port } = await own(service, place);
+			const plain = file !== undefined && /\.sql$/i.test(file);
+			const args = [
+				...connection(port, place.database),
+				...(plain ? ["--format=plain", "--no-owner", "--no-privileges"] : ["--format=custom"]),
+			];
+			if (file === undefined) {
+				await toStdout(pg.bin("pg_dump"), args);
+			} else {
+				// Written beside and renamed, so a failed export never leaves half a dump at `file`.
+				const partial = `${file}.partial`;
+				try {
+					await must(pg.bin("pg_dump"), [...args, `--file=${partial}`], { env: clientEnv() });
+				} catch (error) {
+					await rm(partial, { force: true });
+					throw error;
+				}
+				await rename(partial, file);
+			}
+			return plain ? "plain SQL" : "a custom-format dump";
+		},
 	},
 };
+
+/** A source `db import` reads: a dump file in either format, or another server's database. */
+type Source =
+	| { format: "custom" | "plain"; file: string; description: string }
+	| { format: "url"; url: string; password: string | undefined; description: string };
+
+/**
+ * What `source` is: a `postgres://` URL, else a file, a custom-format dump when it starts with
+ * `PGDMP`, else plain SQL. A URL's password is kept apart, out of argv and messages.
+ */
+async function sourceOf(source: string): Promise<Source> {
+	if (/^postgres(ql)?:\/\//i.test(source)) {
+		let url: URL;
+		try {
+			url = new URL(source);
+		} catch {
+			throw new BasepadError(`\`${source}\` is not a URL basepad can read.`);
+		}
+		const password = url.password === "" ? undefined : decodeURIComponent(url.password);
+		url.password = "";
+		return {
+			format: "url",
+			url: url.href,
+			password,
+			description: `a copy of ${url.host}${url.pathname}`,
+		};
+	}
+	const file = await open(source).catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT") {
+			throw new BasepadError(
+				`There is no file ${source}. Import a dump file or a postgres:// URL.`,
+			);
+		}
+		throw error;
+	});
+	try {
+		if ((await file.stat()).isDirectory()) {
+			throw new BasepadError(`${source} is a folder. Import a dump file or a postgres:// URL.`);
+		}
+		const { buffer, bytesRead } = await file.read(Buffer.alloc(5), 0, 5, 0);
+		const start = buffer.subarray(0, bytesRead);
+		if (start.toString("latin1") === "PGDMP") {
+			return { format: "custom", file: source, description: `the custom-format dump ${source}` };
+		}
+		if (start[0] === 0x1f && start[1] === 0x8b) {
+			throw new BasepadError(`${source} is gzipped. Unzip it, then import that.`);
+		}
+		return { format: "plain", file: source, description: `the SQL file ${source}` };
+	} finally {
+		await file.close();
+	}
+}
+
+/**
+ * The database an import loads into before it takes the environment's database's place:
+ * `<database>~import`, never a snapshot (`@`) or a worktree's (`_`) of this environment.
+ */
+function importName(place: Place<PostgresNames>): string {
+	const name = `${place.database}~import`;
+	const bytes = Buffer.byteLength(name);
+	if (bytes > IDENTIFIER_MAX) {
+		throw new BasepadError(
+			`An import of \`${place.key}\` loads into "${name}" first, which is ${bytes} bytes; Postgres allows ${IDENTIFIER_MAX}. Shorten \`name\` or the service key.`,
+		);
+	}
+	return name;
+}
+
+/** Loads `from` into the empty database `to`, stopping at the first error. */
+async function restore(pg: Tool, port: number, to: string, from: Source): Promise<void> {
+	const into = connection(port, to);
+	// Owners and grants name roles this server lacks; everything here belongs to its superuser.
+	const pgRestore = [pg.bin("pg_restore"), "--no-owner", "--no-privileges", "--exit-on-error"];
+	if (from.format === "url") {
+		const env = { ...clientEnv(), ...(from.password ? { PGPASSWORD: from.password } : {}) };
+		// Not `must`: its message repeats the command, and the URL is the user's to show.
+		const out = await exec(
+			"bash",
+			[
+				"-c",
+				`set -o pipefail; ${shellQuote(pg.bin("pg_dump"))} --format=custom --dbname=${shellQuote(from.url)} | ${[...pgRestore, ...into].map(shellQuote).join(" ")}`,
+			],
+			{ env },
+		);
+		if (out.code !== 0) throw new BasepadError((out.stderr || out.stdout).trim());
+	} else if (from.format === "plain") {
+		await must(pg.bin("psql"), [...into, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", from.file], {
+			env: clientEnv(),
+		});
+	} else {
+		await must(pgRestore[0] as string, [...pgRestore.slice(1), ...into, from.file], {
+			env: clientEnv(),
+		});
+	}
+}
+
+/** Client arguments for database `database` on the server at `port`. */
+function connection(port: number, database: string): string[] {
+	return ["-h", HOST, "-p", String(port), "-U", USER, "-d", database];
+}
+
+/** Runs a program with its standard output as basepad's own, for a dump piped elsewhere. */
+function toStdout(file: string, args: string[]): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const child = spawn(file, args, { env: clientEnv(), stdio: ["ignore", "inherit", "pipe"] });
+		let stderr = "";
+		child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+			stderr += chunk;
+		});
+		child.on("error", reject);
+		child.on("close", (code) =>
+			code === 0
+				? resolve()
+				: reject(new BasepadError(`\`${file}\` failed (exit ${code}):\n${stderr.trim()}`)),
+		);
+	});
+}
 
 /**
  * A snapshot's database: `<database>@<label>`. No database basepad names has `@`, so a snapshot is
