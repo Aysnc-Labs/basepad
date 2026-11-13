@@ -426,7 +426,10 @@ export async function openSupervisor(
 			});
 			Promise.all(
 				ids.map((id) =>
-					run("logs", id, "-n", String(history), "--no-pager").then(
+					(history === 0
+						? Promise.resolve("")
+						: run("logs", id, "-n", String(history), "--no-pager")
+					).then(
 						(out) =>
 							out
 								.split("\n")

@@ -59,13 +59,38 @@ test("a part no longer shown loses its lines; its follower stops once it follows
 	expect(calls.map((c) => c.stopped)).toEqual([true, true]);
 });
 
-test("a part shown again is followed afresh, and its old follower's lines for it are not taken twice", () => {
+/** What the live followers tail: each shown part exactly once, and nothing else. */
+function tailed(calls: { ids: string[]; stopped: boolean }[]): string[] {
+	return calls
+		.filter((c) => !c.stopped)
+		.flatMap((c) => c.ids)
+		.sort();
+}
+
+test("each environment is followed on its own: removing a worktree stops exactly its follower", () => {
+	const { calls, follow } = supervisor();
+	const book = logBook(follow, 200, () => {});
+	book.follow(["shop.shop-1/web", "shop/db", "shop/web"]);
+	expect(calls.map((c) => c.ids)).toEqual([["shop.shop-1/web"], ["shop/db", "shop/web"]]);
+	book.follow(["shop/db", "shop/web"]);
+	expect(calls.map((c) => c.stopped)).toEqual([true, false]);
+	expect(tailed(calls)).toEqual(["shop/db", "shop/web"]);
+});
+
+test("a part gone from a follower's set is no longer tailed; the rest go on without their history again", () => {
 	const { calls, follow, print } = supervisor();
 	const book = logBook(follow, 200, () => {});
 	book.follow(["shop/api", "shop/web"]);
+	print("shop/api", "ready");
 	book.follow(["shop/api"]);
+	expect(tailed(calls)).toEqual(["shop/api"]);
+	expect(calls.at(-1)?.history).toBe(0);
+	print("shop/api", "GET / 200");
+	expect(texts(book, "shop/api")).toEqual(["ready", "GET / 200"]);
+	// Shown again, it is followed afresh, tailed once.
 	book.follow(["shop/api", "shop/web"]);
-	expect(calls.map((c) => c.ids)).toEqual([["shop/api", "shop/web"], ["shop/web"]]);
+	expect(tailed(calls)).toEqual(["shop/api", "shop/web"]);
+	expect(calls.at(-1)).toMatchObject({ ids: ["shop/web"], history: 200 });
 	print("shop/web", "GET / 200");
 	expect(texts(book, "shop/web")).toEqual(["GET / 200"]);
 });

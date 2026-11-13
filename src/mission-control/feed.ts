@@ -1,7 +1,7 @@
 import { kindOf, type Service } from "../catalogue.ts";
 import { loadProject, type Project } from "../config.ts";
 import { BasepadError } from "../internal/exec.ts";
-import { daemonId, layout, type Machine, namespaceOf, placeOf } from "../layout.ts";
+import { daemonId, layout, type Machine, namespaceOf, ofDaemon, placeOf } from "../layout.ts";
 import type { DaemonInfo, Supervisor } from "../supervisor.ts";
 import { hasChanges, listWorktrees, mainBranch } from "../worktrees.ts";
 import type { EnvironmentView, LogLine, Part, Snapshot } from "./model.ts";
@@ -152,7 +152,8 @@ export async function openFeed(options: {
  * Every shown part's output, followed live: the scrollback, by daemon id. `follow` sets the parts
  * shown. A part shown for the first time is followed from its last `history` lines; a part already
  * followed keeps its lines and their arrival numbers, so a paused stream stays where it is. A part
- * no longer shown loses its lines. `read` is told of each line.
+ * no longer shown loses its lines and is tailed no more. Each environment's parts are followed
+ * together. `read` is told of each line.
  */
 export function logBook(
 	follow: Supervisor["follow"],
@@ -172,30 +173,45 @@ export function logBook(
 	/** Which follower each shown id's lines are taken from. */
 	const owner = new Map<string, Follower>();
 	let seq = 0;
+	/** Starts following `ids`, from their last `lines` lines: their lines are taken from it. */
+	const start = (ids: string[], lines: number) => {
+		const follower: Follower = { ids: new Set(ids), stop: () => {} };
+		for (const id of ids) owner.set(id, follower);
+		follower.stop = follow(ids, lines, (entry) => {
+			// A part shown again has a follower of its own; an old one's copy is not taken.
+			if (owner.get(entry.id) !== follower) return;
+			const kept = logs.get(entry.id) ?? [];
+			kept.push({ seq: seq++, id: entry.id, time: entry.time, text: entry.text });
+			if (kept.length > KEEP * 1.5) kept.splice(0, kept.length - KEEP);
+			logs.set(entry.id, kept);
+			read();
+		});
+	};
 	return {
 		logs,
 		follow(ids) {
 			const shown = new Set(ids);
+			const shrunk = new Set<Follower>();
 			for (const [id, follower] of owner) {
 				if (shown.has(id)) continue;
 				owner.delete(id);
 				logs.delete(id);
 				follower.ids.delete(id);
-				if (follower.ids.size === 0) follower.stop();
+				shrunk.add(follower);
 			}
-			const added = ids.filter((id) => !owner.has(id));
-			if (added.length === 0) return;
-			const follower: Follower = { ids: new Set(added), stop: () => {} };
-			for (const id of added) owner.set(id, follower);
-			follower.stop = follow(added, history, (entry) => {
-				// A part shown again has a follower of its own; an old one's copy is not taken.
-				if (owner.get(entry.id) !== follower) return;
-				const lines = logs.get(entry.id) ?? [];
-				lines.push({ seq: seq++, id: entry.id, time: entry.time, text: entry.text });
-				if (lines.length > KEEP * 1.5) lines.splice(0, lines.length - KEEP);
-				logs.set(entry.id, lines);
-				read();
-			});
+			// A follower tails exactly what is shown: one that lost a part starts again on the rest,
+			// whose lines it already has.
+			for (const follower of shrunk) {
+				follower.stop();
+				if (follower.ids.size > 0) start([...follower.ids], 0);
+			}
+			// Each environment's new parts on a follower of their own, so a worktree removed stops
+			// exactly its own.
+			const added = Map.groupBy(
+				ids.filter((id) => !owner.has(id)),
+				(id) => ofDaemon(id).namespace,
+			);
+			for (const group of added.values()) start(group, history);
 		},
 		close() {
 			for (const follower of new Set(owner.values())) follower.stop();
