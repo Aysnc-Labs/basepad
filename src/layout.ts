@@ -45,8 +45,9 @@ export function isRootOnLinux(): boolean {
 
 /**
  * Every fact derived from the project's description and the machine: domains, URLs, starting ports,
- * database names and paths in basepad's home. The only place such names are computed. It rejects
- * names past their limits with the reason, and never truncates.
+ * paths in basepad's home, and each service kind's names (computed by its kind in the catalogue).
+ * The only place such names are computed. It rejects names past their limits with the reason, and
+ * never truncates.
  */
 export interface Layout {
 	apps: Record<
