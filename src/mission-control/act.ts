@@ -12,15 +12,50 @@ export interface Hands {
 	open(url: string): Promise<void>;
 	/** Puts text on the clipboard. Returns where it went (`the clipboard`). */
 	copy(text: string): Promise<string>;
+	/**
+	 * `basepad worktree add` and `worktree rm` themselves, run from main, saying what they print to
+	 * `print` rather than the terminal. Each rejects as its command fails.
+	 */
+	worktrees: {
+		add(print: (line: string) => void): Promise<void>;
+		remove(suffix: string, force: boolean, print: (line: string) => void): Promise<void>;
+	};
 }
 
 /** How long a start waits for each daemon to listen or fail before it says how it went. */
 const START_WAIT_MS = 10_000;
 
-/** Does what the developer asked. Resolves to what to tell them; never rejects. */
-export async function perform(intent: Intent, hands: Hands): Promise<string> {
+/**
+ * Does what the developer asked. Resolves to what to tell them; never rejects. A worktree's
+ * addition or removal, which takes a while, tells `progress` each line its command prints.
+ */
+export async function perform(
+	intent: Intent,
+	hands: Hands,
+	progress: (line: string) => void = () => {},
+): Promise<string> {
 	const { supervisor } = hands;
 	switch (intent.kind) {
+		case "add":
+		case "remove": {
+			// The command's last line says how it ended: where the worktree is, or what was removed.
+			let last = "";
+			const print = (text: string) => {
+				const line = text.split("\n").findLast((l) => l.trim() !== "");
+				if (line === undefined) return;
+				last = line;
+				progress(line);
+			};
+			const done =
+				intent.kind === "add"
+					? hands.worktrees.add(print)
+					: hands.worktrees.remove(intent.suffix, intent.force, print);
+			const what = intent.kind === "add" ? "add a worktree" : `remove ${intent.suffix}`;
+			return done.then(
+				() => last,
+				(error) => `Could not ${what}: ${firstAndLast(reason(error))}`,
+			);
+		}
 		case "open":
 			return hands.open(intent.url).then(
 				() => `Opened ${intent.url} in the browser.`,
@@ -54,6 +89,12 @@ export async function perform(intent: Intent, hands: Hands): Promise<string> {
 	}
 }
 
+/** A message of several lines as one: its first and last, which say what failed and what next. */
+function firstAndLast(message: string): string {
+	const lines = message.split("\n").filter((l) => l.trim() !== "");
+	return lines.length <= 2 ? lines.join(" ") : `${lines[0]} … ${lines.at(-1)}`;
+}
+
 function reason(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
@@ -65,6 +106,7 @@ function reason(error: unknown): string {
  */
 export function desktopHands(
 	supervisor: Hands["supervisor"],
+	worktrees: Hands["worktrees"],
 	terminal: { write(text: string): unknown },
 ): Hands {
 	const mac = process.platform === "darwin";
@@ -81,6 +123,7 @@ export function desktopHands(
 			];
 	return {
 		supervisor,
+		worktrees,
 		async open(url) {
 			await runWith(mac ? "open" : "xdg-open", [url]);
 		},

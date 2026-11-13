@@ -26,13 +26,30 @@ export interface FrameInput {
 	rows: number;
 	/** The clock, `HH:MM:SS`. */
 	now: string;
-	/** Whether to colour it; off for `NO_COLOR`. Meaning never rests on colour alone. */
-	color: boolean;
+	/** How to colour it: `none` for `NO_COLOR`; meaning never rests on colour alone. */
+	color: Colors;
+}
+
+/**
+ * The colours a frame is drawn in: `rgb`, the palette, which chalk fits to a terminal of 256
+ * colours; `16`, the terminal's own named colours, which its theme keeps legible; or `none`.
+ */
+export type Colors = "none" | "16" | "rgb";
+
+/**
+ * The colours for a terminal: none when `NO_COLOR` is set to anything but empty
+ * (https://no-color.org), which chalk ignores; else by chalk's colour `level` for the terminal.
+ */
+export function colorsFor(noColor: string | undefined, level: number): Colors {
+	if (noColor !== undefined && noColor !== "") return "none";
+	return level >= 2 ? "rgb" : level === 1 ? "16" : "none";
 }
 
 /** The smallest terminal the layout fits; below it the frame asks for more room. */
 export const MIN_COLS = 72;
 export const MIN_ROWS = 16;
+/** Below this many rows the frame is compact: no blank rows, tighter keys, fewer alert lines. */
+const SHORT_ROWS = 24;
 
 export function frame({ snapshot, view, cols, rows, now, color }: FrameInput): ReactElement {
 	const c = palette(color);
@@ -46,53 +63,74 @@ export function frame({ snapshot, view, cols, rows, now, color }: FrameInput): R
 	}
 	const env = selectedOf(snapshot, view);
 	if (env === undefined) return centred(cols, rows, c.mute, "Reading the supervisor…");
-	const alerts = alertLines(snapshot, cols, c);
-	const keys = footer(cols, c);
-	const { body, side, right, table } = sizes(snapshot, env, cols, rows);
+	const { top, bottom, body, side, right, table, short } = arrange(
+		snapshot,
+		view,
+		env,
+		cols,
+		rows,
+		now,
+		c,
+	);
 	return h(
 		Box,
 		{ flexDirection: "column", width: cols, height: rows },
-		header(snapshot, cols, now, c),
-		gap("g1"),
-		...alerts,
-		alerts.length > 0 ? gap("g2") : null,
+		...top,
 		h(
 			Box,
 			{ key: "body", flexDirection: "row", height: body },
-			sidebar(snapshot, view, env, side, body, c),
+			sidebar(snapshot, env, side, body, short, c),
 			gap("g3"),
 			h(
 				Box,
 				{ flexDirection: "column", width: right },
-				partsPanel(env, view, snapshot, right, table, c),
+				partsPanel(env, view, snapshot, right, table, short, c),
 				stream(env, view, snapshot, right, body - table, c),
 			),
 		),
-		view.notice === undefined
-			? gap("g4")
-			: line("notice", cols, [run(" "), run(view.notice, c.accent)]),
-		...keys,
+		...bottom,
 	);
 }
 
-/** Where the frame's pieces go: the body's height, the two columns' widths, the parts' height. */
-function sizes(snapshot: Snapshot, env: EnvironmentView, cols: number, rows: number) {
-	const failed = snapshot.environments.flatMap((e) => e.apps).filter((a) => a.state === "failed");
-	const keys = footer(cols, COLORS).length;
-	const body = rows - 3 - keys - failed.length - (failed.length > 0 ? 1 : 0);
+/**
+ * Where the frame's pieces go: the rows above the body (header, alerts) and below it (work under
+ * way, the notice or a question, the keys), the body's height, the two columns' widths and the
+ * parts panel's height.
+ */
+function arrange(
+	snapshot: Snapshot,
+	view: View,
+	env: EnvironmentView,
+	cols: number,
+	rows: number,
+	now: string,
+	c: Palette,
+) {
+	const short = rows < SHORT_ROWS;
+	const alerts = alertLines(snapshot, cols, short ? 1 : 3, c);
+	const top = [
+		header(snapshot, cols, now, c),
+		short ? null : gap("g1"),
+		...alerts,
+		alerts.length > 0 && !short ? gap("g2") : null,
+	].filter((e) => e !== null);
+	const said = status(snapshot, view, cols, short, c);
+	const bottom = [...(said.length === 0 && !short ? [gap("g4")] : said), ...footer(cols, short, c)];
+	const body = rows - top.length - bottom.length;
 	const side = Math.min(34, Math.max(24, Math.floor(cols * 0.2)));
 	const right = cols - side - 1;
-	const wanted = partsHeight(env);
+	const wanted = partsHeight(env, right - 4, short);
 	// The stream keeps at least a third of the body, so a long parts list never hides the logs.
-	const table = Math.min(wanted, Math.max(6, body - Math.max(6, Math.floor(body / 3))));
-	return { body, side, right, table };
+	const keep = Math.max(short ? 4 : 6, Math.floor(body / 3));
+	const table = Math.min(wanted, Math.max(short ? 3 : 6, body - keep));
+	return { top, bottom, body, side, right, table, short };
 }
 
 /** How many log lines the stream shows: what a page up or down moves by. */
 export function pageOf(snapshot: Snapshot, view: View, cols: number, rows: number): number {
 	const env = selectedOf(snapshot, view);
 	if (env === undefined || cols < MIN_COLS || rows < MIN_ROWS) return 10;
-	const { body, table } = sizes(snapshot, env, cols, rows);
+	const { body, table } = arrange(snapshot, view, env, cols, rows, "", palette("none"));
 	return Math.max(1, body - table - 2);
 }
 
@@ -134,8 +172,28 @@ const COLORS: Palette = {
 	parts: ["#7aa2f7", "#bb9af7", "#7dcfff", "#ff9e64", "#c3a6ff", "#73daca"],
 };
 
-function palette(on: boolean): Palette {
-	if (on) return COLORS;
+/**
+ * The terminal's own named colours, for one of 16: its theme sets them, so each is legible on its
+ * background, dark or light. Text keeps the terminal's own foreground.
+ */
+const NAMED: Palette = {
+	frame: "gray",
+	focus: "cyan",
+	text: undefined,
+	soft: undefined,
+	mute: "gray",
+	dim: "gray",
+	ok: "green",
+	warn: "yellow",
+	bad: "red",
+	accent: "cyan",
+	keyBg: "gray",
+	parts: ["blueBright", "magenta", "cyan", "magentaBright", "cyanBright", "blue"],
+};
+
+function palette(colors: Colors): Palette {
+	if (colors === "rgb") return COLORS;
+	if (colors === "16") return NAMED;
 	const none = Object.fromEntries(Object.keys(COLORS).map((key) => [key, undefined]));
 	return { ...(none as unknown as Palette), parts: [undefined] };
 }
@@ -216,6 +274,34 @@ function wrap(text: string, width: number): string[] {
 	}
 	out.push(rest.join(""));
 	return out;
+}
+
+/**
+ * `runs` in rows of at most `width` columns, broken between words, so a question or a notice is
+ * read whole rather than cut. A word longer than a row is broken within it.
+ */
+function flow(runs: Run[], width: number): Run[][] {
+	const rows: Run[][] = [[]];
+	let used = 0;
+	for (const r of runs) {
+		for (const word of r.text.split(/(?<= )/)) {
+			let rest = [...word];
+			while (rest.length > 0) {
+				const room = width - used;
+				const fits = rest.length <= room || rest.join("").trimEnd().length <= room;
+				if (!fits && used > 0) {
+					rows.push([]);
+					used = 0;
+					continue;
+				}
+				const piece = fits ? rest : rest.slice(0, room);
+				(rows[rows.length - 1] as Run[]).push({ ...r, text: piece.join("") });
+				used += piece.length;
+				rest = rest.slice(piece.length);
+			}
+		}
+	}
+	return rows;
 }
 
 function centred(cols: number, rows: number, color: string | undefined, text: string) {
@@ -346,21 +432,73 @@ function header(snapshot: Snapshot, cols: number, now: string, c: Palette): Reac
 	return line("header", cols, [...left, run(" ".repeat(fill)), ...right]);
 }
 
-/** A line for each failed app in any environment, so a crash is seen whatever is selected. */
-function alertLines(snapshot: Snapshot, cols: number, c: Palette): ReactElement[] {
-	return snapshot.environments.flatMap((env) =>
-		env.apps
-			.filter((a) => a.state === "failed")
-			.map((a) => {
-				const why = lastError(snapshot.logs.get(a.id));
-				return line(`alert ${a.id}`, cols, [
-					run(" ✖ ", c.bad, { bold: true }),
-					run(`${env.label} › ${a.name}`, c.bad, { bold: true }),
-					run(` exited (${a.error ?? "failed"})`, c.bad),
-					run(why === "" ? "" : `  ${why}`, c.soft),
-				]);
-			}),
+/**
+ * A line for each failed app in any environment, so a crash is seen whatever is selected: at most
+ * `most`, the last of which counts the rest.
+ */
+function alertLines(snapshot: Snapshot, cols: number, most: number, c: Palette): ReactElement[] {
+	const failed = snapshot.environments.flatMap((env) =>
+		env.apps.filter((a) => a.state === "failed").map((a) => ({ env, a })),
 	);
+	const shown = failed.length > most ? failed.slice(0, most) : failed;
+	return shown.map(({ env, a }, i) => {
+		const why = lastError(snapshot.logs.get(a.id));
+		const more = i === shown.length - 1 ? failed.length - shown.length : 0;
+		return line(`alert ${a.id}`, cols, [
+			run(" ✖ ", c.bad, { bold: true }),
+			run(`${env.label} › ${a.name}`, c.bad, { bold: true }),
+			run(` exited (${a.error ?? "failed"})`, c.bad),
+			run(more > 0 ? `  +${more} more failed` : "", c.bad, { bold: true }),
+			run(why === "" ? "" : `  ${why}`, c.soft),
+		]);
+	});
+}
+
+/**
+ * The rows above the keys: each worktree being added or removed with its command's last line, then
+ * a removal's question, or what the last key did. Questions and notices wrap rather than cut.
+ */
+function status(
+	snapshot: Snapshot,
+	view: View,
+	cols: number,
+	short: boolean,
+	c: Palette,
+): ReactElement[] {
+	const work = (snapshot.work ?? [])
+		.slice(0, short ? 1 : 2)
+		.map((w, i) =>
+			line(`work ${i}`, cols, [
+				run(" ◐ ", c.warn, { bold: true }),
+				run(w.title, c.warn, { bold: true }),
+				run(w.line === undefined ? "" : `  ${w.line}`, c.soft),
+			]),
+		);
+	const { confirm } = view;
+	let said: Run[] = [];
+	if (confirm?.step === "remove") {
+		said = [
+			run("Remove worktree ", c.text, { bold: true }),
+			run(confirm.suffix, c.bad, { bold: true }),
+			run("? Its apps, databases and git worktree go; its branch stays.  ", c.text),
+			run("y", c.bad, { bold: true }),
+			run(" remove · any other key keeps it", c.mute),
+		];
+	} else if (confirm?.step === "discard") {
+		said = [
+			run(confirm.suffix, c.bad, { bold: true }),
+			run(" has uncommitted changes, which removing it loses. ", c.bad, { bold: true }),
+			run("Type ", c.text),
+			run(confirm.suffix, c.text, { bold: true }),
+			run(" and enter to remove it anyway: ", c.text),
+			run(`${confirm.typed ?? ""}▏`, c.text, { bold: true }),
+			run("  esc keeps it", c.mute),
+		];
+	} else if (view.notice !== undefined) {
+		said = [run(view.notice, c.accent)];
+	}
+	const rows = said.length === 0 ? [] : flow(said, cols - 2).slice(0, short ? 2 : 3);
+	return [...work, ...rows.map((runs, i) => line(`said ${i}`, cols, [run(" "), ...runs]))];
 }
 
 /** Every key with what it does, as many to a row as fit. */
@@ -372,6 +510,8 @@ const KEYS: [string, string][] = [
 	["r", "restart"],
 	["o", "open"],
 	["c", "copy"],
+	["a", "add worktree"],
+	["d", "remove worktree"],
 	["v", "side by side"],
 	["/", "search"],
 	["n N", "next match"],
@@ -380,13 +520,15 @@ const KEYS: [string, string][] = [
 	["q", "close"],
 ];
 
-/** The keys, in rows: each key's label stays with its key. */
-function footer(cols: number, c: Palette): ReactElement[] {
+/** The keys, in rows: each key's label stays with its key. Short, they sit closer together. */
+function footer(cols: number, short: boolean, c: Palette): ReactElement[] {
 	const rows: Run[][] = [[run(" ")]];
+	const space = short ? "  " : "   ";
 	for (const [k, label] of KEYS) {
-		const item = [run(` ${k} `, c.text, { bg: c.keyBg, bold: true }), run(` ${label}   `, c.mute)];
+		const key = short ? k : ` ${k} `;
+		const item = [run(key, c.text, { bg: c.keyBg, bold: true }), run(` ${label}${space}`, c.mute)];
 		let last = rows[rows.length - 1] as Run[];
-		if (widthOf(last) + widthOf(item) - 3 >= cols && last.length > 1) {
+		if (widthOf(last) + widthOf(item) - space.length >= cols && last.length > 1) {
 			last = [run(" ")];
 			rows.push(last);
 		}
@@ -403,45 +545,49 @@ function footer(cols: number, c: Palette): ReactElement[] {
 	});
 }
 
-/** Environments down the left: state glyph and name, the branch whole, the state in words. */
+/**
+ * Environments down the left: state glyph and name, the branch whole, the state in words. When
+ * they do not all fit, a window of them that holds the selected one, with how many more above and
+ * below.
+ */
 function sidebar(
 	snapshot: Snapshot,
-	view: View,
 	selected: EnvironmentView,
 	width: number,
 	height: number,
+	short: boolean,
 	c: Palette,
 ): ReactElement {
 	const inner = width - 4;
-	const rows: ReactElement[] = [];
-	for (const env of snapshot.environments) {
+	const removing = new Set((snapshot.work ?? []).map((w) => w.namespace));
+	const blocks = snapshot.environments.map((env) => {
 		const on = env === selected;
 		const s = rollup(env);
 		const look = lookOf(s.state, c);
 		const bar = on ? run("▌", c.accent) : run(" ");
 		const k = env.namespace;
-		rows.push(
+		const rows = [
 			line(`${k} name`, inner, [
 				bar,
 				run(`${look.glyph} `, look.color),
 				run(env.label, on ? c.text : c.soft, { bold: on }),
 			]),
-		);
-		wrap(env.branch ?? "(detached)", inner - 3).forEach((piece, i) => {
-			rows.push(
+			...wrap(env.branch ?? "(detached)", inner - 3).map((piece, i) =>
 				line(`${k} branch ${i}`, inner, [bar, run("  "), run(piece, on ? c.soft : c.mute)]),
-			);
-		});
-		rows.push(
+			),
 			line(`${k} note`, inner, [
 				bar,
 				run("  "),
-				run(s.note, s.state === "running" ? c.mute : look.color),
+				removing.has(k)
+					? run("being removed…", c.warn)
+					: run(s.note, s.state === "running" ? c.mute : look.color),
 			]),
-		);
-		rows.push(gap(`${k} gap`));
-	}
-	void view;
+		];
+		if (!short) rows.push(gap(`${k} gap`));
+		return rows;
+	});
+	const at = snapshot.environments.indexOf(selected);
+	const rows = windowed(blocks, at, height - 2, inner, c);
 	return panel(
 		"sidebar",
 		width,
@@ -453,11 +599,108 @@ function sidebar(
 	);
 }
 
-/** The panel's height for an environment's parts: a row each, headings, a gap, its border. */
-function partsHeight(env: EnvironmentView): number {
+/**
+ * Blocks of rows (an environment, a part) in `room` rows: all when they fit, else a window that
+ * holds block `at`, and a row above and below saying how many more there are.
+ */
+function windowed(
+	blocks: ReactElement[][],
+	at: number,
+	room: number,
+	width: number,
+	c: Palette,
+): ReactElement[] {
+	const size = (from: number, to: number) =>
+		blocks.slice(from, to + 1).reduce((n, b) => n + b.length, 0);
+	const marks = (from: number, to: number) => (from > 0 ? 1 : 0) + (to < blocks.length - 1 ? 1 : 0);
+	// From the first block, moved down until block `at` fits; then down as far as room allows.
+	let from = 0;
+	while (from < at && size(from, at) + marks(from, at) > room) from++;
+	let to = Math.max(at, 0);
+	while (to + 1 < blocks.length && size(from, to + 1) + marks(from, to + 1) <= room) to++;
+	const more = (key: string, text: string) => line(key, width, [run(text, c.mute)]);
+	return [
+		...(from > 0 ? [more("above", `↑ ${from} more`)] : []),
+		...blocks.slice(from, to + 1).flat(),
+		...(to < blocks.length - 1 ? [more("below", `↓ ${blocks.length - 1 - to} more`)] : []),
+	];
+}
+
+/** The panel's height for an environment's parts: their rows, and its border. */
+function partsHeight(env: EnvironmentView, inner: number, short: boolean): number {
 	if (env.problem !== undefined) return 6;
-	const groups = (env.apps.length > 0 ? 1 : 0) + (env.services.length > 0 ? 1 : 0);
-	return 2 + env.apps.length + env.services.length + groups + Math.max(0, groups - 1) || 3;
+	const rows = partBlocks(env, inner, short).reduce((n, b) => n + b.length, 0);
+	return 2 + Math.max(1, rows);
+}
+
+/** One row of the parts panel: its runs, none for a blank row. */
+interface Row {
+	key: string;
+	runs: Run[];
+}
+
+/**
+ * An environment's parts, a block of rows each, `inner` columns wide: apps, then services, each
+ * group under a heading unless `short`. A part's address is never cut: where it does not fit
+ * beside its name, it goes on rows of its own below it, wrapped where it must be.
+ */
+function partBlocks(
+	env: EnvironmentView,
+	inner: number,
+	short: boolean,
+	view?: View,
+	snapshot?: Snapshot,
+	c: Palette = palette("none"),
+): Row[][] {
+	// Narrow, names are not lined up past their own width, and the state word gives way, so an
+	// address fits beside its name; the glyph still says the state.
+	const nameWidth =
+		Math.max(inner < 60 ? 0 : 8, ...partsOf(env).map((p) => [...p.name].length)) + 2;
+	const words = inner >= 96;
+	const block = (part: Part): Row[] => {
+		const look = lookOf(part.state, c);
+		const on = view?.focus === part.id;
+		const lead = [
+			run(on ? "› " : "  ", c.accent, { bold: true }),
+			run(`${look.glyph} `, look.color),
+			run(pad(part.name, nameWidth), partColor(env, part.id, c), { bold: true }),
+			...(words ? [run(pad(look.word, 10), look.color)] : []),
+		];
+		if (part.state === "failed") {
+			const why = lastError(snapshot?.logs.get(part.id));
+			const error = [run(part.error ?? "exited", c.bad), run(`  ${why}`, c.soft)];
+			return [{ key: part.id, runs: [...lead, ...error] }];
+		}
+		const color = part.state === "running" ? c.text : c.soft;
+		const detail =
+			part.state === "idle"
+				? run("   starts on its first request", c.dim)
+				: run(part.note === undefined ? "" : `   ${part.note}`, c.dim);
+		const whole = [...lead, run(part.address, color)];
+		if (widthOf(whole) <= inner) {
+			// The detail shows where it fits whole.
+			const fits = widthOf(whole) + widthOf([detail]) <= inner;
+			return [{ key: part.id, runs: fits ? [...whole, detail] : whole }];
+		}
+		const indent = "    ";
+		return [
+			{ key: part.id, runs: [...lead, { ...detail, text: detail.text.trimStart() }] },
+			...wrap(part.address, inner - indent.length).map((piece, i) => ({
+				key: `${part.id} ${i}`,
+				runs: [run(indent), run(piece, color)],
+			})),
+		];
+	};
+	const group = (heading: string, parts: Part[], first: boolean): Row[][] =>
+		parts.map((part, i) => [
+			...(i > 0 || short ? [] : first ? [] : [{ key: `${heading} gap`, runs: [] }]),
+			...(i > 0 || short ? [] : [{ key: heading, runs: [run(heading, c.dim, { bold: true })] }]),
+			...block(part),
+		]);
+	return [
+		...group("APPS", env.apps, true),
+		...group("SERVICES", env.services, env.apps.length === 0),
+	];
 }
 
 /** The selected environment's apps and services: state, address, and a detail. */
@@ -467,39 +710,11 @@ function partsPanel(
 	snapshot: Snapshot,
 	width: number,
 	height: number,
+	short: boolean,
 	c: Palette,
 ): ReactElement {
 	const inner = width - 4;
-	const rows: ReactElement[] = [];
-	const nameWidth = Math.max(8, ...partsOf(env).map((p) => [...p.name].length)) + 2;
-	// Narrow, the state word gives way so an address fits whole; the glyph still says the state.
-	const words = inner >= 96;
-	const heading = (key: string, text: string) =>
-		line(key, inner, [run(text, c.dim, { bold: true })]);
-	const row = (part: Part, isApp: boolean) => {
-		const look = lookOf(part.state, c);
-		const on = view.focus === part.id;
-		const detail =
-			part.state === "failed"
-				? [
-						run(`${part.error ?? "exited"}`, c.bad),
-						run(`  ${lastError(snapshot.logs.get(part.id))}`, c.soft),
-					]
-				: part.state === "idle"
-					? [run(part.address, c.soft), run("   starts on its first request", c.dim)]
-					: [
-							run(part.address, part.state === "running" ? c.text : c.soft),
-							run(part.note === undefined ? "" : `   ${part.note}`, c.dim),
-						];
-		void isApp;
-		return line(part.id, inner, [
-			run(on ? "› " : "  ", c.accent, { bold: true }),
-			run(`${look.glyph} `, look.color),
-			run(pad(part.name, nameWidth), partColor(env, part.id, c), { bold: true }),
-			...(words ? [run(pad(look.word, 10), look.color)] : []),
-			...detail,
-		]);
-	};
+	let rows: ReactElement[] = [];
 	if (env.problem !== undefined) {
 		for (const [i, piece] of wrap(env.problem, inner)
 			.slice(0, height - 2)
@@ -509,15 +724,11 @@ function partsPanel(
 	} else if (partsOf(env).length === 0) {
 		rows.push(line("none", inner, [run("No apps or services in its config.", c.mute)]));
 	} else {
-		if (env.apps.length > 0) {
-			rows.push(heading("apps", "APPS"));
-			for (const part of env.apps) rows.push(row(part, true));
-		}
-		if (env.services.length > 0) {
-			if (env.apps.length > 0) rows.push(gap("services gap"));
-			rows.push(heading("services", "SERVICES"));
-			for (const part of env.services) rows.push(row(part, false));
-		}
+		const blocks = partBlocks(env, inner, short, view, snapshot, c).map((b) =>
+			b.map(({ key, runs }) => (runs.length === 0 ? gap(key) : line(key, inner, runs))),
+		);
+		const at = partsOf(env).findIndex((part) => part.id === view.focus);
+		rows = windowed(blocks, Math.max(0, at), height - 2, inner, c);
 	}
 	return panel(
 		"parts",

@@ -3,7 +3,7 @@ import { loadProject, type Project } from "../config.ts";
 import { BasepadError } from "../internal/exec.ts";
 import { daemonId, layout, type Machine, placeOf } from "../layout.ts";
 import type { DaemonInfo, LogEntry, Supervisor } from "../supervisor.ts";
-import { listWorktrees, mainBranch } from "../worktrees.ts";
+import { hasChanges, listWorktrees, mainBranch } from "../worktrees.ts";
 import type { EnvironmentView, LogLine, Part, Snapshot } from "./model.ts";
 
 /**
@@ -16,6 +16,11 @@ export interface Feed {
 	snapshot(): Snapshot;
 	/** Reads states again now, as after an action, rather than on the next tick. */
 	refresh(): void;
+	/**
+	 * Says a worktree is being added: until the returned function is called, a worktree that
+	 * appears is not shown, as its databases, env files and setup are not done yet.
+	 */
+	adding(): () => void;
 	close(): void;
 }
 
@@ -49,6 +54,9 @@ export async function openFeed(options: {
 	let following = "";
 	let unfollow = () => {};
 	let closed = false;
+	/** While worktrees are being added, the suffixes of those there before: only they show. */
+	let before: Set<string> | undefined;
+	let additions = 0;
 
 	const take = (entry: LogEntry) => {
 		const lines = logs.get(entry.id) ?? [];
@@ -88,7 +96,14 @@ export async function openFeed(options: {
 		]);
 		const byId = new Map(daemons.map((daemon) => [daemon.id, daemon]));
 		const next = [await environmentOf(main, undefined, branch, main.root, byId, machine)];
-		for (const tree of trees.filter((t) => t.present)) {
+		const shown = trees.filter((t) => t.present && (before?.has(t.suffix) ?? true));
+		// A worktree removed and made again under its suffix reads its config again.
+		for (const root of configs.keys()) {
+			if (!shown.some((t) => t.root === root)) configs.delete(root);
+		}
+		const changes = await Promise.all(shown.map((t) => hasChanges(t.path).catch(() => undefined)));
+		for (const [i, tree] of shown.entries()) {
+			const changed = changes[i] === undefined ? {} : { changes: changes[i] };
 			const config = await configOf(tree.root);
 			next.push(
 				typeof config === "string"
@@ -100,8 +115,12 @@ export async function openFeed(options: {
 							apps: [],
 							services: [],
 							problem: config,
+							...changed,
 						}
-					: await environmentOf(config, tree.suffix, tree.branch, tree.root, byId, machine),
+					: {
+							...(await environmentOf(config, tree.suffix, tree.branch, tree.root, byId, machine)),
+							...changed,
+						},
 			);
 		}
 		environments = next;
@@ -136,6 +155,18 @@ export async function openFeed(options: {
 		},
 		refresh() {
 			void tick();
+		},
+		adding() {
+			if (additions++ === 0) {
+				before = new Set(environments.slice(1).map((env) => env.label));
+			}
+			let released = false;
+			return () => {
+				if (released) return;
+				released = true;
+				if (--additions === 0) before = undefined;
+				void tick();
+			};
 		},
 		close() {
 			closed = true;

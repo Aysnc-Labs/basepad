@@ -272,9 +272,11 @@ More on `up`:
   - `↑` `↓` pick an environment; `←` `→` pick one of its apps or services, and narrow the logs to it.
   - `s`, `x` and `r` start, stop and restart the selected app or service; with none selected, the whole environment (main's apps and services, or a worktree's apps, as `up` and `down` do). A stopped app stays stopped: a request does not start it again until `s`.
   - `o` opens the selected app in the browser; `c` copies the selected address (a database's URL, say). With none selected, both take the environment's first app.
+  - `a` adds a worktree, as `basepad worktree add` does; it shows in the list once it is made, and its progress shows meanwhile. `d` removes the selected worktree, as `basepad worktree rm` does, after you press `y`. One with uncommitted changes asks again: type its name and press enter to lose them. While a worktree is being added or removed, `q` waits for it to finish.
   - `v` shows the apps' logs side by side, a column each.
   - `PgUp` `PgDn` scroll back, which pauses the logs; `End` goes back to live. `/` searches them (ignoring case), `n` and `N` step to older and newer matches.
   - `esc` steps back: out of a search or a pause, then to all logs. `q` or Ctrl-C closes it and leaves everything running; `up` again reopens it. Run `up` in a worktree's folder and it opens on that worktree.
+  - It fits terminals down to 72×16 and follows a resize; smaller, it says how big it needs to be. It uses your terminal's own colours where it has only 16, and none with `NO_COLOR` set.
 - `up -d` returns once started, without mission control, as `up` does with no terminal attached (scripts, CI, agents).
 - An app or service that exits on start is shown with its last output and the command for its full log, and `up` exits 1. It works the same with no terminal attached, so CI fails loudly.
 - An app still starting after 5 seconds is shown as `starting`; `up` doesn't wait for it.
