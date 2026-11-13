@@ -2,8 +2,8 @@ import { expect, test } from "vitest";
 import { defineConfig, postgres } from "../src/index.ts";
 
 test("postgres() defaults to version 18", () => {
-	expect(postgres()).toEqual({ kind: "postgres", version: 18 });
-	expect(postgres({ version: 17 })).toEqual({ kind: "postgres", version: 17 });
+	expect(postgres()).toEqual({ kind: "postgres", version: 18, worktree: "copy" });
+	expect(postgres({ version: 17 })).toEqual({ kind: "postgres", version: 17, worktree: "copy" });
 });
 
 // `tsc --noEmit` checks the rest: `env` is typed by the config's own services and apps.

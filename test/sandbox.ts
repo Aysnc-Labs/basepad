@@ -174,9 +174,15 @@ export async function sandbox(): Promise<Sandbox> {
 					PITCHFORK_STATE_DIR: join(home, "state"),
 					PITCHFORK_CONFIG_DIR: join(home, "config"),
 					PITCHFORK_LOGS_DIR: join(home, "logs"),
+					// As in src/tools.ts: a failed skill fetch must not fail the stop.
+					MISE_SKILLS_FETCH: "false",
 				};
 				await exec("mise", [...pitchfork, "stop", "--all"], root, own);
-				await exec("mise", [...pitchfork, "supervisor", "stop"], root, own);
+				const stopped = await exec("mise", [...pitchfork, "supervisor", "stop"], root, own);
+				// A supervisor left running holds the proxy's port and outlives the test.
+				if (stopped.code !== 0) {
+					throw new Error(`dispose: the supervisor in ${root} did not stop:\n${stopped.stderr}`);
+				}
 			}
 			await rm(root, { recursive: true, force: true });
 		},
