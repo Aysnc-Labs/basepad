@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { kindOf, type NamesOf, type Place, type Service } from "./catalogue.ts";
+import { kindOf, type NamesOf, type Place, type Service, type Web } from "./catalogue.ts";
 import type { Project } from "./config.ts";
 import { BasepadError } from "./internal/exec.ts";
 
@@ -83,6 +83,8 @@ export type ServicePlace = {
 	dir: string;
 	/** Its daemon with the supervisor, `<name>/<key>` in main's namespace: what an app depends on. */
 	daemon: string;
+	/** Its domain, `<key>.<name>.localhost` in main and every worktree, when its kind asks for one. */
+	web?: Web;
 } & NamesOf<Service>;
 
 /** A DNS label's limit, in characters. */
@@ -124,6 +126,9 @@ export function layout(
 	if (suffix !== undefined && suffix.length > LABEL_MAX) {
 		fail(`the worktree suffix is ${suffix.length} characters; a domain label allows ${LABEL_MAX}.`);
 	}
+	/** What `env` sees. The one place the URL form is decided. */
+	const urlOf = (host: string) =>
+		`https://${host}${machine.portFree ? "" : `:${machine.proxyPort}`}`;
 	const apps: Layout["apps"] = {};
 	const block = APP_PORT_BASE + (hash(name) % APP_PORT_BLOCKS) * APP_PORT_BLOCK;
 	for (const [i, key] of Object.keys(project.apps).entries()) {
@@ -131,8 +136,7 @@ export function layout(
 			fail(`app \`${key}\` is ${key.length} characters; a domain label allows ${LABEL_MAX}.`);
 		}
 		const host = appHost(key, name, suffix);
-		const port = machine.portFree ? "" : `:${machine.proxyPort}`;
-		apps[key] = { host, url: `https://${host}${port}`, port: block + (i % APP_PORT_BLOCK) };
+		apps[key] = { host, url: urlOf(host), port: block + (i % APP_PORT_BLOCK) };
 	}
 	const services: Layout["services"] = {};
 	for (const [key, service] of Object.entries(project.services)) {
@@ -144,11 +148,20 @@ export function layout(
 			if (error instanceof BasepadError) fail(error.message);
 			throw error;
 		}
+		const web = kindOf(service).web === true;
+		// The service is main's, so its domain is main's in every environment, as its daemon is.
+		const host = appHost(key, name);
+		if (web && key in project.apps) {
+			fail(
+				`service \`${key}\` is served at ${host}, which is app \`${key}\`'s domain. Rename one.`,
+			);
+		}
 		services[key] = {
 			...names,
-			port: SERVICE_PORT_BASE + (hash(`${name}.${key}`) % SERVICE_PORTS),
+			port: servicePort(`${name}.${key}`),
 			dir,
 			daemon: daemonId(name, key),
+			...(web ? { web: { host, url: urlOf(host), port: servicePort(`${name}.${key}.web`) } } : {}),
 		};
 	}
 	// Last, so a name main itself cannot have is reported in main's words.
@@ -276,6 +289,11 @@ export function supervisorPaths(machine: Pick<Machine, "home">): {
 		logs: join(root, "logs"),
 		ca: join(state, "proxy", "ca.pem"),
 	};
+}
+
+/** A service's starting port, spread over the service range by `seed`. */
+function servicePort(seed: string): number {
+	return SERVICE_PORT_BASE + (hash(seed) % SERVICE_PORTS);
 }
 
 /** FNV-1a: a stable spread of names over port blocks. */

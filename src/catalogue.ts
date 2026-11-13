@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { mailpitKind } from "./catalogue/mailpit.ts";
 import { postgresKind } from "./catalogue/postgres.ts";
 import type { Machine } from "./layout.ts";
 import type { Daemon } from "./supervisor.ts";
@@ -41,8 +42,22 @@ export type Place<N = unknown> = {
 	dir: string;
 	/** The port first tried; a taken one is passed over. */
 	port: number;
+	/** Its domain, from Layout, when its kind asks for one (`Kind.web`). */
+	web?: Web;
 	machine: Machine;
 } & N;
+
+/**
+ * A service's domain: its web page, served by the supervisor's proxy over HTTPS at
+ * `<key>.<name>.localhost`, one for main and every worktree, as the service is main's.
+ */
+export interface Web {
+	host: string;
+	/** What `env` and `status` show. */
+	url: string;
+	/** The port its daemon is first offered as `PORT`, which it serves its page on. */
+	port: number;
+}
 
 /** One piece of a worktree's data on main's server, such as a database. */
 export interface WorktreeData {
@@ -56,6 +71,11 @@ export interface WorktreeData {
 export interface Kind<S extends ServiceBase, O, N> {
 	/** Validates one config entry of this kind: a strict object whose `kind` is a literal. */
 	schema: z.ZodType<S>;
+	/**
+	 * Asks for a domain: Layout puts `web` in the service's place, and the daemon `prepare` returns
+	 * must take `web.port` as its `port`, so the proxy serves it there.
+	 */
+	web?: true;
 	/**
 	 * The names this kind derives for one service, in main or in a worktree. Pure, so Layout calls
 	 * it. Throws a `BasepadError` with the reason when a name is past the kind's limit; never
@@ -92,7 +112,7 @@ export interface Kind<S extends ServiceBase, O, N> {
 }
 
 /** Every kind, by the name its factory has in a config. */
-const CATALOGUE = { postgres: postgresKind };
+const CATALOGUE = { postgres: postgresKind, mailpit: mailpitKind };
 type Catalogue = typeof CATALOGUE;
 
 /** Something basepad provides to an environment: one config entry of a kind in the catalogue. */
