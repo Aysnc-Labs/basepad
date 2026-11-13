@@ -21,9 +21,13 @@ mkdir -p "$HOME/.claude/skills"
 rm -rf "$HOME/.claude/skills/aysnc" "$HOME/.claude/skills/aysnc-skills"
 git clone --quiet --depth 1 https://github.com/Aysnc-Labs/skills.git "$HOME/.claude/skills/aysnc-skills"
 
-# mise, then the Node 24 that mise.toml pins, linked into ~/.local/bin, which comes before the image's
+# mise, then the Node 24 that mise.toml pins, put on PATH through ~/.local/bin, which comes before the image's
 # own Node on PATH. basepad installs Postgres and pitchfork itself, through mise, on first `up`.
 curl -fsSL https://mise.run | sh
 export PATH=$HOME/.local/bin:$PATH
 (cd "$repo" && mise trust --yes && mise install)
-for bin in node npm npx; do ln -sf "$(cd "$repo" && mise which $bin)" "$HOME/.local/bin/$bin"; done
+# An exec script, not a symlink: mise's npm finds npm-cli.js relative to its own path.
+for bin in node npm npx; do
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$(cd "$repo" && mise which $bin)" >"$HOME/.local/bin/$bin"
+  chmod +x "$HOME/.local/bin/$bin"
+done
