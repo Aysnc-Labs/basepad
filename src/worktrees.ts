@@ -168,6 +168,13 @@ export async function listWorktrees(main: Project): Promise<Listed[]> {
 	}));
 }
 
+/** Main's own branch, as git lists it; none when detached or outside git. */
+export async function mainBranch(main: Project): Promise<string | undefined> {
+	const top = await toplevel(main.root);
+	if (top === undefined) return undefined;
+	return (await checkoutsOf(top))[0]?.branch;
+}
+
 /** Whether a git worktree's folder has changes git would lose: modified, staged or untracked files. */
 export async function hasChanges(path: string): Promise<boolean> {
 	return (await git(path, ["status", "--porcelain"])).trim() !== "";

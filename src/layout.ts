@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { kindOf, type NamesOf, type Service } from "./catalogue.ts";
+import { kindOf, type NamesOf, type Place, type Service } from "./catalogue.ts";
 import type { Project } from "./config.ts";
 import { BasepadError } from "./internal/exec.ts";
 
@@ -176,6 +176,18 @@ export function layout(
 		mainNamespace: name,
 		...(suffix === undefined ? {} : { suffix }),
 	};
+}
+
+/** Where one of the project's services lives in the layout `lay`, for its kind in the catalogue. */
+export function placeOf(
+	project: Pick<Project, "name" | "root">,
+	lay: Layout,
+	machine: Machine,
+	key: string,
+): Place<NamesOf<Service>> {
+	const service = lay.services[key] as ServicePlace;
+	const suffix = lay.suffix === undefined ? {} : { suffix: lay.suffix };
+	return { name: project.name, key, owner: project.root, machine, ...suffix, ...service };
 }
 
 /**

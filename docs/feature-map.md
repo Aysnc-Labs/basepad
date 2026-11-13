@@ -19,6 +19,9 @@ flowchart LR
   Layout --> Catalogue
   Commands --> Catalogue["catalogue: postgres"]
   Commands --> Supervisor
+  Commands -- "up, on a terminal" --> MissionControl["mission control (Ink)"]
+  MissionControl -- "reads states, follows logs" --> Supervisor
+  MissionControl --> Worktrees
   Commands --> EnvFiles["env files"]
   Supervisor -- "mise exec" --> Pitchfork["pitchfork (isolated)"]
   Catalogue --> Tools
@@ -56,6 +59,12 @@ Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.lo
 Entry: `basepad up [-d] [--claim]`, `basepad down`, `basepad status`
 Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md)
+
+### Mission control
+
+Purpose: the terminal view `up` opens: every environment (main and each worktree) with its branch and a state at a glance, the selected one's apps and services with state and address, and one merged, colour-coded live log stream. Read-only: `q` or Ctrl-C closes it and stops nothing. A pure frame (state to Ink element) and a pure reducer (key to view), behind one feed (git, configs, the supervisor's states and `pitchfork logs --tail`) and one terminal adapter.
+Entry: `basepad up` on a terminal (`-d`, or no terminal, skips it)
+Paths: src/mission-control/, src/supervisor.ts, src/commands.ts
 
 ### `basepad worktree add`
 
