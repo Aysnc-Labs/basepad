@@ -268,7 +268,13 @@ Run them anywhere in the project, as `npx basepad <command>`. `basepad --help` l
 More on `up`:
 
 - A second `up` starts only what isn't running, so it is fast and safe to repeat.
-- On a terminal, `up` then opens mission control: every environment (main and each worktree) with its branch and state, the selected one's apps and services with state and address, and their logs live. `↑` `↓` pick an environment, `←` `→` narrow the logs to one app or service, `esc` shows them all again. `q` or Ctrl-C closes it and leaves everything running; `up` again reopens it. Run `up` in a worktree's folder and it opens on that worktree.
+- On a terminal, `up` then opens mission control: every environment (main and each worktree) with its branch and state, the selected one's apps and services with state and address, and their logs live. Its keys, also listed at its foot:
+  - `↑` `↓` pick an environment; `←` `→` pick one of its apps or services, and narrow the logs to it.
+  - `s`, `x` and `r` start, stop and restart the selected app or service; with none selected, the whole environment (main's apps and services, or a worktree's apps, as `up` and `down` do). A stopped app stays stopped: a request does not start it again until `s`.
+  - `o` opens the selected app in the browser; `c` copies the selected address (a database's URL, say). With none selected, both take the environment's first app.
+  - `v` shows the apps' logs side by side, a column each.
+  - `PgUp` `PgDn` scroll back, which pauses the logs; `End` goes back to live. `/` searches them (ignoring case), `n` and `N` step to older and newer matches.
+  - `esc` steps back: out of a search or a pause, then to all logs. `q` or Ctrl-C closes it and leaves everything running; `up` again reopens it. Run `up` in a worktree's folder and it opens on that worktree.
 - `up -d` returns once started, without mission control, as `up` does with no terminal attached (scripts, CI, agents).
 - An app or service that exits on start is shown with its last output and the command for its full log, and `up` exits 1. It works the same with no terminal attached, so CI fails loudly.
 - An app still starting after 5 seconds is shown as `starting`; `up` doesn't wait for it.

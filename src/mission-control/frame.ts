@@ -395,7 +395,12 @@ function footer(cols: number, c: Palette): ReactElement[] {
 	const last = rows[rows.length - 1] as Run[];
 	const tail = run("·  everything keeps running", c.dim);
 	if (widthOf(last) + widthOf([tail]) <= cols) last.push(tail);
-	return rows.map((runs, i) => line(`keys ${i}`, cols, runs));
+	// A row's trailing gap would push it past the edge and cut it with `…`.
+	return rows.map((runs, i) => {
+		const end = runs[runs.length - 1] as Run;
+		const trimmed = [...runs.slice(0, -1), { ...end, text: end.text.trimEnd() }];
+		return line(`keys ${i}`, cols, trimmed);
+	});
 }
 
 /** Environments down the left: state glyph and name, the branch whole, the state in words. */

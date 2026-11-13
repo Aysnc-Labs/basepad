@@ -186,10 +186,12 @@ test("every key is on screen, wrapping onto a second row where the terminal is n
 	];
 	for (const [cols, rows] of [
 		[140, 40],
+		[100, 30],
 		[72, 20],
 	] as const) {
 		const out = draw(snap([main]), initialView("shop"), cols, rows);
 		for (const key of keys) expect(out).toMatch(key);
+		expect(out.split("\n").slice(-2).join("\n")).not.toContain("…");
 		expect(out.split("\n")).toHaveLength(rows);
 	}
 });
