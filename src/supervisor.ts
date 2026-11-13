@@ -5,6 +5,7 @@ import { request as httpsRequest } from "node:https";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { connect } from "node:tls";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { interactive, must, shellQuote } from "./internal/exec.ts";
 import { answers } from "./internal/ports.ts";
@@ -98,6 +99,8 @@ export interface Supervisor {
 	proxySetupPlan(): Promise<string[]>;
 	/** Applies that plan on the user's terminal (`sudo` may ask for a password). Returns its exit code. */
 	proxySetup(): Promise<number>;
+	/** Undoes pitchfork's proxy setup on the user's terminal (`sudo` may ask). Returns its exit code. */
+	proxyUndo(): Promise<number>;
 	/** Adds the CA to the system trust store. Needs root on Linux. Throws with pitchfork's reason. */
 	trust(): Promise<void>;
 	/**
@@ -260,11 +263,34 @@ export async function openSupervisor(
 
 	const serve = async () => {
 		await applySettings();
-		if (running()) return;
-		await run("supervisor", "start");
-		// The proxy (and its CA, on a first start) comes up just after the supervisor returns.
-		const until = Date.now() + 5000;
-		while (!(await listening(machine.proxyPort)) && Date.now() < until) {
+		if (!running()) {
+			await run("supervisor", "start");
+			// The proxy (and its CA, on a first start) comes up just after the supervisor returns.
+			const until = Date.now() + 5000;
+			while (!(await listening(machine.proxyPort)) && Date.now() < until) {
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			}
+		}
+		if (machine.forwards443) await forward443();
+	};
+
+	/**
+	 * Starts the forwarder (src/forward.ts) when nothing answers on port 443, and waits briefly for
+	 * it. Something else there (Herd, Valet, a pf redirect) is left alone. It stops with the
+	 * supervisor; the next `serve` starts it again.
+	 */
+	const forward443 = async () => {
+		if ((await probeStandardPort(ca)) !== "closed") return;
+		const script = fileURLToPath(
+			new URL(import.meta.url.endsWith(".ts") ? "./forward.ts" : "./forward.js", import.meta.url),
+		);
+		const sock = join(dirs.PITCHFORK_STATE_DIR, "sock");
+		spawn(process.execPath, [script, "443", String(machine.proxyPort), sock], {
+			detached: true,
+			stdio: "ignore",
+		}).unref();
+		const until = Date.now() + 2000;
+		while ((await probeStandardPort(ca)) === "closed" && Date.now() < until) {
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
 	};
@@ -289,6 +315,9 @@ export async function openSupervisor(
 
 		proxySetup: () =>
 			interactive(pitchfork, ["proxy", "setup", "--yes"], { cwd: machine.home, env }),
+
+		proxyUndo: () =>
+			interactive(pitchfork, ["proxy", "setup", "--undo", "--yes"], { cwd: machine.home, env }),
 
 		async trust() {
 			await run("proxy", "trust");
@@ -597,12 +626,15 @@ const LIVE = new Set(["running", "waiting", "restarting"]);
 
 /**
  * A daemon with a port is running once something listens there; until then it is starting.
- * pitchfork finds `active_port` some time after the daemon is ready, so until then the port it
- * gave the daemon stands in: else an app that just answered its first request reads as starting.
+ * pitchfork's `active_port` says it saw the daemon listen, so it is running with no connection of
+ * basepad's: a dev server logs each one, and mission control asks every second. pitchfork finds it
+ * some time after the daemon is ready, so until then basepad asks the port it gave the daemon:
+ * else an app that just answered its first request reads as starting.
  */
 async function stateOf(daemon: Listed): Promise<DaemonState> {
 	if (daemon.status === "running") {
-		const port = daemon.active_port ?? daemon.port?.[0];
+		if (daemon.active_port != null) return "running";
+		const port = daemon.port?.[0];
 		return port === undefined || (await listening(port)) ? "running" : "starting";
 	}
 	if (LIVE.has(daemon.status)) return "starting";

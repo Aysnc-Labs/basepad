@@ -144,18 +144,22 @@ test("load or rm of a label with no snapshot fails, naming the ones there are, a
 	expect(await rows(main)).toBe(before);
 }, 120_000);
 
-test("a load whose copy fails leaves the database as it was, the snapshot kept and nothing beside", async () => {
+test("an invalid snapshot is marked so, its load refused up front, and rm removes it", async () => {
 	await ok(main, "db", "save", "broken");
 	await sql(main, "insert into items values ('unsaved')");
 	const before = await rows(main);
-	// Marked invalid, as an interrupted drop leaves a database: no route can copy it.
+	// Marked invalid, as an interrupted copy or drop leaves a database.
 	await sql(main, "update pg_database set datconnlimit = -2 where datname = 't26snap_db@broken'");
+	expect(await ok(main, "db", "snapshots")).toMatch(/^broken\s+db\s+t26snap_db\s+invalid$/m);
 	const result = await box.basepad(main, "db", "load", "broken");
 	expect(result.code).toBe(1);
-	expect(result.stderr).toContain("`t26snap_db` is as it was");
+	expect(result.stderr).toBe(
+		"basepad: Snapshot `broken` of `db` is invalid, as an interrupted copy or drop leaves a database. `t26snap_db` is as it was; remove the snapshot with `basepad db rm broken`.\n",
+	);
 	expect(await rows(main)).toBe(before);
 	expect(await sql(main, "select count(*) from pg_database where datname like '%~%'")).toBe("0");
-	await sql(main, 'drop database "t26snap_db@broken"');
+	await ok(main, "db", "rm", "broken");
+	expect(await ok(main, "db", "snapshots")).not.toMatch(/^broken /m);
 }, 120_000);
 
 test("a save whose copy fails keeps the snapshot of that label as it was, and nothing beside", async () => {

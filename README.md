@@ -90,7 +90,7 @@ The URL carries the proxy's port, and its certificate is signed by basepad's own
 curl --cacert ~/.basepad/pitchfork/state/proxy/ca.pem https://web.shop.localhost:7443
 ```
 
-To open it in a browser with no port and no warning, run [`basepad setup`](#port-free-urls-basepad-setup) once on the machine.
+That's Linux as a user. On macOS, URLs have no port from the first `up`: `https://web.shop.localhost`. To open it in a browser with no warning, run [`basepad setup`](#port-free-urls-basepad-setup) once on the machine.
 
 ```sh
 npx basepad status   # each app and service, with its address and state
@@ -113,6 +113,7 @@ export default defineConfig({
 		web: { run: "next dev" }, // https://web.shop.localhost
 		cms: { run: "npm run dev", cwd: "apps/cms" }, // https://cms.shop.localhost
 		backend: { run: "php artisan serve --port=$PORT", cwd: "backend" },
+		queue: { run: "php artisan queue:listen", cwd: "backend", port: false }, // no domain
 	},
 	env: ({ db, cms, backend }) => ({
 		".env.local": { DATABASE_URL: db.url, CMS_URL: cms.url },
@@ -129,8 +130,8 @@ export default defineConfig({
 | Key        | Required | What it is                                                                                                                                |
 | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`     | yes      | The project's one key: a lowercase DNS label (letters, digits, hyphens). Every database and domain is built from it.                      |
-| `services` | no       | The services basepad provides, by key: Postgres, `postgres()` or `postgres({ version: 17 })` (18 is the default), and [Mailpit](#mailpit), `mailpit()`. |
-| `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config.              |
+| `services` | no       | The services basepad provides, by key: Postgres, `postgres()` or `postgres({ version: 17 })` (18 is the default), Redis, `redis()` or `redis({ worktree: "shared" })`, and [Mailpit](#mailpit), `mailpit()`. |
+| `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config, and `port: false` for one that listens on nothing. |
 | `env`      | no       | A function from every service's and app's outputs to the env files to write: each file's path, relative to the config, to its keys.       |
 | `worktrees` | no      | How [worktrees](#worktrees) are made: `prefix` (default `worktree`) names them `<prefix>-<n>`; `dir`, relative to the config, is where they are checked out (default `<repository>/../<name>.worktrees`); `clone` lists untracked paths copied from main, such as `node_modules`; `setup` lists shell commands run once in each new worktree. |
 
@@ -151,9 +152,11 @@ A service gives:
 | `password` | `basepad`, a placeholder: local connections need none       |
 | `database` | `<name>_<key>`, with hyphens made underscores: `shop_db`    |
 
+Redis gives `url` (`redis://127.0.0.1:<port>`, with no database index: clients pick their own), `host` and `port`.
+
 Mailpit gives `url` (`smtp://main:basepad@127.0.0.1:<port>`; a worktree's user is its suffix), `host`, `port`, `user`, `password` (`basepad`, a placeholder: any is accepted) and `inbox` (`https://<key>.<name>.localhost`).
 
-An app gives `url`: `https://<key>.<name>.localhost`, with the proxy's port (`:7443`) until `basepad setup` has been run. An app's port isn't given: it changes from run to run.
+An app gives `url`: `https://<key>.<name>.localhost`, with the proxy's port (`:7443`) while port 443 doesn't reach the proxy (Linux as a user, until `basepad setup`). An app's port isn't given: it changes from run to run.
 
 ### Env files
 
@@ -170,6 +173,7 @@ basepad sets exactly the keys `env` returns, in the files it names:
 - Each app runs from its `cwd` (the config's folder by default), through `sh`, with its own and the project's `node_modules/.bin` first on `PATH`, as `npm run` does. So `next dev` works without `npx`.
 - Each app is given a free port as `PORT`, and must listen on it.
 - Each app answers at `https://<key>.<name>.localhost`, through pitchfork's proxy. Hot reload and WebSockets work through it.
+- An app with `port: false`, such as a queue worker, gets no `PORT`, no domain and no `url` in `env`. It is running as soon as it starts, and starts whenever another of the environment's apps does, so a worktree's first request starts it too.
 - Processes basepad starts trust its certificate authority through `NODE_EXTRA_CA_CERTS`, so one Node app can fetch another by its URL. Other runtimes need their own setting, such as `SSL_CERT_FILE` or `REQUESTS_CA_BUNDLE`, pointed at `~/.basepad/pitchfork/state/proxy/ca.pem`.
 
 ### Postgres
@@ -197,8 +201,9 @@ npx basepad db export ./shop.dump      # a dump others can import; ./shop.sql fo
 - With one database the service is implied; with several, name it: `--service db` (`-s db`).
 - A snapshot is a database on the same server, `<database>@<label>`, copied as a worktree's is: a file clone where the server offers one, else a template copy. They work while your app runs: its sessions on the database are ended, and it reconnects by itself (see the `Pool` note under Worktrees).
 - `load`, `save` over a label and `import` make the new database beside the old one, at `<database>~new`, and swap it in only once it is whole: one that fails leaves the database, and any snapshot of that label, as it was.
+- A snapshot an interrupted copy or drop leaves invalid shows `invalid` in `snapshots`, and `load` refuses it; `basepad db rm <label>` removes it.
 - `worktree rm` and `prune` delete a worktree's snapshots with it.
-- `import` reads a custom-format dump (`pg_dump -Fc`; it starts `PGDMP`) or a plain SQL file, telling them apart by their first bytes, or copies the database at a `postgres://` URL. It replaces the database: it asks first, naming it, and `--yes` (`-y`) answers; with no terminal and no `--yes` it changes nothing. Owners and grants are dropped: everything belongs to basepad's `postgres` user. A plain SQL file stops at its first error, so one naming roles needs `pg_dump --no-owner --no-privileges`, and it runs as written: one that connects to other databases (`pg_dump --create`, `pg_dumpall`) reaches them too.
+- `import` reads a custom-format dump (`pg_dump -Fc`; it starts `PGDMP`) or a plain SQL file, telling them apart by their first bytes; or copies the database at a `postgres://` URL. A source that creates nothing (an empty file, one of only comments, an empty database) is refused, and the database stays as it was. It replaces the database: it asks first, naming it, and `--yes` (`-y`) answers; with no terminal and no `--yes` it changes nothing. Owners and grants are dropped: everything belongs to basepad's `postgres` user. A plain SQL file stops at its first error, so one naming roles needs `pg_dump --no-owner --no-privileges`, and it runs as written: one that connects to other databases (`pg_dump --create`, `pg_dumpall`) reaches them too.
 - `export` writes a custom-format dump, or plain SQL, without owners or grants, for a name ending `.sql`. With no file it writes the dump to standard output, for a pipe or `>`, and refuses a terminal. Your app stays connected while it runs.
 - The URL's server is read with this service's Postgres version's `pg_dump`, which reads that version and older ones.
 
@@ -223,11 +228,12 @@ npx basepad worktree add --start  # starts its apps now
 
 - It is a git worktree, named `worktree-1`, `worktree-2` and so on: the lowest number no git worktree, branch or folder already has. It is checked out on a new branch of the same name from main's `HEAD`, or on `--branch`'s, beside the repository in `../<name>.worktrees`, so main's watchers never see it.
 - Each Postgres service gets a database `<name>_<key>_<suffix>` (`shop_db_worktree_1`) on main's server, holding a copy of main's data. `postgres({ worktree: "empty" })` gives an empty one instead, and `postgres({ worktree: "shared" })` uses main's own database.
+- Each Redis service gets a Redis of its own, empty; `redis({ worktree: "shared" })` uses main's. Redis keeps its data in memory: it starts empty and keeps nothing after it stops.
 - Its apps answer at `https://<app>.<suffix>.<name>.localhost`, beside main's.
 - Each env file `env` names starts as a copy of main's, secrets included, then basepad sets its keys for the worktree. A file the worktree already has is kept.
 - Each path in `worktrees.clone` is copied from main, copy-on-write where the filesystem can (APFS, btrfs, XFS) and fully otherwise, so the worktree's writes never reach main's files. A path main lacks is skipped with a note. A full copy is slow: about 10 s for a `node_modules` of 34,000 files on Linux's ext4.
 - Then the commands in `worktrees.setup` run in order in the worktree, with its env files written. The first that fails is shown with its output, the rest don't run, `worktree add` exits 1 and the worktree is kept.
-- `worktree add` starts no app: an app starts when its domain is first opened, with main's services if they are stopped, or straight away with `--start`. After `down`, an app stays stopped until `up`. `basepad up`, `down` and `status` in the worktree's folder act on it, with the config in that folder. A worktree's services are main's servers, so `up` there starts main's services too, and `down` there stops only the worktree's apps.
+- `worktree add` starts no app: an app starts when its domain is first opened, with main's services if they are stopped, or straight away with `--start`. After `down`, an app stays stopped until `up`. `basepad up`, `down` and `status` in the worktree's folder act on it, with the config in that folder. A worktree's services are main's servers, apart from a Redis of its own, so `up` there starts main's services too, and `down` there stops only the worktree's apps.
 - The copy works while main's app is connected. basepad closes main's database to connections for the copy, ends its sessions and opens it again; main's app reconnects by itself. A node-postgres `Pool` needs an `error` listener (`pool.on("error", …)`), or an ended idle client crashes its process. If a copy is interrupted, the next `basepad up` opens main's database again.
 - The copy is a file clone where the server offers one (Postgres 18 on APFS, btrfs or XFS with reflink: copy-on-write), else a template copy (about 1 s per GB on Linux), else dump and restore. The output says which.
 
@@ -297,7 +303,7 @@ Run them anywhere in the project, as `npx basepad <command>`. `basepad --help` l
 | `basepad prune` | After asking: removes what worktrees whose folder is gone left, and the data of services no longer in the config. | Anything you did not say yes to. Main's databases of services still in the config. |
 | `basepad db save [label]`, `db load [label]` | `save` makes a snapshot of this environment's database, replacing one of the same label; `load` replaces the database with it. Ends the database's sessions. | Other environments' databases and snapshots. `load` keeps the snapshot. |
 | `basepad db snapshots`, `db rm <label>` | `snapshots` changes nothing and lists this environment's; `rm` deletes one. | Anything else. |
-| `basepad db import <file or url>` | After asking, or with `--yes`: replaces this environment's database with the dump or the URL's database. Ends the database's sessions. | Other environments' databases. The URL's database: it is only read. The database, when the source fails to load. |
+| `basepad db import <file or url>` | After asking, or with `--yes`: replaces this environment's database with the dump or the URL's database. Ends the database's sessions. | Other environments' databases. The URL's database: it is only read. The database, when the source creates nothing or fails to load. |
 | `basepad db export [file]` | Writes `file`, or standard output. | The database. |
 | `basepad setup`  | The machine, once: trusts basepad's certificate authority and makes URLs port-free. See [below](#port-free-urls-basepad-setup).                                                        | Any project. A pitchfork setup of your own: it refuses rather than overwrite it.  |
 
@@ -307,7 +313,7 @@ More on `up`:
 - On a terminal, `up` then opens mission control: every environment (main and each worktree) with its branch and state, the selected one's apps and services with state and address, and their logs live. Its keys, also listed at its foot:
   - `↑` `↓` pick an environment; `←` `→` pick one of its apps or services, and narrow the logs to it.
   - `s`, `x` and `r` start, stop and restart the selected app or service; with none selected, the whole environment (main's apps and services, or a worktree's apps, as `up` and `down` do). A stopped app stays stopped: a request does not start it again until `s`.
-  - `o` opens the selected app in the browser; `c` copies the selected address (a database's URL, say). With none selected, both take the environment's first app.
+  - `o` opens the selected app, or a service's page (Mailpit's inbox), in the browser; `c` copies the selected address (a database's URL, say). With none selected, both take the environment's first app.
   - `a` adds a worktree, as `basepad worktree add` does; it shows in the list once it is made, and its progress shows meanwhile. `d` removes the selected worktree, as `basepad worktree rm` does, after you press `y`. One with uncommitted changes asks again: type its name and press enter to lose them. Either runs in a process of its own: `q` closes the view at once and it goes on, and `up` again shows it still under way.
   - `v` shows the apps' logs side by side, a column each.
   - `PgUp` `PgDn` scroll back, which pauses the logs; `End` goes back to live. `/` searches them (ignoring case), `n` and `N` step to older and newer matches.
@@ -326,7 +332,7 @@ npx basepad down && rm -rf ~/.basepad/services/shop
 
 ## Port-free URLs: `basepad setup`
 
-Without setup, everything works, with the port in each URL (`https://web.shop.localhost:7443`) and a certificate your browser doesn't trust. Once per machine:
+Without setup, everything works, with a certificate your browser doesn't trust, and on Linux as a user the port in each URL (`https://web.shop.localhost:7443`). Once per machine:
 
 ```sh
 npx basepad setup
@@ -334,10 +340,10 @@ npx basepad setup
 
 It prints its plan, then asks before it changes anything. Steps marked `[sudo]` ask for your password.
 
-- **macOS:** trusts basepad's certificate authority, and redirects port 443 to the proxy's port with a pf rule.
+- **macOS:** trusts basepad's certificate authority in your login keychain; macOS asks for Touch ID or your password, and nothing needs `sudo`. URLs are port-free without setup: `up` starts a small forwarder on port 443, which macOS lets any user take, that passes connections from this Mac to the proxy and closes any from the network. basepad doesn't use pf, which redirects ports but turns off iCloud Private Relay; setup removes a pf redirect an earlier basepad setup added. Setting `BASEPAD_PROXY_PORT` turns the forwarder off.
 - **Linux:** trusts the certificate authority in the system store and in Chrome's and Firefox's own stores, and redirects port 443 with iptables.
 
-Then run `basepad up` in each project, so its env files get the port-free URLs. When something else answers on port 443 (Herd, Valet), setup warns you first. A restart can drop the redirect; run `setup` again if URLs get their port back.
+Then run `basepad up` in each project, so its env files get the port-free URLs. When something else answers on port 443 (Herd, Valet), setup warns you first, and on macOS the forwarder leaves it alone and URLs keep their port. On Linux a restart can drop the redirect; run `setup` again if URLs get their port back.
 
 `--dry-run` prints the plan and changes nothing. `--yes` applies it without asking, and is needed when there's no terminal to ask on.
 

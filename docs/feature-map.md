@@ -38,7 +38,7 @@ flowchart LR
 
 ### The config file
 
-Purpose: one committed, typed `basepad.config.ts` that names the project, its services (with each one's `worktree` option: copy, empty or shared), apps, env files and `worktrees` (prefix, folder, clone, setup); `basepad.config.local.ts` adjusts it per machine.
+Purpose: one committed, typed `basepad.config.ts` that names the project, its services (with each one's `worktree` option: copy, empty or shared), apps (each served at a domain, or with `port: false` for one that listens on nothing), env files and `worktrees` (prefix, folder, clone, setup); `basepad.config.local.ts` adjusts it per machine.
 Entry: `import { defineConfig, postgres } from "@aysnc-labs/basepad"`
 Paths: src/index.ts, src/config.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md)
@@ -96,9 +96,15 @@ Paths: src/commands.ts, src/catalogue.ts, src/catalogue/postgres.ts
 
 ### `basepad setup`
 
-Purpose: one-time machine setup: trusts basepad's CA and makes URLs port-free; adds domains to `/etc/hosts` where `*.localhost` doesn't resolve.
+Purpose: one-time machine setup: trusts basepad's CA, and on Linux makes URLs port-free; adds domains to `/etc/hosts` where `*.localhost` doesn't resolve.
 Entry: `basepad setup [--dry-run] [--yes]`
 Paths: src/setup.ts, src/hosts.ts
+
+### Port 443 on macOS
+
+Purpose: port-free URLs on macOS with no privilege and no pf (pf turns off iCloud Private Relay): `serve` starts a forwarder on the wildcard address's port 443 that passes connections from this Mac to the proxy, refuses the network's, and stops with the supervisor. Off when `BASEPAD_PROXY_PORT` is set, or something else answers on 443.
+Entry: `basepad up` on macOS
+Paths: src/forward.ts, src/supervisor.ts, src/layout.ts
 
 ## Services
 

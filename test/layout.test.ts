@@ -17,7 +17,7 @@ const layout = (...args: Parameters<typeof layoutOf>) =>
 	layoutOf(...args) as Layout & { services: Record<string, PostgresNames> };
 
 const app = { run: "next dev", cwd: "/p" };
-const here = { home: "/h", proxyPort: 7443, portFree: false };
+const here = { home: "/h", proxyPort: 7443, portFree: false, forwards443: false };
 
 function project(name: string, apps: string[] = [], services: string[] = [], prefix = "worktree") {
 	return {
@@ -46,8 +46,12 @@ test("a service's port comes from the name and key alone, in [15000, 20000)", ()
 	const port = (name: string, key: string) =>
 		layout(project(name, ["web"], [key]), here).services[key]?.port as number;
 	expect(port("shop", "db")).toBe(
-		layout(project("shop", [], ["db"]), { home: "/x", proxyPort: 1, portFree: true }).services.db
-			?.port,
+		layout(project("shop", [], ["db"]), {
+			home: "/x",
+			proxyPort: 1,
+			portFree: true,
+			forwards443: false,
+		}).services.db?.port,
 	);
 	for (const [name, key] of [
 		["shop", "db"],
@@ -120,15 +124,17 @@ test("the environment's supervisor definitions live in basepad's home", () => {
 });
 
 test("the machine is read from BASEPAD_HOME and BASEPAD_PROXY_PORT, with defaults", () => {
-	expect(machine({ BASEPAD_HOME: "/x", BASEPAD_PROXY_PORT: "9443" }, false)).toEqual({
+	expect(machine({ BASEPAD_HOME: "/x", BASEPAD_PROXY_PORT: "9443" }, false, "linux")).toEqual({
 		home: "/x",
 		proxyPort: 9443,
 		portFree: false,
+		forwards443: false,
 	});
-	expect(machine({ HOME: "/u" }, false)).toEqual({
+	expect(machine({ HOME: "/u" }, false, "linux")).toEqual({
 		home: "/u/.basepad",
 		proxyPort: 7443,
 		portFree: false,
+		forwards443: false,
 	});
 	expect(() => machine({ BASEPAD_PROXY_PORT: "nope" })).toThrow(
 		"BASEPAD_PROXY_PORT must be a port number; got `nope`.",
@@ -136,15 +142,28 @@ test("the machine is read from BASEPAD_HOME and BASEPAD_PROXY_PORT, with default
 });
 
 test("as root on Linux the proxy listens on 443 itself, so URLs are port-free", () => {
-	expect(machine({ HOME: "/root" }, true)).toEqual({
+	expect(machine({ HOME: "/root" }, true, "linux")).toEqual({
 		home: "/root/.basepad",
 		proxyPort: 443,
 		portFree: true,
+		forwards443: false,
 	});
 	expect(machine({ HOME: "/root", BASEPAD_PROXY_PORT: "9443" }, true)).toMatchObject({
 		proxyPort: 9443,
 		portFree: false,
 	});
+});
+
+test("on macOS with the port unset, basepad's forwarder takes 443; a port set by hand opts out", () => {
+	expect(machine({ HOME: "/u" }, false, "darwin")).toMatchObject({
+		proxyPort: 7443,
+		portFree: false,
+		forwards443: true,
+	});
+	expect(machine({ HOME: "/u", BASEPAD_PROXY_PORT: "9443" }, false, "darwin").forwards443).toBe(
+		false,
+	);
+	expect(machine({ HOME: "/u" }, false, "linux").forwards443).toBe(false);
 });
 
 test("a worktree's apps are at https://<app>.<suffix>.<name>.localhost", () => {
@@ -167,6 +186,12 @@ test("a 63-byte database leaves no room for a snapshot, and still names its snap
 	expect(db?.database).toHaveLength(63);
 	expect(db?.snapshots).toBe(`shop_db_${"w".repeat(55)}@`);
 	expect(() => db?.snapshot("a")).toThrow(/Postgres allows 63, which leaves no room for a label/);
+});
+
+test("a database that leaves one character for a snapshot's label says so in the singular", () => {
+	const db = layout(project("shop", [], ["db"]), here, "w".repeat(53)).services.db;
+	expect(db?.snapshot("a")).toHaveLength(63);
+	expect(() => db?.snapshot("ab")).toThrow(/, which leaves 1 character for a label here\./);
 });
 
 test("a shared service's worktree database is main's", () => {

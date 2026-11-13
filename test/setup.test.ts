@@ -26,16 +26,18 @@ test.skipIf(rootOnLinux)(
 		expect(out.stderr).toBe("");
 		expect(out.code).toBe(0);
 		expect(out.stdout).toContain("basepad setup will:");
-		expect(out.stdout).toMatch(/install the pitchfork CA at .*ca\.pem into the system trust store/);
 		if (process.platform === "darwin") {
-			expect(out.stdout).toContain(
-				`[sudo] write /etc/pf.anchors/pitchfork redirecting port 443 to ${box.proxyPort}`,
-			);
+			// pf, which would redirect port 443, turns off iCloud Private Relay: basepad never uses it.
+			expect(out.stdout).toMatch(/trust basepad's CA at .*ca\.pem in your login keychain/);
+			expect(out.stdout).not.toMatch(/\bpf\b|sudo/);
 		} else {
+			expect(out.stdout).toMatch(
+				/install the pitchfork CA at .*ca\.pem into the system trust store/,
+			);
 			expect(out.stdout).toContain(`redirect loopback traffic for port 443 to ${box.proxyPort}`);
 			expect(out.stdout).toMatch(/Chrome and Firefox/);
+			expect(out.stdout).toContain(`URLs carry :${box.proxyPort} until then`);
 		}
-		expect(out.stdout).toContain(`URLs carry :${box.proxyPort} until then`);
 		expect(out.stdout).toContain("Dry run: nothing was changed.");
 		for (const dir of ["pf-state", "pf-config", "pf-logs"]) {
 			expect(existsSync(join(box.root, dir))).toBe(false);

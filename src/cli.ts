@@ -25,13 +25,18 @@ async function main(argv: string[]): Promise<number> {
 		process.stdout.write(topHelp());
 		return 0;
 	}
+	// A group (`db`) with no command, or asking for help, lists its commands.
+	const verbs = Object.entries(COMMANDS).filter(([key]) => key.startsWith(`${first} `));
+	if (verbs.length > 0 && (rest[0] === undefined || ["-h", "--help"].includes(rest[0]))) {
+		process.stdout.write(groupHelp(first, verbs));
+		return rest[0] === undefined ? 1 : 0;
+	}
 	// A command is one word, or two for a group's (`worktree add`).
 	const pair = rest[0] === undefined ? undefined : `${first} ${rest[0]}`;
 	const name = pair !== undefined && pair in COMMANDS ? pair : first;
 	const command = COMMANDS[name];
 	if (!command) {
-		const group = Object.keys(COMMANDS).some((key) => key.startsWith(`${first} `));
-		const typed = group ? (pair ?? first) : first;
+		const typed = verbs.length > 0 ? (pair ?? first) : first;
 		throw new BasepadError(
 			`Unknown command \`${typed}\`. The nearest is \`${nearest(typed, Object.keys(COMMANDS))}\`; run \`basepad --help\` for every command.`,
 		);
@@ -144,6 +149,18 @@ function topHelp(): string {
 		...flagLines(TOP_FLAGS),
 		"",
 		"Run `basepad <command> --help` for a command's flags.",
+		"",
+	].join("\n");
+}
+
+function groupHelp(group: string, verbs: [string, Command][]): string {
+	return [
+		`Usage: basepad ${group} <command> [flags]`,
+		"",
+		"Commands:",
+		...columns(verbs.map(([name, command]) => [name, command.summary])),
+		"",
+		`Run \`basepad ${group} <command> --help\` for a command's flags.`,
 		"",
 	].join("\n");
 }

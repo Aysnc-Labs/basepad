@@ -15,6 +15,12 @@ export interface Machine {
 	 * `basepad setup` redirected it. Asked from the machine (`Supervisor.standardPort`), never stored.
 	 */
 	portFree: boolean;
+	/**
+	 * Whether basepad's forwarder takes port 443 for the proxy: on macOS with `BASEPAD_PROXY_PORT`
+	 * unset, where no privilege is needed for it and pf, the alternative, turns off iCloud Private
+	 * Relay.
+	 */
+	forwards443: boolean;
 }
 
 /** The proxy's default port: high, so it needs no privilege, and unlike pitchfork's own suggestion. */
@@ -24,7 +30,11 @@ const PROXY_PORT = 7443;
  * Reads `BASEPAD_HOME` (default `~/.basepad`) and `BASEPAD_PROXY_PORT` (default 7443, or 443 as root
  * on Linux, where the proxy binds it itself). `portFree` starts as what the port alone tells.
  */
-export function machine(env: NodeJS.ProcessEnv, rootOnLinux = isRootOnLinux()): Machine {
+export function machine(
+	env: NodeJS.ProcessEnv,
+	rootOnLinux = isRootOnLinux(),
+	platform = process.platform,
+): Machine {
 	const raw = env.BASEPAD_PROXY_PORT;
 	const unset = raw === undefined || raw === "";
 	const proxyPort = unset ? (rootOnLinux ? 443 : PROXY_PORT) : Number(raw);
@@ -35,6 +45,7 @@ export function machine(env: NodeJS.ProcessEnv, rootOnLinux = isRootOnLinux()): 
 		home: env.BASEPAD_HOME || join(env.HOME || homedir(), ".basepad"),
 		proxyPort,
 		portFree: proxyPort === 443,
+		forwards443: unset && platform === "darwin",
 	};
 }
 
@@ -50,14 +61,15 @@ export function isRootOnLinux(): boolean {
  * never truncates.
  */
 export interface Layout {
+	/** Each app, with its domain and port; empty for an app whose `port` is `false`. */
 	apps: Record<
 		string,
 		{
-			host: string;
+			host?: string;
 			/** What `env` sees. The one place the URL form is decided. */
-			url: string;
+			url?: string;
 			/** The port the app is first offered as `PORT`; the supervisor moves past a taken one. */
-			port: number;
+			port?: number;
 		}
 	>;
 	/** Each service's port and folder, with the names its kind derives. */
@@ -138,7 +150,11 @@ export function layout(
 		`https://${host}${machine.portFree ? "" : `:${machine.proxyPort}`}`;
 	const apps: Layout["apps"] = {};
 	const block = APP_PORT_BASE + (hash(name) % APP_PORT_BLOCKS) * APP_PORT_BLOCK;
-	for (const [i, key] of Object.keys(project.apps).entries()) {
+	for (const [i, [key, app]] of Object.entries(project.apps).entries()) {
+		if (app.port === false) {
+			apps[key] = {};
+			continue;
+		}
 		if (key.length > LABEL_MAX) {
 			fail(`app \`${key}\` is ${key.length} characters; a domain label allows ${LABEL_MAX}.`);
 		}

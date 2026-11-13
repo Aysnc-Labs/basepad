@@ -138,6 +138,8 @@ export interface Snapshot {
 	/** The environment's database it was saved from. */
 	database: string;
 	bytes: number;
+	/** Left unusable by an interrupted copy or drop: only `db rm` takes it. */
+	invalid?: true;
 }
 
 /**

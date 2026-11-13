@@ -710,7 +710,8 @@ function partBlocks(
 			part.state === "idle"
 				? run("   starts on its first request", c.dim)
 				: run(part.note === undefined ? "" : `   ${part.note}`, c.dim);
-		const whole = [...lead, run(part.address, color)];
+		const address = part.address ?? "";
+		const whole = [...lead, run(address, color)];
 		if (widthOf(whole) <= inner) {
 			// The detail shows where it fits whole.
 			const fits = widthOf(whole) + widthOf([detail]) <= inner;
@@ -719,7 +720,7 @@ function partBlocks(
 		const indent = "    ";
 		return [
 			{ key: part.id, runs: [...lead, { ...detail, text: detail.text.trimStart() }] },
-			...wrap(part.address, inner - indent.length).map((piece, i) => ({
+			...wrap(address, inner - indent.length).map((piece, i) => ({
 				key: `${part.id} ${i}`,
 				runs: [run(indent), run(piece, color)],
 			})),

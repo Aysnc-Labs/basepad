@@ -1,13 +1,16 @@
-// A dev server for the up tests. Over HTTP it answers with its folder, PORT and pid; a WebSocket
+// A dev server for the up tests. Over HTTP it answers with its folder, PORT, pid and how many
+// connections it has had; a WebSocket
 // upgrade (as a hot-reload client makes) is accepted and sent one text frame with its folder.
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
 const port = Number(process.env.PORT);
+let connections = 0;
 const server = createServer((_req, res) => {
 	res.setHeader("content-type", "application/json");
-	res.end(JSON.stringify({ cwd: process.cwd(), port, pid: process.pid }));
+	res.end(JSON.stringify({ cwd: process.cwd(), port, pid: process.pid, connections }));
 });
+server.on("connection", () => connections++);
 server.on("upgrade", (req, socket) => {
 	const accept = createHash("sha1")
 		.update(`${req.headers["sec-websocket-key"]}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)

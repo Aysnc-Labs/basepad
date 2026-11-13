@@ -138,7 +138,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 				return named(
 					`${database}@${label}`,
 					`snapshot \`${label}\``,
-					`, which leaves ${room > 0 ? `${room} characters` : "no room"} for a label here.`,
+					`, which leaves ${room > 0 ? `${room} character${room === 1 ? "" : "s"}` : "no room"} for a label here.`,
 				);
 			},
 			staging: () =>
@@ -323,8 +323,12 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			const name = place.snapshot(label);
 			const { pg, port, sql } = await own(service, place);
 			const found = await snapshotsOf(sql, place);
-			if (!found.some((snapshot) => snapshot.label === label)) {
-				throw new BasepadError(noSnapshot(place, label, found));
+			const snapshot = found.find((snapshot) => snapshot.label === label);
+			if (snapshot === undefined) throw new BasepadError(noSnapshot(place, label, found));
+			if (snapshot.invalid) {
+				throw new BasepadError(
+					`Snapshot \`${label}\` of \`${place.key}\` is invalid, as an interrupted copy or drop leaves a database. \`${place.database}\` is as it was; remove the snapshot with \`basepad db rm ${label}\`.`,
+				);
 			}
 			const swap = {
 				target: place.database,
@@ -365,6 +369,11 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 				await sql(`create database ${identifier(staging)}`);
 				await stamp(sql, staging, owner);
 				await restore(pg, port, staging, from);
+				// A source with no statement in it (a BOM, comments, an empty dump) runs cleanly, and
+				// would swap in an empty database.
+				if (!(await createdAnything(pg, port, staging))) {
+					throw new BasepadError("It created nothing in the database.");
+				}
 			});
 			return from.description;
 		},
@@ -444,6 +453,35 @@ async function sourceOf(source: string): Promise<Source> {
 	} finally {
 		await file.close();
 	}
+}
+
+/**
+ * Whether database `name` holds anything a fresh one lacks: a relation, function, type or schema
+ * outside the system's, or an extension. An untouched `public` schema counts as nothing.
+ */
+async function createdAnything(pg: Tool, port: number, name: string): Promise<boolean> {
+	const user = (namespace: string) =>
+		`${namespace} not in (select oid from pg_namespace where nspname in ('pg_catalog', 'information_schema', 'pg_toast') or nspname like 'pg\\_%temp\\_%')`;
+	const anything = [
+		`select 1 from pg_class where ${user("relnamespace")}`,
+		`select 1 from pg_proc where ${user("pronamespace")}`,
+		`select 1 from pg_type where ${user("typnamespace")}`,
+		`select 1 from pg_namespace where ${user("oid")} and nspname <> 'public'`,
+		"select 1 from pg_extension where extname <> 'plpgsql'",
+	];
+	const out = await must(
+		pg.bin("psql"),
+		[
+			...connection(port, name),
+			"-tAX",
+			"-v",
+			"ON_ERROR_STOP=1",
+			"-c",
+			`select exists (${anything.join(" union all ")})`,
+		],
+		{ env: clientEnv() },
+	);
+	return out.trim() === "t";
 }
 
 /** Loads `from` into the empty database `to`, stopping at the first error. */
@@ -529,17 +567,19 @@ async function snapshotsOf(
 ): Promise<Snapshot[]> {
 	const prefix = place.snapshots;
 	const rows = await sql(
-		`select datname || '|' || pg_database_size(oid) from pg_database where datname like ${literal(`${likeEscaped(prefix)}%`)} order by datname`,
+		// An invalid database (`datconnlimit` -2) is what an interrupted copy or drop leaves.
+		`select datname || '|' || pg_database_size(oid) || '|' || (datconnlimit = -2) from pg_database where datname like ${literal(`${likeEscaped(prefix)}%`)} order by datname`,
 	);
 	return rows
 		.split("\n")
 		.filter(Boolean)
 		.map((row) => {
-			const at = row.lastIndexOf("|");
+			const [invalid, bytes, ...name] = row.split("|").reverse();
 			return {
-				label: row.slice(prefix.length, at),
+				label: name.reverse().join("|").slice(prefix.length),
 				database: place.database,
-				bytes: Number(row.slice(at + 1)),
+				bytes: Number(bytes),
+				...(invalid === "true" ? { invalid: true as const } : {}),
 			};
 		});
 }
