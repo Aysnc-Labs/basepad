@@ -59,3 +59,11 @@ test("side by side with more apps than fit says how many more and to widen the t
 	const out = draw(snap(logs), { ...initialView("shop"), sideBySide: true }, 72, 24);
 	expect(out).toMatch(/\+\d more: widen the terminal/);
 });
+
+test("scrolled back at the minimum width, the stream's top border keeps its corner", () => {
+	const web = lines("shop/web", 3000);
+	const until = (web[1][500] as LogLine).seq;
+	const out = draw(snap([web]), { ...initialView("shop"), until }, 72, 16);
+	const top = out.split("\n").find((l) => l.includes("LOGS")) as string;
+	expect(top.trimEnd()).toMatch(/╮$/);
+});

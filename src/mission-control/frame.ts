@@ -331,7 +331,8 @@ function panel(
 	right: Run[],
 	children: ReactNode[],
 ): ReactElement {
-	const t = title.length > 0 ? [run(" "), ...title, run(" ")] : [];
+	// The title is cut inside the border, so its corner always draws.
+	const t = title.length > 0 ? clip([run(" "), ...title, run(" ")], width - 4) : [];
 	let r = right.length > 0 ? [run(" "), ...right, run(" ")] : [];
 	if (widthOf(t) + widthOf(r) > width - 4) r = [];
 	const fill = Math.max(0, width - 4 - widthOf(t) - widthOf(r));
@@ -870,6 +871,12 @@ function columns(
 
 /** `runs` cut to `width` columns with `…`, or padded to it. */
 function cut(runs: Run[], width: number): Run[] {
+	const out = clip(runs, width);
+	return [...out, run(" ".repeat(Math.max(0, width - widthOf(out))))];
+}
+
+/** `runs` cut to at most `width` columns with `…`. */
+function clip(runs: Run[], width: number): Run[] {
 	const out: Run[] = [];
 	let left = width;
 	for (const r of runs) {
@@ -882,7 +889,6 @@ function cut(runs: Run[], width: number): Run[] {
 		out.push({ ...r, text: `${chars.slice(0, Math.max(0, left - 1)).join("")}…` });
 		return out;
 	}
-	out.push(run(" ".repeat(left)));
 	return out;
 }
 
@@ -950,26 +956,31 @@ function stream(
 		run("■ ", partColor(env, part.id, c)),
 		run(part.name, focused === undefined || focused === part ? c.soft : c.dim),
 	]);
+	const mode = [
+		run("LOGS", c.mute, { bold: true }),
+		view.sideBySide
+			? run("  side by side", c.soft)
+			: run(
+					focused === undefined ? "  all" : `  ${focused.name} only`,
+					focused ? c.accent : c.soft,
+				),
+	];
+	const found = searchTitle(view, c);
+	// Paused, the title says how to go live; where the whole hint won't fit, the count goes first.
+	const live = [` · ${all.length - end} newer · end for live`, " · end for live"];
+	const room = inner - 2 - widthOf([...mode, ...found]) - widthOf([run("  ⏸ paused")]);
+	const hint = live.find((text) => [...text].length <= room) ?? (live[1] as string);
 	return panel(
 		"stream",
 		width,
 		height,
 		focused === undefined || view.sideBySide ? c.frame : c.focus,
 		[
-			run("LOGS", c.mute, { bold: true }),
-			view.sideBySide
-				? run("  side by side", c.soft)
-				: run(
-						focused === undefined ? "  all" : `  ${focused.name} only`,
-						focused ? c.accent : c.soft,
-					),
+			...mode,
 			...(paused === undefined
 				? []
-				: [
-						run("  ⏸ paused", c.warn, { bold: true }),
-						run(` · ${all.length - end} newer · end for live`, c.soft),
-					]),
-			...searchTitle(view, c),
+				: [run("  ⏸ paused", c.warn, { bold: true }), run(hint, c.soft)]),
+			...found,
 		],
 		legend,
 		rows,
