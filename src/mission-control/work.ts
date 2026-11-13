@@ -197,7 +197,8 @@ function outcome(record: Record, code: string, output: string[]): string {
 	const last = output.at(-1) ?? "";
 	if (code === "0") return last;
 	if (code === "") {
-		return `Could not ${what}: it stopped partway${clearing(record, output)}. Its last line: ${last}`;
+		const said = last === "" ? "" : ` Its last line: ${last}`;
+		return `Could not ${what}: it stopped partway${clearing(record, output)}.${said}`;
 	}
 	// The command says why it failed last, after `basepad: `.
 	const from = output.findLastIndex((l) => l.startsWith("basepad: "));

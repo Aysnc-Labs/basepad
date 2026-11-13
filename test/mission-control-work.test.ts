@@ -277,3 +277,23 @@ test("an addition killed before it made anything names no worktree another made 
 	expect(told).toMatch(/^Could not add a worktree: it stopped partway/);
 	expect(told).not.toContain("shop-2");
 });
+
+test("work killed before it printed anything says no last line", async () => {
+	const { dir } = basepad("");
+	// Not the stand-in, which prints what it was asked first.
+	const silent = [process.execPath, "-e", `process.kill(process.ppid, "SIGKILL");`];
+	await startWork({ dir, command: silent, cwd: tmpdir(), order: { kind: "add" } });
+	expect((await until(dir, (w) => w.finished.length > 0)).finished).toEqual([
+		"Could not add a worktree: it stopped partway.",
+	]);
+	const order = {
+		kind: "remove",
+		suffix: "shop-2",
+		namespace: "shop.shop-2",
+		force: false,
+	} as const;
+	await startWork({ dir, command: silent, cwd: tmpdir(), order });
+	expect((await until(dir, (w) => w.finished.length > 0)).finished).toEqual([
+		"Could not remove shop-2: it stopped partway; run `basepad worktree rm shop-2` to finish it.",
+	]);
+});
