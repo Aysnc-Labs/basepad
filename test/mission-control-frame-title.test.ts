@@ -66,14 +66,13 @@ for (const [name, view] of views) {
 	});
 }
 
-// A name or a query is never cut: the hints give way first, and one that still can't fit is left out.
+// A name or a query found is never cut: the hints give way first, and one that still can't fit is left out.
 for (const [name, view] of [
 	...views,
 	[
 		"a long search",
 		{ ...paused, focus: "shop/chatty", search: { query: "l".repeat(40), typing: false } },
 	],
-	["a long search typed", { ...paused, search: { query: "l".repeat(40), typing: true } }],
 ] as [string, View][]) {
 	test(`paused with ${name}, the stream's title cuts nothing at any width`, () => {
 		for (let cols = 72; cols <= 160; cols++) {
@@ -85,3 +84,16 @@ for (const [name, view] of [
 		}
 	});
 }
+
+test("a long query being typed shows its end and the caret, as an input field does, inside the border", () => {
+	const query = "abcdefghij".repeat(4);
+	const view = { ...paused, focus: "shop/chatty", search: { query, typing: true } };
+	for (let cols = 72; cols <= 120; cols++) {
+		const title = top(view, cols, 16);
+		expect(title, `${cols} columns`).toMatch(/LOGS.* ⏸ paused/);
+		expect(title, `${cols} columns`).toMatch(/─╮$|[^…]╮$/);
+		// Whole where it fits, else its end after a "…".
+		expect(title, `${cols} columns`).toMatch(new RegExp(`/ (${query}|…[a-j]+)▏`));
+	}
+	expect(top(view, 72, 16)).toMatch(/ \/ …[a-j]{10,}hij▏ /);
+});

@@ -788,13 +788,17 @@ function searchTitle(view: View, c: Palette): Piece[] {
 	const { search } = view;
 	if (search === undefined) return [];
 	if (search.typing) {
+		// The developer's own input outranks every hint and the mode; too long, its end shows, as in
+		// an input field.
+		const typed = (text: string) => [
+			run("  / ", c.accent, { bold: true }),
+			run(`${text}▏`, c.text, { bold: true }),
+		];
+		const chars = [...search.query];
 		return [
 			{
-				runs: [
-					run("  / ", c.accent, { bold: true }),
-					run(`${search.query}▏`, c.text, { bold: true }),
-				],
-				gives: QUERY,
+				runs: typed(search.query),
+				shrink: (cols) => typed(`…${chars.slice(chars.length - Math.max(0, cols - 6)).join("")}`),
 			},
 			{ runs: [run("  enter find · esc cancel", c.mute)], gives: HINT },
 		];
@@ -810,9 +814,11 @@ interface Piece {
 	runs: Run[];
 	/** Never left out when none. */
 	gives?: number;
+	/** The piece in at most `cols` columns, where the title can't fit it whole once the rest gave way. */
+	shrink?: (cols: number) => Run[];
 }
 
-/** In the stream's title, the order pieces give way in: hints, then names, never cut. */
+/** In the stream's title, the order pieces give way in: hints, then names, never cut; a query found. */
 const NEWER = 1;
 const HINT = 2;
 const LIVE_HINT = 3;
@@ -829,7 +835,10 @@ function fitted(pieces: Piece[], room: number): Run[] {
 		if (widthOf(kept.flatMap((p) => p.runs)) <= room) break;
 		kept = kept.filter((p) => p !== piece);
 	}
-	return kept.flatMap((p) => p.runs);
+	const over = widthOf(kept.flatMap((p) => p.runs)) - room;
+	return kept.flatMap((p) =>
+		over > 0 && p.shrink !== undefined ? p.shrink(widthOf(p.runs) - over) : p.runs,
+	);
 }
 
 /** `text` with each match of `query` (ignoring case) drawn in reverse. */
