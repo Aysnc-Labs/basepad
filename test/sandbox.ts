@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:https";
-import { createServer } from "node:net";
+import { createConnection, createServer } from "node:net";
 import { constants, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -43,6 +43,8 @@ export interface Sandbox {
 	run(file: string, args: string[]): Promise<Result>;
 	/** Runs `psql` from mise's Postgres 18 with `args` (a URL, or `-h`, `-p` and the rest). */
 	psql(args: string[], sql: string): Promise<Result>;
+	/** Runs `redis-cli` from mise's Redis 8 against a Redis URL. */
+	redis(url: string, ...args: string[]): Promise<Result>;
 	/** Runs `sql` against the `DATABASE_URL` that `up` wrote to the project's `.env.local`. */
 	sql(project: string, sql: string): Promise<Result>;
 	/**
@@ -136,12 +138,16 @@ export async function sandbox(): Promise<Sandbox> {
 		basepad: (cwd, ...args) => exec(process.execPath, [cli, ...args], cwd),
 		run: (file, args) => exec(file, args, root),
 		psql,
+		redis: (url, ...args) =>
+			exec("mise", ["exec", "redis@8", "--", "redis-cli", "-u", url, ...args], root, {
+				MISE_SKILLS_FETCH: "false",
+			}),
 		async sql(project, sql) {
 			const url = (await readEnv(project, ".env.local")).DATABASE_URL as string;
 			return psql([url], sql);
 		},
 		async get(url) {
-			const { hostname, host, port } = new URL(url);
+			const { hostname, host, port, pathname, search } = new URL(url);
 			const pem = await ca();
 			return new Promise((resolve, reject) => {
 				const req = request(
@@ -149,6 +155,7 @@ export async function sandbox(): Promise<Sandbox> {
 						host: "127.0.0.1",
 						port: port || 443,
 						servername: hostname,
+						path: `${pathname}${search}`,
 						headers: { host },
 						ca: pem,
 					},
@@ -231,5 +238,65 @@ export async function readEnv(dir: string, file: string): Promise<Record<string,
 
 /** A `basepad.config.ts` exporting `body` through `defineConfig`. */
 export function configFile(body: string): string {
-	return `import { defineConfig, postgres } from "@aysnc-labs/basepad";\n\nexport default defineConfig(${body});\n`;
+	return `import { defineConfig, mailpit, postgres } from "@aysnc-labs/basepad";\n\nexport default defineConfig(${body});\n`;
+}
+
+/**
+ * Sends one message through an `smtp://user:pass@host:port` URL, as an app's mailer would: EHLO,
+ * AUTH PLAIN with the URL's credentials, then the message.
+ */
+export async function sendMail(
+	url: string,
+	message: { from: string; to: string; subject: string },
+): Promise<void> {
+	const { hostname, port, username, password } = new URL(url);
+	const socket = createConnection({ host: hostname, port: Number(port) });
+	socket.setEncoding("utf8");
+	let buffer = "";
+	const waiting: ((reply: string) => void)[] = [];
+	socket.on("data", (chunk: string) => {
+		buffer += chunk;
+		// A reply ends with a line whose code is followed by a space: "250 OK", not "250-AUTH".
+		for (
+			let at = buffer.search(/^\d{3} .*\r\n/m);
+			at !== -1;
+			at = buffer.search(/^\d{3} .*\r\n/m)
+		) {
+			const end = buffer.indexOf("\r\n", at) + 2;
+			const reply = buffer.slice(0, end);
+			buffer = buffer.slice(end);
+			waiting.shift()?.(reply);
+		}
+	});
+	const failed = new Promise<never>((_, reject) => socket.on("error", reject));
+	// Awaited only while a reply is awaited; an error after the last one is no failure of the send.
+	failed.catch(() => {});
+	const expectReply = async (code: string) => {
+		const got = await Promise.race([
+			new Promise<string>((resolve) => waiting.push(resolve)),
+			failed,
+		]);
+		if (!got.startsWith(code)) throw new Error(`SMTP: expected ${code}, got ${got}`);
+	};
+	const send = async (line: string, code: string) => {
+		const next = expectReply(code);
+		socket.write(`${line}\r\n`);
+		await next;
+	};
+	try {
+		await expectReply("220");
+		await send("EHLO test.localhost", "250");
+		const auth = Buffer.from(
+			`\0${decodeURIComponent(username)}\0${decodeURIComponent(password)}`,
+		).toString("base64");
+		await send(`AUTH PLAIN ${auth}`, "235");
+		await send(`MAIL FROM:<${message.from}>`, "250");
+		await send(`RCPT TO:<${message.to}>`, "250");
+		await send("DATA", "354");
+		const body = [`From: ${message.from}`, `To: ${message.to}`, `Subject: ${message.subject}`, ""];
+		await send([...body, "Sent by basepad's tests.", "."].join("\r\n"), "250");
+		await send("QUIT", "221");
+	} finally {
+		socket.destroy();
+	}
 }

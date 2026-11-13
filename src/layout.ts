@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { kindOf, type NamesOf, type Place, type Service } from "./catalogue.ts";
+import { kindOf, type NamesOf, type Place, type Service, type Web } from "./catalogue.ts";
 import type { Project } from "./config.ts";
 import { BasepadError } from "./internal/exec.ts";
 
@@ -65,11 +65,12 @@ export interface Layout {
 	/** The environment's supervisor definitions, generated into the home. */
 	definitions: string;
 	/**
-	 * Its namespace with the supervisor: `<name>` for main, `<name>.<suffix>` for a worktree. Every
-	 * service runs in main's, on one server per service for all of a project's environments.
+	 * Its namespace with the supervisor: `<name>` for main, `<name>.<suffix>` for a worktree. A
+	 * service runs in main's, one server for all of a project's environments, unless its kind gives
+	 * each environment its own (`perEnvironment`): then a worktree's runs in the worktree's.
 	 */
 	namespace: string;
-	/** Main's namespace, `<name>`, where every service runs. */
+	/** Main's namespace, `<name>`, where main's services run. */
 	mainNamespace: string;
 	/** A worktree's suffix; absent in main. */
 	suffix?: string;
@@ -77,12 +78,20 @@ export interface Layout {
 
 /** One service's place in the environment, with the names its kind derives. */
 export type ServicePlace = {
-	/** The port the service is first tried on; the next free one is used when it is taken. */
+	/**
+	 * The port the service is first tried on, from the name of the namespace its server runs in and
+	 * its key; the next free one is used when it is taken.
+	 */
 	port: number;
-	/** The service's data folder in the home. */
+	/** The service's data folder in the home, one for all of a project's environments. */
 	dir: string;
-	/** Its daemon with the supervisor, `<name>/<key>` in main's namespace: what an app depends on. */
+	/**
+	 * Its daemon with the supervisor, `<namespace>/<key>`: in main's namespace, or the worktree's
+	 * for a server of its own. What an app depends on.
+	 */
 	daemon: string;
+	/** Its domain, `<key>.<name>.localhost` in main and every worktree, when its kind asks for one. */
+	web?: Web;
 } & NamesOf<Service>;
 
 /** A DNS label's limit, in characters. */
@@ -124,6 +133,9 @@ export function layout(
 	if (suffix !== undefined && suffix.length > LABEL_MAX) {
 		fail(`the worktree suffix is ${suffix.length} characters; a domain label allows ${LABEL_MAX}.`);
 	}
+	/** What `env` sees. The one place the URL form is decided. */
+	const urlOf = (host: string) =>
+		`https://${host}${machine.portFree ? "" : `:${machine.proxyPort}`}`;
 	const apps: Layout["apps"] = {};
 	const block = APP_PORT_BASE + (hash(name) % APP_PORT_BLOCKS) * APP_PORT_BLOCK;
 	for (const [i, key] of Object.keys(project.apps).entries()) {
@@ -131,9 +143,9 @@ export function layout(
 			fail(`app \`${key}\` is ${key.length} characters; a domain label allows ${LABEL_MAX}.`);
 		}
 		const host = appHost(key, name, suffix);
-		const port = machine.portFree ? "" : `:${machine.proxyPort}`;
-		apps[key] = { host, url: `https://${host}${port}`, port: block + (i % APP_PORT_BLOCK) };
+		apps[key] = { host, url: urlOf(host), port: block + (i % APP_PORT_BLOCK) };
 	}
+	const namespace = namespaceOf(name, suffix);
 	const services: Layout["services"] = {};
 	for (const [key, service] of Object.entries(project.services)) {
 		const dir = join(servicesHome(machine, name), key);
@@ -144,11 +156,22 @@ export function layout(
 			if (error instanceof BasepadError) fail(error.message);
 			throw error;
 		}
+		const web = kindOf(service).web === true;
+		// The service is main's, so its domain is main's in every environment, as its daemon is.
+		const host = appHost(key, name);
+		if (web && key in project.apps) {
+			fail(
+				`service \`${key}\` is served at ${host}, which is app \`${key}\`'s domain. Rename one.`,
+			);
+		}
+		// A worktree's own server runs in its namespace, on a port from its name; else main's.
+		const runsIn = kindOf(service).perEnvironment?.(service) ? namespace : name;
 		services[key] = {
 			...names,
-			port: SERVICE_PORT_BASE + (hash(`${name}.${key}`) % SERVICE_PORTS),
+			port: servicePort(`${runsIn}.${key}`),
 			dir,
-			daemon: daemonId(name, key),
+			daemon: daemonId(runsIn, key),
+			...(web ? { web: { host, url: urlOf(host), port: servicePort(`${name}.${key}.web`) } } : {}),
 		};
 	}
 	// Last, so a name main itself cannot have is reported in main's words.
@@ -167,7 +190,6 @@ export function layout(
 			fail(`worktree suffixes like "${longest}" leave too little room: ${reason} ${shorten}`);
 		}
 	}
-	const namespace = namespaceOf(name, suffix);
 	return {
 		apps,
 		services,
@@ -276,6 +298,11 @@ export function supervisorPaths(machine: Pick<Machine, "home">): {
 		logs: join(root, "logs"),
 		ca: join(state, "proxy", "ca.pem"),
 	};
+}
+
+/** A service's starting port, spread over the service range by `seed`. */
+function servicePort(seed: string): number {
+	return SERVICE_PORT_BASE + (hash(seed) % SERVICE_PORTS);
 }
 
 /** FNV-1a: a stable spread of names over port blocks. */
