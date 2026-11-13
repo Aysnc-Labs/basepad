@@ -307,7 +307,7 @@ test("prune --yes removes the leftovers of gone worktrees, and keeps a removed s
 test("prune deletes a removed service's data only when asked on a terminal", async () => {
 	const no = await onTerminal(main, "n\n", "prune");
 	// The whole result, so a failure shows what basepad printed.
-	expect(no).toMatchObject({ code: 0 });
+	expect(no).toMatchObject({ code: 0, stderr: "" });
 	expect(existsSync(join(box.root, "home/services/t18shop/old"))).toBe(true);
 	const yes = await onTerminal(main, "y\n", "prune");
 	expect(yes).toMatchObject({ code: 0, stdout: expect.stringContaining("Deleted") });
