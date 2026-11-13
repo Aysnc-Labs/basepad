@@ -11,3 +11,9 @@ export const NODE_MAJOR = 24;
 
 /** pitchfork is pinned: 2.34.0 fixes a port clash between apps started in parallel. */
 export const PITCHFORK_VERSION = "2.34.0";
+
+/**
+ * pgvector, per Postgres major, from conda-forge (mise's Postgres is conda-forge's build). 0.8.0 is
+ * the last build for 17. conda-forge may stop building for 18 once its pin moves on.
+ */
+export const PGVECTOR_VERSIONS = { 17: "0.8.0", 18: "0.8.6" } as const;
