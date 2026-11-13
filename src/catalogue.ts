@@ -139,8 +139,8 @@ export interface Snapshot {
  * What a database kind does for the `db` commands. Each acts on the environment's own database in
  * `place`, on the running server, and never on another environment's: a worktree's commands leave
  * main's untouched. Each throws a `BasepadError` when the environment's database is not its own
- * (a worktree's `shared` service). Clients connected to the database are disconnected and connect
- * again by themselves.
+ * (a worktree's `shared` service). Clients connected to a database a command replaces are
+ * disconnected and connect again by themselves.
  */
 export interface Database<S, N> {
 	/**
@@ -154,6 +154,26 @@ export interface Database<S, N> {
 	snapshots(service: S, place: Place<N>): Promise<Snapshot[]>;
 	/** Deletes snapshot `label`. Throws when there is none. */
 	remove(service: S, place: Place<N>, label: string): Promise<void>;
+	/**
+	 * Replaces the database with `source`: a dump file, its format told from its first bytes, or a
+	 * URL of another server's database, which is copied. Checks the file, then awaits
+	 * `confirm(database)` with the database's name before it changes anything; `confirm` throws to
+	 * stop. The source loads into a database beside it, which takes its place only once all of it
+	 * has loaded, so a source that fails leaves the database as it was. Resolves to what the source
+	 * was read as, for the user.
+	 */
+	import(
+		service: S,
+		place: Place<N>,
+		source: string,
+		confirm: (database: string) => Promise<void>,
+	): Promise<string>;
+	/**
+	 * Writes a dump of the database that `import` reads, to `file`, else to standard output, in a
+	 * format the kind picks from the file's name; its clients stay connected. Resolves to the format
+	 * written, for the user.
+	 */
+	export(service: S, place: Place<N>, file: string | undefined): Promise<string>;
 }
 
 /** Every kind, by the name its factory has in a config. */

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readdir, realpath, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { z } from "zod";
 import {
@@ -186,6 +186,22 @@ export const COMMANDS: Record<string, Command> = {
 		args: ["label"],
 		flags: { service: SERVICE_FLAG },
 		run: dbRm,
+	},
+	"db import": {
+		summary:
+			"Replace this environment's database with a dump file or a postgres:// URL's, after asking",
+		args: ["file or url"],
+		flags: {
+			service: SERVICE_FLAG,
+			yes: { short: "y", description: "Replace the database without asking" },
+		},
+		run: dbImport,
+	},
+	"db export": {
+		summary: "Write a dump of this environment's database to a file, or to standard output",
+		args: ["file?"],
+		flags: { service: SERVICE_FLAG },
+		run: dbExport,
 	},
 };
 
@@ -1033,4 +1049,47 @@ function size(bytes: number): string {
 		unit++;
 	}
 	return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
+}
+
+/**
+ * `db import`: replaces the database with a dump or another server's, after asking with its name
+ * on a terminal; `--yes` answers. With no terminal and no `--yes`, it changes nothing.
+ */
+async function dbImport(invocation: Invocation): Promise<void> {
+	const [given = ""] = invocation.args;
+	const { key, service, place, database } = await databaseAt(invocation);
+	// A file is the developer's from where they ran it; anything else is the kind's to read.
+	const file = resolve(invocation.cwd, given);
+	const source = existsSync(file) ? file : given;
+	let replaced = "";
+	const read = await database.import(service, place, source, async (name) => {
+		replaced = name;
+		if (invocation.flags.yes === true) return;
+		const yes = await ask(`Replace \`${key}\`'s database ${name}? Its data is lost.`);
+		if (yes === undefined) {
+			throw new BasepadError(
+				`Import replaces \`${key}\`'s database ${name}, and there is no terminal to ask. Run it again with \`--yes\` to replace it.`,
+			);
+		}
+		if (!yes) throw new BasepadError(`Nothing imported; ${name} is unchanged.`);
+	});
+	invocation.print(`Imported ${read} into \`${key}\`'s database ${replaced}.`);
+}
+
+/**
+ * `db export`: a dump of the database to a file, or to standard output, which then carries only
+ * the dump: anything else basepad says goes to standard error. Never a binary dump to a terminal.
+ */
+async function dbExport(invocation: Invocation): Promise<void> {
+	const [given] = invocation.args;
+	if (given === undefined && process.stdout.isTTY) {
+		throw new BasepadError(
+			"With no file, `db export` writes the dump to standard output, which is a terminal here. Name a file, or redirect it: `basepad db export > db.dump`.",
+		);
+	}
+	const say = given === undefined ? (line: string) => console.error(line) : invocation.print;
+	const { key, service, place, database } = await databaseAt({ ...invocation, print: say });
+	const file = given === undefined ? undefined : resolve(invocation.cwd, given);
+	const format = await database.export(service, place, file);
+	if (file !== undefined) invocation.print(`Exported \`${key}\` to ${file} as ${format}.`);
 }

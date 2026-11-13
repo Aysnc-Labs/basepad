@@ -32,6 +32,8 @@ test("--help lists every command and the top flags", async () => {
 			"  db load       Replace this environment's database with a snapshot, which is kept",
 			"  db snapshots  List this environment's snapshots",
 			"  db rm         Delete one of this environment's snapshots",
+			"  db import     Replace this environment's database with a dump file or a postgres:// URL's, after asking",
+			"  db export     Write a dump of this environment's database to a file, or to standard output",
 			"",
 			"Flags:",
 			"  -h, --help     Show this help",
