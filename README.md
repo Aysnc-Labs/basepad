@@ -299,7 +299,7 @@ Run them anywhere in the project, as `npx basepad <command>`. `basepad --help` l
 | `basepad prune` | After asking: removes what worktrees whose folder is gone left, and the data of services no longer in the config. | Anything you did not say yes to. Main's databases of services still in the config. |
 | `basepad db save [label]`, `db load [label]` | `save` makes a snapshot of this environment's database, replacing one of the same label; `load` replaces the database with it. Ends the database's sessions. | Other environments' databases and snapshots. `load` keeps the snapshot. |
 | `basepad db snapshots`, `db rm <label>` | `snapshots` changes nothing and lists this environment's; `rm` deletes one. | Anything else. |
-| `basepad db import <file or url>` | After asking, or with `--yes`: replaces this environment's database with the dump or the URL's database. Ends the database's sessions. | Other environments' databases. The URL's database: it is only read. The database, when the source fails to load. |
+| `basepad db import <file or url>` | After asking, or with `--yes`: replaces this environment's database with the dump or the URL's database. Ends the database's sessions. | Other environments' databases. The URL's database: it is only read. The database, when the source is empty or fails to load. |
 | `basepad db export [file]` | Writes `file`, or standard output. | The database. |
 | `basepad setup`  | The machine, once: trusts basepad's certificate authority and makes URLs port-free. See [below](#port-free-urls-basepad-setup).                                                        | Any project. A pitchfork setup of your own: it refuses rather than overwrite it.  |
 

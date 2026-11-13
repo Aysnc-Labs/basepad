@@ -1,6 +1,16 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+	copyFile,
+	type FileHandle,
+	mkdir,
+	open,
+	readdir,
+	readFile,
+	rename,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Kind, Place, Snapshot } from "../catalogue.ts";
@@ -440,9 +450,25 @@ async function sourceOf(source: string): Promise<Source> {
 		if (start[0] === 0x1f && start[1] === 0x8b) {
 			throw new BasepadError(`${source} is gzipped. Unzip it, then import that.`);
 		}
+		if (!(await hasContent(file))) {
+			throw new BasepadError(
+				`${source} is empty, so nothing changed. Import a dump file or a postgres:// URL.`,
+			);
+		}
 		return { format: "plain", file: source, description: `the SQL file ${source}` };
 	} finally {
 		await file.close();
+	}
+}
+
+/** Whether `file` holds anything but whitespace, read only as far as its first other byte. */
+async function hasContent(file: FileHandle): Promise<boolean> {
+	const chunk = Buffer.alloc(64 * 1024);
+	for (let at = 0; ; ) {
+		const { bytesRead } = await file.read(chunk, 0, chunk.length, at);
+		if (bytesRead === 0) return false;
+		if (/\S/.test(chunk.toString("latin1", 0, bytesRead))) return true;
+		at += bytesRead;
 	}
 }
 
