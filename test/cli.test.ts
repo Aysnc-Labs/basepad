@@ -19,11 +19,12 @@ test("--help lists every command and the top flags", async () => {
 			"Usage: basepad <command> [flags]",
 			"",
 			"Commands:",
-			"  init    Write a starter basepad.config.ts in this folder",
-			"  setup   Once per machine: trust basepad's certificate and drop the port from URLs",
-			"  up      Start this project's services and apps, set its env files and show their state",
-			"  down    Stop this project's apps and services; nothing is deleted",
-			"  status  Show each app and service with its address and state",
+			"  init          Write a starter basepad.config.ts in this folder",
+			"  setup         Once per machine: trust basepad's certificate and drop the port from URLs",
+			"  up            Start this project's services and apps, set its env files and show their state",
+			"  down          Stop this project's apps and services; nothing is deleted",
+			"  status        Show each app and service with its address and state",
+			"  worktree add  Make a worktree of main, with its own databases, domains and env files",
 			"",
 			"Flags:",
 			"  -h, --help     Show this help",
@@ -59,6 +60,17 @@ test("up's and setup's help show their own flags", async () => {
 	const setup = await box.basepad(dir, "setup", "--help");
 	expect(setup.stdout).toContain("      --dry-run  Print the plan and change nothing\n");
 	expect(setup.stdout).toContain("  -y, --yes      Apply the plan without asking\n");
+});
+
+test("a two-word command takes its flags after both words", async () => {
+	const help = await box.basepad(dir, "worktree", "add", "--help");
+	expect(help.stdout).toContain("Usage: basepad worktree add [flags]\n");
+	expect(help.stdout).toContain("      --json  Print only the worktree's name and path, as JSON\n");
+	const typo = await box.basepad(dir, "worktree", "ad");
+	expect(typo.code).toBe(1);
+	expect(typo.stderr).toBe(
+		"basepad: Unknown command `worktree ad`. The nearest is `worktree add`; run `basepad --help` for every command.\n",
+	);
 });
 
 test("a mistyped command names the nearest and exits non-zero", async () => {

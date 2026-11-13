@@ -6,7 +6,7 @@ import { connect } from "node:tls";
 import { z } from "zod";
 import { interactive, must, shellQuote } from "./internal/exec.ts";
 import { answers } from "./internal/ports.ts";
-import { appHost, type Machine, supervisorPaths } from "./layout.ts";
+import { type Machine, supervisorPaths } from "./layout.ts";
 import { install } from "./tools.ts";
 import { PITCHFORK_VERSION } from "./versions.ts";
 
@@ -32,8 +32,13 @@ export interface Daemon {
 export type DaemonState = "running" | "starting" | "stopped" | "failed";
 
 export interface Environment {
-	/** Its namespace with the supervisor: the project's name. */
+	/** Its namespace with the supervisor, from Layout. */
 	namespace: string;
+	/**
+	 * Main's domain label, the project's name. A worktree has none: pitchfork serves a git
+	 * worktree's daemons at `<daemon>.<folder>.<main's label>.localhost`, from its folder.
+	 */
+	label?: string;
 	/** Its folder: the config's. */
 	dir: string;
 	/** Where its generated definitions are written, in basepad's home. */
@@ -73,9 +78,15 @@ export interface Supervisor {
 	owner(namespace: string): Promise<string | undefined>;
 	/**
 	 * Starts the named daemons that are not running, then waits up to `waitMs` for each to listen
-	 * (when it has a port) or fail, and returns every daemon's state in the namespace.
+	 * (when it has a port) or fail, and for the proxy to route each of `hosts` (daemon to domain)
+	 * that runs. Returns every daemon's state in the namespace.
 	 */
-	start(namespace: string, names: string[], waitMs: number): Promise<Record<string, DaemonState>>;
+	start(
+		namespace: string,
+		names: string[],
+		waitMs: number,
+		hosts: Record<string, string>,
+	): Promise<Record<string, DaemonState>>;
 	/** Stops every running daemon in the namespace. Deletes nothing. */
 	stop(namespace: string): Promise<void>;
 	/** Every registered daemon's state in the namespace. */
@@ -95,8 +106,8 @@ function settings(machine: Machine): Record<string, string> {
 	return {
 		// Every daemon basepad runs is waited on by basepad itself, never by a fixed delay.
 		"general.ready_delay": "0s",
-		// Domains are <daemon>.<name>.localhost; a git worktree must not add its label to them.
-		"general.worktree": "false",
+		// A worktree's domains are <daemon>.<folder>.<name>.localhost, its folder being a git worktree.
+		"general.worktree": "true",
 		"proxy.enable": "true",
 		"proxy.https": "true",
 		"proxy.port": String(machine.proxyPort),
@@ -210,7 +221,7 @@ export async function openSupervisor(
 			await run("proxy", "trust");
 		},
 
-		async register({ namespace, dir, definitions, daemons }) {
+		async register({ namespace, label, dir, definitions, daemons }) {
 			await serve();
 			const text = toml(daemons);
 			if ((await readFile(definitions, "utf8").catch(() => "")) !== text) {
@@ -234,14 +245,13 @@ export async function openSupervisor(
 				dir,
 				"--namespace",
 				namespace,
-				"--label",
-				namespace,
+				...(label === undefined ? [] : ["--label", label]),
 			);
 		},
 
 		owner: registeredDir,
 
-		async start(namespace, names, waitMs) {
+		async start(namespace, names, waitMs, hosts) {
 			const listed = await list(namespace);
 			const idle = names.filter(
 				(name) => !listed.some((d) => d.name === name && LIVE.has(d.status)),
@@ -253,10 +263,8 @@ export async function openSupervisor(
 				const settled = names.every((name) => now[name] !== "starting");
 				if (settled || Date.now() >= until) {
 					// The proxy re-reads its routes every 2 s, so a new daemon's domain can lag.
-					const ported = (await list(namespace)).filter((d) => (d.port ?? []).length > 0);
-					for (const daemon of ported) {
-						if (now[daemon.name] !== "running") continue;
-						const host = appHost(daemon.name, namespace);
+					for (const [name, host] of Object.entries(hosts)) {
+						if (now[name] !== "running") continue;
 						while (!(await routed(machine.proxyPort, host)) && Date.now() < until + 3000) {
 							await new Promise((resolve) => setTimeout(resolve, 200));
 						}
