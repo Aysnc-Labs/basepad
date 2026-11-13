@@ -43,7 +43,8 @@ async function main(argv: string[]): Promise<number> {
 		return 0;
 	}
 	const wanted = command.args ?? [];
-	if (positional.length !== wanted.length) {
+	const required = wanted.filter((arg) => !arg.endsWith("?")).length;
+	if (positional.length < required || positional.length > wanted.length) {
 		throw new BasepadError(
 			wanted.length === 0
 				? `\`basepad ${name}\` takes no arguments; got \`${positional[0]}\`.`
@@ -159,9 +160,9 @@ function commandHelp(name: string, command: Command): string {
 	].join("\n");
 }
 
-/** A command's arguments for its usage line: `<name> `. */
+/** A command's arguments for its usage line: `<name> `, or `[<name>] ` for an optional one. */
 function usageArgs(args: string[]): string {
-	return args.map((arg) => `<${arg}> `).join("");
+	return args.map((arg) => (arg.endsWith("?") ? `[<${arg.slice(0, -1)}>] ` : `<${arg}> `)).join("");
 }
 
 function flagLines(flags: Record<string, Flag>): string[] {

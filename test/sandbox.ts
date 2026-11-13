@@ -50,9 +50,12 @@ export interface Sandbox {
 	 * authority, and returns its JSON body. Rejects on any status but 200.
 	 */
 	get<T = unknown>(url: string): Promise<T>;
-	/** `basepad` with extra environment variables, or under another program (an older Node). */
+	/**
+	 * `basepad` with extra environment variables, under another program (an older Node), or with
+	 * `input` on its standard input.
+	 */
 	basepadWith(
-		options: { env?: NodeJS.ProcessEnv; via?: string[] },
+		options: { env?: NodeJS.ProcessEnv; via?: string[]; input?: string },
 		cwd: string,
 		...args: string[]
 	): Promise<Result>;
@@ -82,13 +85,12 @@ export async function sandbox(): Promise<Sandbox> {
 		args: string[],
 		cwd: string,
 		extra: NodeJS.ProcessEnv = {},
+		input?: string,
 	): Promise<Result> => {
 		try {
-			const { stdout, stderr } = await run(file, args, {
-				cwd,
-				env: { ...env, ...extra },
-				maxBuffer: 16 << 20,
-			});
+			const child = run(file, args, { cwd, env: { ...env, ...extra }, maxBuffer: 16 << 20 });
+			child.child.stdin?.end(input);
+			const { stdout, stderr } = await child;
 			return { code: 0, stdout, stderr };
 		} catch (error) {
 			const e = error as { code?: number | string; stdout?: string; stderr?: string };
@@ -161,7 +163,7 @@ export async function sandbox(): Promise<Sandbox> {
 		},
 		basepadWith: (options, cwd, ...args) => {
 			const [file, ...via] = options.via ?? [process.execPath];
-			return exec(file as string, [...via, cli, ...args], cwd, options.env);
+			return exec(file as string, [...via, cli, ...args], cwd, options.env, options.input);
 		},
 		async dispose() {
 			// Stop basepad's supervisor and its apps, so nothing outlives the test.

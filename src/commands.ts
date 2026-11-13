@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, readdir, realpath, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { z } from "zod";
 import { kindOf, type NamesOf, type Place, type Service, type WorktreeData } from "./catalogue.ts";
-import { CONFIG_FILE, loadProject, type Project } from "./config.ts";
+import { readHookInput } from "./claude-hooks.ts";
+import { CONFIG_FILE, LABEL, loadProject, type Project } from "./config.ts";
 import { writeEnvFiles } from "./env-files.ts";
 import { dropHosts, syncHosts } from "./hosts.ts";
 import type { EnvFiles } from "./index.ts";
@@ -54,7 +55,7 @@ export interface Invocation {
 /** One `basepad` command. The CLI dispatches from, and generates help from, `COMMANDS`. */
 export interface Command {
 	summary: string;
-	/** The names of the arguments it takes, all required; none when absent. */
+	/** The names of the arguments it takes, in order; one ending in `?` is optional. */
 	args?: string[];
 	flags: Record<string, Flag>;
 	run(invocation: Invocation): Promise<void>;
@@ -104,6 +105,10 @@ export const COMMANDS: Record<string, Command> = {
 				description: "Check out this branch, or make it from main's HEAD when it does not exist",
 			},
 			start: { description: "Start its apps now, not on the first request to their domains" },
+			claude: {
+				description:
+					"Claude Code's WorktreeCreate hook: read its input on stdin, use its name as the branch, print only the path",
+			},
 		},
 		run: worktreeAdd,
 	},
@@ -115,9 +120,13 @@ export const COMMANDS: Record<string, Command> = {
 	"worktree rm": {
 		summary:
 			"Remove a worktree: its apps, databases, registrations and git worktree; its branch stays",
-		args: ["name"],
+		args: ["name?"],
 		flags: {
 			force: { description: "Remove it even with uncommitted changes, which are lost" },
+			claude: {
+				description:
+					"Claude Code's WorktreeRemove hook: remove the worktree at its input's path, as --force does",
+			},
 		},
 		run: worktreeRm,
 	},
@@ -151,6 +160,11 @@ async function environmentAt(cwd: string): Promise<Environment> {
 	const project = await loadProject(cwd);
 	const checkout = await checkoutOf(project.root);
 	if (checkout.suffix === undefined) return { project };
+	if (!LABEL.test(checkout.suffix)) {
+		throw new BasepadError(
+			`${project.root} is git worktree \`${checkout.suffix}\`, and a worktree's folder name is its name in domains and databases, so it must be a lowercase DNS label (letters, digits and inner hyphens). Rename it with \`git worktree move <folder> <new-folder>\`.`,
+		);
+	}
 	if (!existsSync(join(checkout.main, CONFIG_FILE))) {
 		throw new BasepadError(
 			`${project.root} is git worktree \`${checkout.suffix}\`, made from ${checkout.main}, which has no ${CONFIG_FILE}. A worktree is made from main: commit the config there and run \`basepad up\` in it.`,
@@ -324,14 +338,21 @@ async function startApps(
  * start on the first request to their domains, or now with `--start`. Prints where it is.
  */
 async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
-	// With `--json`, stdout carries the answer alone.
-	const say = flags.json === true ? (line: string) => console.error(line) : print;
-	const at = await environmentAt(cwd);
+	const hook = flags.claude === true;
+	if (hook && (flags.branch !== undefined || flags.json === true)) {
+		throw new BasepadError(
+			"`--claude` takes the branch from Claude Code's hook input and prints only the path, so it goes without `--branch` and `--json`.",
+		);
+	}
+	// With `--json` or `--claude`, stdout carries the answer alone.
+	const say = flags.json === true || hook ? (line: string) => console.error(line) : print;
+	const input = hook ? await readHookInput("WorktreeCreate") : undefined;
+	const at = await environmentAt(input?.cwd ?? cwd);
 	const main = at.main ?? at.project;
 	const context = await open({ project: main }, {}, say);
 	await ready({ project: main }, context);
 	// Main's config is read before checking out, so a name too long fails before anything is made.
-	const requested = typeof flags.branch === "string" ? flags.branch : undefined;
+	const requested = input?.name ?? (typeof flags.branch === "string" ? flags.branch : undefined);
 	const { suffix, branch, root } = await checkOutWorktree(main, requested);
 	const kept = `Worktree ${suffix} is checked out at ${root}`;
 	let environment: Environment;
@@ -364,12 +385,13 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 		print(JSON.stringify({ name: suffix, path: root }));
 	} else {
 		const all = await withServices(context.supervisor, environment, states);
-		print(await stateTables(environment, lay, context.here, all));
-		print("");
-		print(
+		say(await stateTables(environment, lay, context.here, all));
+		say("");
+		say(
 			`Made worktree ${suffix} at ${root}, on branch ${branch}. ${flags.start === true ? "Its apps are started." : "Its apps start when their domains are first opened, or with `basepad up` there."}`,
 		);
 	}
+	if (hook) print(root);
 	if (failure !== undefined) throw new BasepadError(failure);
 }
 
@@ -587,7 +609,9 @@ async function worktreeLs({ cwd, print }: Invocation): Promise<void> {
  * its registration), so it works whatever state its folder or config is in. Its branch stays.
  */
 async function worktreeRm({ cwd, flags, args, print }: Invocation): Promise<void> {
+	if (flags.claude === true) return worktreeRmHook(cwd, args);
 	const [suffix] = args;
+	if (suffix === undefined) throw new BasepadError("Usage: basepad worktree rm <name> [flags]");
 	const main = await mainAt(cwd);
 	const tree = (await listWorktrees(main)).find((listed) => listed.suffix === suffix);
 	if (tree === undefined) {
@@ -600,6 +624,42 @@ async function worktreeRm({ cwd, flags, args, print }: Invocation): Promise<void
 			`${tree.path} has uncommitted changes. Commit or stash them, or pass \`--force\` to lose them.`,
 		);
 	}
+	await removeWorktree(main, tree, print);
+}
+
+/**
+ * `worktree rm --claude`: removes the worktree at the hook input's `worktree_path`, changes and all:
+ * Claude Code has asked before discarding work, or found none. Says everything on stderr.
+ */
+async function worktreeRmHook(cwd: string, args: string[]): Promise<void> {
+	if (args.length > 0) {
+		throw new BasepadError(
+			"`--claude` takes the worktree from Claude Code's hook input, so it goes without a name.",
+		);
+	}
+	const input = await readHookInput("WorktreeRemove");
+	const path = await realpath(input.worktree_path).catch(() => input.worktree_path);
+	// From the worktree itself while it exists, so a session folder elsewhere does not matter.
+	const checkout = existsSync(path) ? await checkoutOf(path) : {};
+	const main =
+		checkout.suffix === undefined
+			? await mainAt(input.cwd ?? cwd)
+			: await loadProject(checkout.main);
+	const tree = (await listWorktrees(main)).find((t) => t.root === path || t.path === path);
+	if (tree === undefined) {
+		throw new BasepadError(
+			`${input.worktree_path} is no worktree of ${main.name}'s main at ${main.root}. \`basepad worktree ls\` lists them.`,
+		);
+	}
+	await removeWorktree(main, tree, (line) => console.error(line));
+}
+
+/** Removes a listed worktree of main: what basepad made for it, then its git worktree. */
+async function removeWorktree(
+	main: Project,
+	tree: Listed,
+	print: Invocation["print"],
+): Promise<void> {
 	// Main's servers hold the worktree's data, so they run for it to be dropped.
 	const context = await open({ project: main }, {}, print);
 	await ready({ project: main }, context);
