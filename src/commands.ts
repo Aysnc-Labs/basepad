@@ -766,15 +766,15 @@ async function removeEnvironment(
 	const lay = layout(main, here);
 	const tree = worktreeLayout(main, here, suffix);
 	for (const [key, service] of Object.entries(main.services)) {
-		const kept = kindOf(service).worktreeData;
-		if (kept === undefined) continue;
+		const store = kindOf(service).worktreeData;
+		if (store === undefined) continue;
 		const place = placeOf(main, lay, here, key);
 		// Its data by name or stamp; with no names that fit, by its stamp among every worktree's.
 		const data =
 			tree === undefined
-				? (await kept.list(service, place)).filter((d) => d.owner === root)
-				: await kept.list(service, { ...placeOf(main, tree, here, key), owner: root });
-		await kept.drop(
+				? (await store.list(service, place)).filter((d) => d.owner === root)
+				: await store.list(service, { ...placeOf(main, tree, here, key), owner: root });
+		await store.drop(
 			service,
 			place,
 			data.map((d) => d.name),
@@ -812,9 +812,9 @@ async function leftoversOf(
 	const lay = layout(main, here);
 	const data: Leftovers["data"] = [];
 	for (const [key, service] of Object.entries(main.services)) {
-		const kept = kindOf(service).worktreeData;
-		if (kept === undefined) continue;
-		const found = await kept.list(service, placeOf(main, lay, here, key));
+		const store = kindOf(service).worktreeData;
+		if (store === undefined) continue;
+		const found = await store.list(service, placeOf(main, lay, here, key));
 		const gone = found.filter((d) => d.owner !== "" && !existsSync(d.owner));
 		if (gone.length > 0) data.push({ key, data: gone });
 	}

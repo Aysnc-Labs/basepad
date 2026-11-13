@@ -113,7 +113,7 @@ export interface Kind<S extends ServiceBase, O, N> {
 		},
 	): Promise<O>;
 	/** The data this service keeps for worktrees; absent for a kind that keeps none. */
-	worktreeData?: WorktreeDataOf<S, N>;
+	worktreeData?: WorktreeDataStore<S, N>;
 	/** Where a client reaches the service: where it runs, else where it would first be tried. */
 	address(service: S, place: Place<N>): Promise<string>;
 	/** The `db` commands, for a kind that is a database; absent for one that is not. */
@@ -121,7 +121,7 @@ export interface Kind<S extends ServiceBase, O, N> {
 }
 
 /** What a kind that keeps data for worktrees does with it, for `worktree rm` and `prune`. */
-export interface WorktreeDataOf<S, N> {
+export interface WorktreeDataStore<S, N> {
 	/**
 	 * The data kept for worktrees, never main's own. In main's place, every worktree's; in a
 	 * worktree's, that worktree's: stamped with its folder (`owner`), or unstamped under its name.
