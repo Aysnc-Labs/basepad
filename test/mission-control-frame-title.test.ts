@@ -97,3 +97,15 @@ test("a long query being typed shows its end and the caret, as an input field do
 	}
 	expect(top(view, 72, 16)).toMatch(/ \/ …[a-j]{10,}hij▏ /);
 });
+
+test("a found query outlasts the focused app's name: the name gives way first, the query never", () => {
+	const view = {
+		...paused,
+		focus: "shop/chatty",
+		search: { query: "chatty line 12", typing: false },
+	};
+	const narrow = top(view, 72, 16);
+	expect(narrow).toContain("“chatty line 12”");
+	expect(narrow).not.toContain("chatty only");
+	expect(top(view, 120, 16)).toMatch(/chatty only.*“chatty line 12”/);
+});
