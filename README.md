@@ -15,16 +15,23 @@ Tell basepad what your project runs:
 
 ```ts
 // basepad.config.ts
-import { defineConfig, postgres } from "@aysnc-labs/basepad";
+import { defineConfig, mailpit, postgres, redis } from "@aysnc-labs/basepad";
 
 export default defineConfig({
 	name: "shop",
-	services: { db: postgres() },
+	services: { db: postgres(), cache: redis(), mail: mailpit() },
 	apps: {
 		web: { run: "next dev" },
 		api: { run: "php artisan serve --port=$PORT" },
 	},
-	env: ({ db, web }) => ({ ".env.local": { DATABASE_URL: db.url, APP_URL: web.url } }),
+	env: ({ db, cache, mail, web }) => ({
+		".env.local": {
+			DATABASE_URL: db.url,
+			REDIS_URL: cache.url,
+			MAIL_URL: mail.url,
+			APP_URL: web.url,
+		},
+	}),
 });
 ```
 
@@ -35,6 +42,8 @@ https://web.shop.localhost              you, on main
 https://web.worktree-1.shop.localhost   the agent fixing checkout
 https://web.worktree-2.shop.localhost   the agent rewriting search
 ```
+
+Mail it sends lands in a local inbox at `https://mail.shop.localhost`, and `basepad db save` snapshots its database before it tries something risky.
 
 ## Try it
 
@@ -58,6 +67,7 @@ Works on macOS (Apple Silicon) and Linux (x64 and ARM).
 | `basepad status` | Every app's URL and state |
 | `basepad worktree add` | A new branch with its own environment |
 | `basepad worktree rm <name>` | Throw one away. The branch survives |
+| `basepad db save`, `db load` | Snapshot this environment's database, and put it back |
 | `basepad setup` | Once per machine, for trusted URLs with no port |
 
 The [guide](docs/guide.md) has the rest: every config option, how worktrees copy data, the Claude Code hooks, CI and sandboxes, and every key in mission control.
