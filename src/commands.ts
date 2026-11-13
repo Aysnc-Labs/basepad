@@ -5,10 +5,12 @@ import { z } from "zod";
 import { kindOf, type Place } from "./catalogue.ts";
 import { CONFIG_FILE, LOCAL_FILE, loadProject, type Project } from "./config.ts";
 import { writeEnvFiles } from "./env-files.ts";
+import { syncHosts } from "./hosts.ts";
 import type { EnvFiles, Service, ServiceOutputs } from "./index.ts";
 import { BasepadError, shellQuote } from "./internal/exec.ts";
 import { table } from "./internal/table.ts";
-import { type Layout, layout, type Machine, machine } from "./layout.ts";
+import { isRootOnLinux, type Layout, layout, type Machine, machine } from "./layout.ts";
+import { setup, trustAsRoot } from "./setup.ts";
 import { type Daemon, type DaemonState, openSupervisor, type Supervisor } from "./supervisor.ts";
 
 export interface Flag {
@@ -36,6 +38,14 @@ export const COMMANDS: Record<string, Command> = {
 		summary: `Write a starter ${CONFIG_FILE} in this folder`,
 		flags: {},
 		run: init,
+	},
+	setup: {
+		summary: "Once per machine: trust basepad's certificate and drop the port from URLs",
+		flags: {
+			"dry-run": { description: "Print the plan and change nothing" },
+			yes: { short: "y", description: "Apply the plan without asking" },
+		},
+		run: setup,
 	},
 	up: {
 		summary: "Start this project's services and apps, set its env files and show their state",
@@ -152,7 +162,8 @@ const FAILED_LINES = 20;
 async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const project = await loadProject(cwd);
 	const here = machine(process.env);
-	const lay = layout(project, here);
+	// Ports, folders and databases; the URL form waits for the supervisor, which answers on 443.
+	const ports = layout(project, here);
 	const services = Object.keys(project.services);
 	const apps = Object.keys(project.apps);
 	const supervisor = await openSupervisor(here);
@@ -165,21 +176,29 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const daemons: Record<string, Daemon> = {};
 	for (const key of services) {
 		const service = project.services[key] as Service;
-		daemons[key] = await kindOf(service).prepare(service, placeOf(project, lay, here, key));
+		daemons[key] = await kindOf(service).prepare(service, placeOf(project, ports, here, key));
 	}
 	for (const [key, app] of Object.entries(project.apps)) {
 		daemons[key] = {
 			run: withLocalBins(project, app.cwd, app.run),
 			dir: app.cwd,
-			port: lay.apps[key]?.port,
+			port: ports.apps[key]?.port,
 		};
 	}
 	await supervisor.register({
 		namespace: project.name,
 		dir: project.root,
-		definitions: lay.definitions,
+		definitions: ports.definitions,
 		daemons,
 	});
+	if (isRootOnLinux()) for (const line of await trustAsRoot(supervisor)) print(line);
+	const lay = layout(project, await asked(here, supervisor));
+	for (const line of await syncHosts(
+		project.name,
+		Object.values(lay.apps).map((a) => a.host),
+	)) {
+		print(line);
+	}
 	const since = new Date(Date.now() - 1000);
 	const outputs: Record<string, ServiceOutputs | { url: string }> = {};
 	if (services.length > 0) {
@@ -200,6 +219,11 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	print(await stateTables(project, lay, here, states));
 	const failed = apps.filter((key) => states[key] === "failed");
 	if (failed.length > 0) throw new BasepadError(await failures(supervisor, project, failed, since));
+}
+
+/** The machine with whether URLs are port-free asked from its port 443, once the supervisor runs. */
+async function asked(here: Machine, supervisor: Supervisor): Promise<Machine> {
+	return { ...here, portFree: (await supervisor.standardPort()) === "proxy" };
 }
 
 /** Where one of the project's services lives. */
@@ -296,11 +320,16 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 async function status({ cwd, print }: Invocation): Promise<void> {
 	const project = await loadProject(cwd);
 	const here = machine(process.env);
-	const lay = layout(project, here);
-	if (Object.keys(lay.apps).length === 0 && Object.keys(project.services).length === 0) {
+	if (Object.keys(project.apps).length === 0 && Object.keys(project.services).length === 0) {
 		print(`${project.file} names no apps or services.`);
 		return;
 	}
 	const supervisor = await openSupervisor(here);
-	print(await stateTables(project, lay, here, await supervisor.status(project.name)));
+	const states = await supervisor.status(project.name);
+	// With no supervisor running nothing answers on 443, so the URL form is the port's default.
+	const lay = layout(
+		project,
+		Object.keys(states).length > 0 ? await asked(here, supervisor) : here,
+	);
+	print(await stateTables(project, lay, here, states));
 }

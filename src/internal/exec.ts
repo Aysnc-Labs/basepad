@@ -65,3 +65,23 @@ export async function must(
 export function shellQuote(word: string): string {
 	return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
 }
+
+/**
+ * Runs a program on the user's own terminal, so it can ask them things (`sudo`'s password, a
+ * confirmation). Returns its exit code; never throws for a non-zero exit.
+ */
+export function interactive(
+	file: string,
+	args: readonly string[],
+	options: ExecOptions = {},
+): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const child = spawn(file, args, {
+			cwd: options.cwd,
+			env: options.env ?? process.env,
+			stdio: "inherit",
+		});
+		child.on("error", reject);
+		child.on("close", (code) => resolve(code ?? 1));
+	});
+}

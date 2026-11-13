@@ -10,7 +10,7 @@ All tests are the `test` kind; there is no `e2e` or `check` kind yet.
 - `npm run check`: the gate CI runs: `biome check`, `tsc --noEmit` (which also checks the `@ts-expect-error` lines in `test/define-config.test.ts`), then `npm test`.
 - `npx biome check --write .`: format and fix lint.
 
-Two seams, both `test`: pure modules called in process (Config, Layout), and the built CLI in a sandbox (`test/sandbox.ts`). In-process config loading goes through Vite's TypeScript transform, not basepad's load hook, so anything about how a config file is loaded is tested through the CLI.
+Two seams, both `test`: pure modules called in process (Config, Layout, Hosts), and the built CLI in a sandbox (`test/sandbox.ts`). In-process config loading goes through Vite's TypeScript transform, not basepad's load hook, so anything about how a config file is loaded is tested through the CLI.
 
 ## Isolating a lane
 
@@ -20,7 +20,8 @@ A lane is a git worktree of its own on its own branch. Its tests must never touc
 - Tool installs go to `MISE_DATA_DIR`, which the sandbox leaves alone. Export `MISE_DATA_DIR` and `MISE_CACHE_DIR` to a lane temp dir before `npm test` to keep installs (Node 18 and 24 for the launcher test) out of the user's mise.
 - `test/postgres-17.test.ts` uninstalls and reinstalls `postgres@17`; it runs only when `CI` or `MISE_DATA_DIR` is set, so a developer's own install is left alone.
 - Ports: a sandbox picks free ports itself (`BASEPAD_PROXY_PORT` included); hard-coded ports collide between lanes. A service's port comes from the project's name, so give each test file's project its own name.
-- Processes: a sandbox's `dispose()` stops basepad's supervisor and its apps. A test that runs `up` must create its sandbox through `sandbox()` and dispose it, or apps outlive the run.
+- Processes: a sandbox's `dispose()` stops basepad's supervisor and its apps and services. A test that runs `up` must create its sandbox through `sandbox()` and dispose it, or apps outlive the run.
+- `basepad setup` changes the machine itself (trust store, a pf or iptables redirect, `sudo`): outside a container, run it only with `--dry-run`.
 - Running basepad by hand: `node dist/launcher.js <command>` with `BASEPAD_HOME` set to a temp dir and `BASEPAD_PROXY_PORT` to a free port. Stop its supervisor afterwards with `PITCHFORK_STATE_DIR=$BASEPAD_HOME/pitchfork/state mise exec pitchfork@<version> -- pitchfork supervisor stop`.
 
 ## Skills to load
