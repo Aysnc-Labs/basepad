@@ -205,6 +205,40 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		return outputs;
 	},
 
+	async worktreeData(service, place) {
+		const port = await runningPort(place.data);
+		if (port === undefined) return [];
+		const pg = await installPostgres(service.version, place.machine.home);
+		const rows = await query(
+			pg,
+			port,
+			`select datname || '|' || coalesce(shobj_description(oid, 'pg_database'), '') from pg_database where datname like ${literal(`${likeEscaped(place.main)}\\_%`)}`,
+		);
+		const all = rows
+			.split("\n")
+			.filter(Boolean)
+			.map((row) => {
+				const at = row.indexOf("|");
+				return { name: row.slice(0, at), owner: row.slice(at + 1) };
+			})
+			.filter((data) => data.name !== place.main);
+		if (place.suffix === undefined) return all;
+		return all.filter((data) => data.name === place.database || data.owner === place.owner);
+	},
+
+	async dropWorktreeData(service, place, names) {
+		if (names.includes(place.main)) {
+			throw new BasepadError(`\`${place.main}\` is main's database, which basepad never drops.`);
+		}
+		const port = await runningPort(place.data);
+		if (port === undefined || names.length === 0) return;
+		const pg = await installPostgres(service.version, place.machine.home);
+		for (const name of names) {
+			// A worktree's app may still hold it open; its sessions end with it.
+			await query(pg, port, `drop database if exists ${identifier(name)} with (force)`);
+		}
+	},
+
 	async address(_service, place) {
 		const port = (await runningPort(place.data)) ?? place.port;
 		return `postgresql://${USER}@${HOST}:${port}/${place.database}`;
@@ -304,6 +338,11 @@ async function query(pg: Tool, port: number, sql: string): Promise<string> {
 		{ env: { ...env, PGCONNECT_TIMEOUT: "2" } },
 	);
 	return out.trim();
+}
+
+/** `text` for a `like` pattern, its wildcards matched as themselves (backslash escapes). */
+function likeEscaped(text: string): string {
+	return text.replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
 function literal(text: string): string {

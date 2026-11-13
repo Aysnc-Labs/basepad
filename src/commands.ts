@@ -1,11 +1,12 @@
 import { existsSync } from "node:fs";
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { z } from "zod";
-import { kindOf, type NamesOf, type Place, type Service } from "./catalogue.ts";
+import { kindOf, type NamesOf, type Place, type Service, type WorktreeData } from "./catalogue.ts";
 import { CONFIG_FILE, loadProject, type Project } from "./config.ts";
 import { writeEnvFiles } from "./env-files.ts";
-import { syncHosts } from "./hosts.ts";
+import { dropHosts, syncHosts } from "./hosts.ts";
 import type { EnvFiles } from "./index.ts";
 import { init } from "./init.ts";
 import { BasepadError, shellQuote } from "./internal/exec.ts";
@@ -18,10 +19,18 @@ import {
 	type Machine,
 	machine,
 	type ServicePlace,
+	servicesHome,
 } from "./layout.ts";
 import { setup, trustAsRoot } from "./setup.ts";
 import { type Daemon, type DaemonState, openSupervisor, type Supervisor } from "./supervisor.ts";
-import { checkOutWorktree, checkoutOf } from "./worktrees.ts";
+import {
+	checkOutWorktree,
+	checkoutOf,
+	hasChanges,
+	type Listed,
+	listWorktrees,
+	removeCheckout,
+} from "./worktrees.ts";
 
 export interface Flag {
 	short?: string;
@@ -30,6 +39,8 @@ export interface Flag {
 
 export interface Invocation {
 	cwd: string;
+	/** The arguments given, in the order the command's `args` names them. */
+	args: string[];
 	/** The flags given, by long name. Every flag is a switch. */
 	flags: Record<string, boolean>;
 	/** Prints one line of the command's output. */
@@ -39,6 +50,8 @@ export interface Invocation {
 /** One `basepad` command. The CLI dispatches from, and generates help from, `COMMANDS`. */
 export interface Command {
 	summary: string;
+	/** The names of the arguments it takes, all required; none when absent. */
+	args?: string[];
 	flags: Record<string, Flag>;
 	run(invocation: Invocation): Promise<void>;
 }
@@ -84,6 +97,31 @@ export const COMMANDS: Record<string, Command> = {
 			json: { description: "Print only the worktree's name and path, as JSON" },
 		},
 		run: worktreeAdd,
+	},
+	"worktree ls": {
+		summary: "List main's worktrees with their branches and folders",
+		flags: {},
+		run: worktreeLs,
+	},
+	"worktree rm": {
+		summary:
+			"Remove a worktree: its apps, databases, registrations and git worktree; its branch stays",
+		args: ["name"],
+		flags: {
+			force: { description: "Remove it even with uncommitted changes, which are lost" },
+		},
+		run: worktreeRm,
+	},
+	prune: {
+		summary: "Remove what is left of worktrees whose folder is gone, after showing it",
+		flags: {
+			yes: {
+				short: "y",
+				description:
+					"Remove worktrees' leftovers without asking; a removed service's data is still asked",
+			},
+		},
+		run: prune,
 	},
 };
 
@@ -433,4 +471,260 @@ async function status({ cwd, print }: Invocation): Promise<void> {
 		suffix,
 	);
 	print(await stateTables(environment, lay, here, states));
+	if (suffix === undefined) await printWorktrees(project, here, supervisor, print);
+}
+
+/** Main's project, from main's folder or a worktree's. */
+async function mainAt(cwd: string): Promise<Project> {
+	const at = await environmentAt(cwd);
+	return at.main ?? at.project;
+}
+
+/**
+ * `status` in main: each worktree git lists, with its tables from its own config, then what is left
+ * of worktrees whose folder is gone.
+ */
+async function printWorktrees(
+	main: Project,
+	here: Machine,
+	supervisor: Supervisor,
+	print: Invocation["print"],
+): Promise<void> {
+	for (const tree of await listWorktrees(main)) {
+		print("");
+		print(`${tree.suffix} on branch ${tree.branch ?? "(detached)"} at ${tree.root}`);
+		if (!tree.present) {
+			print("Its folder is gone; `basepad prune` clears what is left of it.");
+			continue;
+		}
+		try {
+			const environment = await environmentAt(tree.root);
+			const { namespace } = layout(environment.project, here, tree.suffix);
+			const states = await withServices(
+				supervisor,
+				environment,
+				await supervisor.status(namespace),
+			);
+			const lay = layout(
+				environment.project,
+				await machineWithPortFree(here, supervisor),
+				tree.suffix,
+			);
+			print(await stateTables(environment, lay, here, states));
+		} catch (error) {
+			if (!(error instanceof BasepadError)) throw error;
+			print(error.message);
+		}
+	}
+	const left = await leftoversOf(main, here, supervisor);
+	const rows = leftoverRows({ ...left, checkouts: [] });
+	if (rows.length > 1) {
+		print("");
+		print("Left by worktrees whose folder is gone; `basepad prune` removes it:");
+		print(table(rows));
+	}
+}
+
+async function worktreeLs({ cwd, print }: Invocation): Promise<void> {
+	const main = await mainAt(cwd);
+	const trees = await listWorktrees(main);
+	if (trees.length === 0) {
+		print("No worktrees. Make one with `basepad worktree add`.");
+		return;
+	}
+	const rows = trees.map((tree) => [
+		tree.suffix,
+		tree.branch ?? "(detached)",
+		tree.present ? tree.root : `${tree.root} (gone; \`basepad prune\` clears it)`,
+	]);
+	print(table([["WORKTREE", "BRANCH", "FOLDER"], ...rows]));
+}
+
+/**
+ * `worktree rm`: removes a worktree from its name alone (git's record, the name pattern of its data,
+ * its registration), so it works whatever state its folder or config is in. Its branch stays.
+ */
+async function worktreeRm({ cwd, flags, args, print }: Invocation): Promise<void> {
+	const [suffix] = args;
+	const main = await mainAt(cwd);
+	const tree = (await listWorktrees(main)).find((listed) => listed.suffix === suffix);
+	if (tree === undefined) {
+		throw new BasepadError(
+			`${main.name} has no worktree \`${suffix}\`. \`basepad worktree ls\` lists them; \`basepad prune\` clears what is left of one whose git worktree is gone.`,
+		);
+	}
+	if (tree.present && flags.force !== true && (await hasChanges(tree.path))) {
+		throw new BasepadError(
+			`${tree.path} has uncommitted changes. Commit or stash them, or pass \`--force\` to lose them.`,
+		);
+	}
+	// Main's servers hold the worktree's data, so they run for it to be dropped.
+	const context = await open({ project: main }, {}, print);
+	await ready({ project: main }, context);
+	await removeEnvironment(main, tree.suffix, tree.root, context);
+	await removeCheckout(main, tree.path);
+	print(
+		`Removed worktree ${tree.suffix}: its apps, databases and git worktree.${tree.branch === undefined ? "" : ` Its branch ${tree.branch} is kept.`}`,
+	);
+}
+
+/**
+ * Removes what basepad made for worktree `suffix` of main, from main's config alone: its apps and
+ * registration, its domains in the hosts file, and its data on main's servers (never main's own: a
+ * `shared` service's is main's).
+ */
+async function removeEnvironment(
+	main: Project,
+	suffix: string,
+	root: string,
+	{ here, supervisor }: Context,
+): Promise<void> {
+	const lay = layout(main, here, suffix);
+	await supervisor.unregister(lay);
+	await dropHosts(lay.namespace);
+	for (const [key, service] of Object.entries(main.services)) {
+		const place = { ...placeOf(main, lay, here, key), owner: root };
+		const data = await kindOf(service).worktreeData(service, place);
+		await kindOf(service).dropWorktreeData(
+			service,
+			place,
+			data.map((d) => d.name),
+		);
+	}
+}
+
+/** What is left of worktrees whose folder is gone. */
+interface Leftovers {
+	/** git's records of them. */
+	checkouts: Listed[];
+	/** Their data on main's servers, by service key. */
+	data: { key: string; data: WorktreeData[] }[];
+	/** Their registrations with the supervisor. */
+	registrations: { namespace: string; dir: string }[];
+}
+
+/** Found by name alone: git's list, data stamped with a gone folder, registrations of a gone folder. */
+async function leftoversOf(
+	main: Project,
+	here: Machine,
+	supervisor: Supervisor,
+): Promise<Leftovers> {
+	const checkouts = (await listWorktrees(main)).filter((tree) => !tree.present);
+	const lay = layout(main, here);
+	const data: Leftovers["data"] = [];
+	for (const [key, service] of Object.entries(main.services)) {
+		const found = await kindOf(service).worktreeData(service, placeOf(main, lay, here, key));
+		const gone = found.filter((d) => d.owner !== "" && !existsSync(d.owner));
+		if (gone.length > 0) data.push({ key, data: gone });
+	}
+	const registrations = (await supervisor.registrations()).filter(
+		(entry) => entry.namespace.startsWith(`${main.name}.`) && !existsSync(entry.dir),
+	);
+	return { checkouts, data, registrations };
+}
+
+/** Leftovers as a table's rows, its header first. */
+function leftoverRows({ checkouts, data, registrations }: Leftovers): string[][] {
+	return [
+		["LEFTOVER", "NAME", "FOLDER"],
+		...checkouts.map((tree) => ["git worktree", tree.suffix, tree.path]),
+		...data.flatMap(({ key, data }) => data.map((d) => [`${key} data`, d.name, d.owner])),
+		...registrations.map((entry) => ["registration", entry.namespace, entry.dir]),
+	];
+}
+
+/** The folders in basepad's home of services main's config no longer has, by key. */
+async function removedServices(main: Project, here: Machine): Promise<[string, string][]> {
+	const home = servicesHome(here, main.name);
+	if (!existsSync(home)) return [];
+	return (await readdir(home))
+		.filter((key) => !(key in main.services))
+		.map((key) => [key, join(home, key)]);
+}
+
+/**
+ * `prune`: lists what is left of worktrees whose folder is gone, and the data of services main's
+ * config no longer has, then asks before removing each. `--yes` answers for the first only: a
+ * removed service's data is main's too, so it is deleted only on a terminal's yes.
+ */
+async function prune({ cwd, flags, print }: Invocation): Promise<void> {
+	const main = await mainAt(cwd);
+	const context = await open({ project: main }, {}, print);
+	await ready({ project: main }, context);
+	const { here, supervisor } = context;
+	const left = await leftoversOf(main, here, supervisor);
+	const rows = leftoverRows(left);
+	const services = await removedServices(main, here);
+	if (rows.length === 1 && services.length === 0) {
+		print("Nothing to prune.");
+		return;
+	}
+	if (rows.length > 1) {
+		print("Left by worktrees whose folder is gone:");
+		print(table(rows));
+	}
+	if (services.length > 0) {
+		print(`Data of services no longer in ${main.file}, main's included:`);
+		print(table([["SERVICE", "FOLDER"], ...services]));
+	}
+	let unasked = false;
+	if (rows.length > 1) {
+		const yes = flags.yes === true || (await ask("Remove what worktrees left?"));
+		if (yes === undefined) unasked = true;
+		else if (yes) {
+			await removeLeftovers(main, left, context);
+			print("Removed what worktrees left.");
+		} else print("Kept what worktrees left.");
+	}
+	if (services.length > 0) {
+		const yes = await ask(
+			`Delete the data of ${services.map(([key]) => `\`${key}\``).join(", ")}?`,
+		);
+		if (yes === true) {
+			// A service taken out of the config keeps running until stopped.
+			await supervisor.stop(
+				main.name,
+				services.map(([key]) => key),
+			);
+			for (const [, folder] of services) await rm(folder, { recursive: true, force: true });
+			print(`Deleted ${services.map(([, folder]) => folder).join(", ")}.`);
+		} else {
+			print(
+				`Kept the data of removed services${yes === undefined ? "; `basepad prune` on a terminal asks to delete it" : ""}.`,
+			);
+		}
+	}
+	if (unasked) {
+		throw new BasepadError(
+			"Nothing worktrees left was removed: there is no terminal to ask. Run `basepad prune --yes` to remove it.",
+		);
+	}
+}
+
+async function removeLeftovers(main: Project, left: Leftovers, context: Context): Promise<void> {
+	const { here, supervisor } = context;
+	const lay = layout(main, here);
+	for (const { key, data } of left.data) {
+		const service = main.services[key] as Service;
+		await kindOf(service).dropWorktreeData(
+			service,
+			placeOf(main, lay, here, key),
+			data.map((d) => d.name),
+		);
+	}
+	for (const { namespace } of left.registrations) {
+		const definitions = layout(main, here, namespace.slice(main.name.length + 1)).definitions;
+		await supervisor.unregister({ namespace, definitions });
+		await dropHosts(namespace);
+	}
+	for (const tree of left.checkouts) await removeCheckout(main, tree.path);
+}
+
+/** Asks a yes-or-no question on the terminal; with no terminal, no answer. */
+async function ask(question: string): Promise<boolean | undefined> {
+	if (!process.stdin.isTTY) return undefined;
+	const prompt = createInterface({ input: process.stdin, output: process.stdout });
+	const answer = await prompt.question(`${question} [y/N] `);
+	prompt.close();
+	return /^y(es)?$/i.test(answer.trim());
 }

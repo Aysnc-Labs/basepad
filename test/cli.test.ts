@@ -25,6 +25,9 @@ test("--help lists every command and the top flags", async () => {
 			"  down          Stop this project's apps and services; nothing is deleted",
 			"  status        Show each app and service with its address and state",
 			"  worktree add  Make a worktree of main, with its own databases, domains and env files",
+			"  worktree ls   List main's worktrees with their branches and folders",
+			"  worktree rm   Remove a worktree: its apps, databases, registrations and git worktree; its branch stays",
+			"  prune         Remove what is left of worktrees whose folder is gone, after showing it",
 			"",
 			"Flags:",
 			"  -h, --help     Show this help",
@@ -71,6 +74,14 @@ test("a two-word command takes its flags after both words", async () => {
 	expect(typo.stderr).toBe(
 		"basepad: Unknown command `worktree ad`. The nearest is `worktree add`; run `basepad --help` for every command.\n",
 	);
+});
+
+test("a command's arguments are in its usage, and a missing one shows it", async () => {
+	const help = await box.basepad(dir, "worktree", "rm", "--help");
+	expect(help.stdout).toContain("Usage: basepad worktree rm <name> [flags]\n");
+	const missing = await box.basepad(dir, "worktree", "rm", "--force");
+	expect(missing.code).toBe(1);
+	expect(missing.stderr).toBe("basepad: Usage: basepad worktree rm <name> [flags]\n");
 });
 
 test("a mistyped command names the nearest and exits non-zero", async () => {

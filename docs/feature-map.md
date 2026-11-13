@@ -11,7 +11,7 @@ A feature is anything a user starts from: an import, a config key, a command or 
 
 ```mermaid
 flowchart LR
-  CLI["basepad (launcher, cli)"] --> Commands["commands: init, up, down, status, setup, worktree add"]
+  CLI["basepad (launcher, cli)"] --> Commands["commands: init, up, down, status, setup, worktree add, ls, rm, prune"]
   Commands --> Worktrees["worktrees"]
   Worktrees -- "git" --> Git["git"]
   Commands --> Config["config: basepad.config.ts"]
@@ -62,6 +62,12 @@ Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 Purpose: makes a worktree of main: a git worktree named `<prefix>-<n>` beside the project, its own databases (copied from main's, empty or shared), domains `<app>.<suffix>.<name>.localhost` and env files from main's. `up`, `down` and `status` in its folder act on it. Worktrees are found from git; nothing is listed.
 Entry: `basepad worktree add [--json]`, `worktrees` in the config, `postgres({ worktree })`
 Paths: src/worktrees.ts, src/commands.ts, src/layout.ts, src/catalogue/postgres.ts
+
+### `basepad worktree ls`, `worktree rm` and `prune`
+
+Purpose: lists worktrees (and `status` in main shows each); removes one from its name alone (apps, registration, databases, git worktree; branch kept; refuses uncommitted changes unless `--force`); clears what worktrees whose folder is gone left, and asks before deleting a removed service's data. Never drops main's databases.
+Entry: `basepad worktree ls`, `basepad worktree rm <name> [--force]`, `basepad prune [--yes]`, `basepad status` in main
+Paths: src/commands.ts, src/worktrees.ts, src/catalogue.ts, src/catalogue/postgres.ts, src/supervisor.ts, src/hosts.ts
 
 ### `basepad setup`
 
