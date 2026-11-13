@@ -5,7 +5,6 @@ import { createInterface } from "node:readline/promises";
 import { z } from "zod";
 import {
 	type Database,
-	databaseOf,
 	kindOf,
 	type NamesOf,
 	type Place,
@@ -29,9 +28,8 @@ import {
 	type Machine,
 	machine,
 	namespaceOf,
-	ofDaemon,
+	ownServers,
 	placeOf,
-	type ServicePlace,
 	servicesHome,
 	suffixOf,
 } from "./layout.ts";
@@ -252,10 +250,14 @@ interface Context {
 /**
  * Makes an environment ready to start its apps: registers its definitions, starts its services
  * (main's, in a worktree, and its own servers) and provisions them, and writes its env files.
- * Starts no app. A worktree needs main ready first. Not `start`: a worktree's own servers are left
- * to its first start, and its env files say where they will listen.
+ * Starts no app. A worktree needs main ready first. With `worktreeServers: "later"`, a worktree's
+ * own servers are left to its first start, and its env files say where they will listen.
  */
-async function ready(environment: Environment, context: Context, start = true): Promise<Layout> {
+async function ready(
+	environment: Environment,
+	context: Context,
+	{ worktreeServers = "now" }: { worktreeServers?: "now" | "later" } = {},
+): Promise<Layout> {
 	const { project, suffix, main } = environment;
 	const { here, supervisor, print } = context;
 	// Ports, folders and databases; the URL form waits for the supervisor, which answers on 443.
@@ -275,8 +277,7 @@ async function ready(environment: Environment, context: Context, start = true): 
 	}
 	const daemons: Record<string, Daemon> = {};
 	// Main's servers, and a worktree's own; a worktree's other services run on main's.
-	for (const key of services) {
-		if (namespaceOfService(ports, key) !== ports.namespace) continue;
+	for (const key of ownServers(ports)) {
 		const service = project.services[key] as Service;
 		daemons[key] = await kindOf(service).prepare(service, placeOf(project, ports, here, key));
 	}
@@ -312,9 +313,12 @@ async function ready(environment: Environment, context: Context, start = true): 
 	}
 	const since = new Date(Date.now() - 1000);
 	const outputs: Record<string, unknown> = {};
-	const started = services.filter((key) => start || namespaceOfService(lay, key) !== lay.namespace);
-	for (const namespace of new Set(started.map((key) => namespaceOfService(lay, key)))) {
-		const keys = started.filter((key) => namespaceOfService(lay, key) === namespace);
+	const own = ownServers(lay);
+	const runsIn = (key: string) => (own.includes(key) ? lay.namespace : lay.mainNamespace);
+	const later = suffix !== undefined && worktreeServers === "later";
+	const started = services.filter((key) => !later || !own.includes(key));
+	for (const namespace of new Set(started.map(runsIn))) {
+		const keys = started.filter((key) => runsIn(key) === namespace);
 		const hosts = Object.fromEntries(
 			keys.flatMap((key) => {
 				const web = lay.services[key]?.web;
@@ -328,7 +332,7 @@ async function ready(environment: Environment, context: Context, start = true): 
 	}
 	for (const key of services) {
 		const service = project.services[key] as Service;
-		const namespace = namespaceOfService(lay, key);
+		const namespace = runsIn(key);
 		try {
 			outputs[key] = await kindOf(service).provision(service, placeOf(project, lay, here, key), {
 				claim: context.claim,
@@ -349,11 +353,6 @@ async function ready(environment: Environment, context: Context, start = true): 
 	if (main !== undefined) await copyEnvFiles(main.root, project.root, Object.keys(files));
 	await writeEnvFiles(project.root, files);
 	return lay;
-}
-
-/** The namespace a service's server runs in: main's, or a worktree's own. */
-function namespaceOfService(lay: Pick<Layout, "services">, key: string): string {
-	return ofDaemon((lay.services[key] as ServicePlace).daemon).namespace;
 }
 
 /** Opens the supervisor, and readies main first when the environment is a worktree. */
@@ -443,7 +442,9 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 		const { project } = environment;
 		for (const note of await clonePaths(main.root, project.root, project.worktrees.clone))
 			say(note);
-		lay = await ready(environment, context, flags.start === true);
+		lay = await ready(environment, context, {
+			worktreeServers: flags.start === true ? "now" : "later",
+		});
 	} catch (error) {
 		if (!(error instanceof BasepadError)) throw error;
 		throw new BasepadError(
@@ -482,9 +483,8 @@ async function withServices(
 	lay: Pick<Layout, "namespace" | "mainNamespace" | "services">,
 	states: Record<string, DaemonState>,
 ): Promise<Record<string, DaemonState>> {
-	const mains = Object.keys(lay.services).filter(
-		(key) => namespaceOfService(lay, key) !== lay.namespace,
-	);
+	const own = ownServers(lay);
+	const mains = Object.keys(lay.services).filter((key) => !own.includes(key));
 	if (mains.length === 0) return states;
 	const main = await supervisor.status(lay.mainNamespace);
 	return { ...states, ...Object.fromEntries(mains.map((key) => [key, main[key] ?? "stopped"])) };
@@ -582,9 +582,7 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 	await supervisor.hold(namespace, Object.keys(project.apps));
 	// Its own servers with its apps; those on main's keep running for main.
 	await supervisor.stop(namespace);
-	const own = Object.keys(project.services).filter(
-		(key) => namespaceOfService(lay, key) === namespace,
-	);
+	const own = ownServers(lay);
 	const mains = Object.keys(project.services).filter((key) => !own.includes(key));
 	const names = (keys: string[]) => keys.map((key) => `\`${key}\``).join(", ");
 	print(
@@ -954,10 +952,11 @@ async function databasesAt(
 	const environment = await environmentAt(cwd);
 	const { project } = environment;
 	const context = await open(environment, {}, print);
-	const lay = await ready(environment, context, environment.suffix === undefined);
+	// A worktree's own servers hold no database: left to its first start.
+	const lay = await ready(environment, context, { worktreeServers: "later" });
 	const targets: DatabaseTarget[] = [];
 	for (const [key, service] of Object.entries(project.services)) {
-		const database = databaseOf(service);
+		const { database } = kindOf(service);
 		if (database === undefined) continue;
 		targets.push({ key, service, place: placeOf(project, lay, context.here, key), database });
 	}

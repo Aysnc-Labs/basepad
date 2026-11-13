@@ -213,6 +213,16 @@ export function placeOf(
 }
 
 /**
+ * The keys of the services whose servers run in the environment's own namespace: every one in
+ * main, a worktree's own servers (`perEnvironment`) in a worktree. The others run in main's.
+ */
+export function ownServers(lay: Pick<Layout, "namespace" | "services">): string[] {
+	return Object.entries(lay.services)
+		.filter(([, place]) => ofDaemon(place.daemon).namespace === lay.namespace)
+		.map(([key]) => key);
+}
+
+/**
  * An app's domain: `<app>.<name>.localhost` in main, `<app>.<suffix>.<name>.localhost` in a
  * worktree, as the supervisor's proxy serves it.
  */

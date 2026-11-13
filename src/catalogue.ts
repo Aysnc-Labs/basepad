@@ -209,11 +209,6 @@ export function kindOf<S extends Service>(service: S): Kind<S, OutputsOf<S>, Nam
 	return CATALOGUE[service.kind] as unknown as Kind<S, OutputsOf<S>, NamesOf<S>>;
 }
 
-/** The `db` commands of `service`'s kind; none when it is not a database. */
-export function databaseOf<S extends Service>(service: S): Database<S, NamesOf<S>> | undefined {
-	return kindOf(service).database;
-}
-
 /** Every kind's schema, for Config. */
 export const SCHEMAS: z.ZodType<Service>[] = Object.values(CATALOGUE).map((kind) => kind.schema);
 
