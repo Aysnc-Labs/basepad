@@ -311,10 +311,11 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			const swap = {
 				target: name,
 				staging: place.staging(),
+				owner: place.owner,
 				failed: `Could not save snapshot \`${label}\`; any snapshot \`${label}\` there was is kept.`,
 			};
-			await replace(sql, swap, (staging) =>
-				copyDatabase(pg, port, place.database, staging, place.owner),
+			await replace(sql, swap, (staging, owner) =>
+				copyDatabase(pg, port, place.database, staging, owner),
 			);
 		},
 
@@ -328,9 +329,10 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			const swap = {
 				target: place.database,
 				staging: place.staging(),
+				owner: place.owner,
 				failed: `Could not load snapshot \`${label}\`; \`${place.database}\` is as it was.`,
 			};
-			await replace(sql, swap, (staging) => copyDatabase(pg, port, name, staging, place.owner));
+			await replace(sql, swap, (staging, owner) => copyDatabase(pg, port, name, staging, owner));
 		},
 
 		async snapshots(service, place) {
@@ -355,12 +357,13 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			const swap = {
 				target: place.database,
 				staging: place.staging(),
+				owner: place.owner,
 				failed: `Could not import ${from.description}; \`${place.database}\` is as it was.`,
 			};
 			await confirm(place.database);
-			await replace(sql, swap, async (staging) => {
+			await replace(sql, swap, async (staging, owner) => {
 				await sql(`create database ${identifier(staging)}`);
-				await stamp(sql, staging, place.owner);
+				await stamp(sql, staging, owner);
 				await restore(pg, port, staging, from);
 			});
 			return from.description;
@@ -552,29 +555,36 @@ function noSnapshot(
 
 /**
  * Replaces database `target` with one `fill` makes at `staging`, beside it: the one way the `db`
- * commands replace a database. `fill` stamps `staging` as the environment's as soon as it exists, so one an
- * interrupted run leaves is the environment's, and goes with its worktree. Only once `fill` has
- * finished is `target` dropped, its sessions ended (`with (force)` keeps new ones out until it is
- * gone), and the new one renamed to it, open, its stamp with it. A `fill` that fails leaves
- * `target` as it was, and nothing beside it, and throws `failed` with its reason. Clients connect
- * again by themselves, to the new one.
+ * commands replace a database. `fill` makes `staging` and stamps it with `owner` as soon as it
+ * exists, so one an interrupted run leaves is found as that checkout's, and goes with its worktree;
+ * once `fill` has finished, `replace` stamps it again whatever `fill` did. Only then is `target`
+ * dropped, its sessions ended (`with (force)` keeps new ones out until it is gone), and the new one
+ * renamed to it, open, its stamp with it. A `fill` that fails leaves `target` as it was, and
+ * nothing beside it, and throws `failed` with its reason. Clients connect again by themselves, to
+ * the new one.
  */
 async function replace(
 	sql: (text: string) => Promise<string>,
-	{ target, staging, failed }: { target: string; staging: string; failed: string },
-	fill: (staging: string) => Promise<unknown>,
+	{
+		target,
+		staging,
+		owner,
+		failed,
+	}: { target: string; staging: string; owner: string; failed: string },
+	fill: (staging: string, owner: string) => Promise<unknown>,
 ): Promise<void> {
 	const dropStaging = () => sql(`drop database if exists ${identifier(staging)} with (force)`);
 	// Left by a replacement that was interrupted.
 	await dropStaging();
 	try {
-		await fill(staging);
+		await fill(staging, owner);
 	} catch (error) {
 		// Its cause is what the developer needs; one left is dropped by the next replacement.
 		await dropStaging().catch(() => {});
 		if (!(error instanceof BasepadError)) throw error;
 		throw new BasepadError(`${failed}\n${error.message}`);
 	}
+	await stamp(sql, staging, owner);
 	await sql(`drop database if exists ${identifier(target)} with (force)`);
 	await sql(`alter database ${identifier(staging)} rename to ${identifier(target)}`);
 }
