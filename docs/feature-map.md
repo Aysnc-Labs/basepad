@@ -87,9 +87,15 @@ Paths: src/claude-hooks.ts, src/commands.ts
 
 ### `basepad setup`
 
-Purpose: one-time machine setup: trusts basepad's CA and makes URLs port-free; adds domains to `/etc/hosts` where `*.localhost` doesn't resolve.
+Purpose: one-time machine setup: trusts basepad's CA, and on Linux makes URLs port-free; adds domains to `/etc/hosts` where `*.localhost` doesn't resolve.
 Entry: `basepad setup [--dry-run] [--yes]`
 Paths: src/setup.ts, src/hosts.ts
+
+### Port 443 on macOS
+
+Purpose: port-free URLs on macOS with no privilege and no pf (pf turns off iCloud Private Relay): `serve` starts a forwarder on the wildcard address's port 443 that passes connections from this Mac to the proxy, refuses the network's, and stops with the supervisor. Off when `BASEPAD_PROXY_PORT` is set, or something else answers on 443.
+Entry: `basepad up` on macOS
+Paths: src/forward.ts, src/supervisor.ts, src/layout.ts
 
 ## Services
 
