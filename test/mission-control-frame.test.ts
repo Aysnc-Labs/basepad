@@ -276,6 +276,18 @@ test("side by side: a column for each app with its own lines, and services left 
 	expect(out).toMatch(/v +side by side/);
 });
 
+test("side by side, an app's long name wraps in its column and is never cut", () => {
+	const long = "storefront-checkout-worker-service";
+	const apps = [app("shop", "web"), app("shop", long), app("shop", "api")];
+	const out = draw(snap([{ ...main, apps }], [lines(`shop/${long}`, "ready")]), {
+		...initialView("shop"),
+		sideBySide: true,
+	});
+	expect(out).not.toContain("…");
+	expect(out).toMatch(/│ ■ storefront-checkout-worker- +│[^\n]*\n[^\n]*│ {3}service +│/);
+	expect(out).toMatch(/10:00:00 ready/);
+});
+
 test("a removal waiting for its word names the worktree, what goes and what stays, and the one key that goes on", () => {
 	const out = draw(snap([main, worktree(1)]), {
 		...initialView("shop.worktree-1"),

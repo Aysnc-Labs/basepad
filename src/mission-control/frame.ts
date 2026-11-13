@@ -811,7 +811,7 @@ function marked(text: string, query: string, color: string | undefined): Run[] {
 const MIN_COLUMN = 28;
 
 /**
- * The environment's apps' logs in columns, a row at a time: each app's name, then its newest lines
+ * The environment's apps' logs in columns, a row at a time: each app's name, wrapped, then its newest lines
  * up to `last` (the newest shown, when paused). A search's match is marked in its column.
  */
 function columns(
@@ -831,11 +831,15 @@ function columns(
 	const bound = last ?? Number.POSITIVE_INFINITY;
 	const cells = apps.map((app) => {
 		const color = partColor(env, app.id, c);
+		// The name wraps in its column rather than be cut.
+		const title = wrap(app.name, Math.max(1, each - 2)).map((piece, i) =>
+			cut([run(i === 0 ? "■ " : "  ", color), run(piece, color, { bold: true })], each),
+		);
 		const lines = (snapshot.logs.get(app.id) ?? [])
 			.filter((l) => l.seq <= bound)
-			.slice(-(height - 1));
+			.slice(-Math.max(0, height - title.length));
 		return [
-			cut([run("■ ", color), run(app.name, color, { bold: true })], each),
+			...title,
 			...lines.map((l) =>
 				cut(
 					[
