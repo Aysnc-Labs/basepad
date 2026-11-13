@@ -245,16 +245,25 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 		for (const line of await trustAsRoot(supervisor)) print(line);
 	}
 	const lay = layout(project, await machineWithPortFree(here, supervisor), suffix);
-	for (const line of await syncHosts(
-		lay.namespace,
-		Object.values(lay.apps).map((a) => a.host),
-	)) {
+	// Services' domains are main's, as the services are.
+	const domains = Object.values(lay.services).flatMap((place) =>
+		place.web === undefined || suffix !== undefined ? [] : [place.web.host],
+	);
+	for (const line of await syncHosts(lay.namespace, [
+		...Object.values(lay.apps).map((a) => a.host),
+		...domains,
+	])) {
 		print(line);
 	}
 	const since = new Date(Date.now() - 1000);
 	const outputs: Record<string, unknown> = {};
 	if (services.length > 0) {
-		const states = await supervisor.start(lay.mainNamespace, services, APP_WAIT_MS, {});
+		const hosts = Object.fromEntries(
+			Object.entries(lay.services).flatMap(([key, place]) =>
+				place.web === undefined ? [] : [[key, place.web.host]],
+			),
+		);
+		const states = await supervisor.start(lay.mainNamespace, services, APP_WAIT_MS, hosts);
 		const failed = services.filter((key) => states[key] === "failed");
 		if (failed.length > 0)
 			throw new BasepadError(await failures(supervisor, lay.mainNamespace, failed, since));

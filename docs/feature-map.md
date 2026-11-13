@@ -17,7 +17,7 @@ flowchart LR
   Commands --> Config["config: basepad.config.ts"]
   Commands --> Layout["layout (pure)"]
   Layout --> Catalogue
-  Commands --> Catalogue["catalogue: postgres"]
+  Commands --> Catalogue["catalogue: postgres, mailpit"]
   Commands --> Supervisor
   Commands -- "up, on a terminal" --> MissionControl["mission control (Ink)"]
   MissionControl -- "reads states, follows logs; start, stop" --> Supervisor
@@ -29,6 +29,7 @@ flowchart LR
   Supervisor --> Tools
   Tools -- "exec" --> Mise["mise"]
   Catalogue -- "SQL" --> Postgres["Postgres server"]
+  Supervisor -- "proxy: the inbox's domain" --> Mailpit["Mailpit (one per project)"]
 ```
 
 ## Config
@@ -98,3 +99,9 @@ Paths: src/setup.ts, src/hosts.ts
 Purpose: a Postgres 17 or 18 server per project, with its database stamped to the owning checkout, pgvector available, and connection values for `env`.
 Entry: `services: { db: postgres({ version }) }` in the config
 Paths: src/catalogue.ts, src/catalogue/postgres.ts, src/internal/service-user.ts
+
+### Mailpit
+
+Purpose: one Mailpit per project that catches all its mail, shared by its worktrees: the inbox at `https://<key>.<name>.localhost` (the Catalogue's `web`: a service asking Layout for a domain, which the supervisor's proxy serves), SMTP `url`, `host`, `port` and `user` for `env`, each environment's mail tagged by its SMTP user (`main` or the suffix).
+Entry: `services: { mail: mailpit() }` in the config
+Paths: src/catalogue.ts, src/catalogue/mailpit.ts, src/layout.ts

@@ -1,14 +1,20 @@
 import { expect, test } from "vitest";
-import { postgres } from "../src/index.ts";
+import type { PostgresNames } from "../src/catalogue/postgres.ts";
+import { mailpit, postgres } from "../src/index.ts";
 import {
 	daemonId,
-	layout,
+	type Layout,
+	layout as layoutOf,
 	machine,
 	nextSuffix,
 	ofDaemon,
 	suffixOf,
 	worktreeFolder,
 } from "../src/layout.ts";
+
+/** Layout, its services read as Postgres's, which every service here is unless a test says. */
+const layout = (...args: Parameters<typeof layoutOf>) =>
+	layoutOf(...args) as Layout & { services: Record<string, PostgresNames> };
 
 const app = { run: "next dev", cwd: "/p" };
 const here = { home: "/h", proxyPort: 7443, portFree: false };
@@ -224,4 +230,13 @@ test("a worktree takes the lowest free number for the prefix", () => {
 	expect(nextSuffix("worktree", [])).toBe("worktree-1");
 	expect(nextSuffix("worktree", ["worktree-1", "worktree-3", "main"])).toBe("worktree-2");
 	expect(nextSuffix("wt", ["worktree-1", "wt-1", "wt-01"])).toBe("wt-2");
+});
+
+test("a service with a domain is served at <key>.<name>.localhost in main and every worktree, and an app of that key is refused", () => {
+	const withMail = { ...project("shop", ["web"]), services: { mail: mailpit() } };
+	expect(layout(withMail, here).services.mail?.web?.url).toBe("https://mail.shop.localhost:7443");
+	expect(layout(withMail, here, "worktree-1").services.mail?.web?.host).toBe("mail.shop.localhost");
+	expect(layout(project("shop", [], ["db"]), here).services.db?.web).toBeUndefined();
+	const clash = { ...project("shop", ["mail"]), services: { mail: mailpit() } };
+	expect(() => layout(clash, here)).toThrow(/mail\.shop\.localhost, which is app `mail`'s domain/);
 });
