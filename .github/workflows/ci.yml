@@ -42,6 +42,8 @@ jobs:
     steps:
       - run: apt-get update -qq && apt-get install -y -qq curl ca-certificates git xz-utils >/dev/null
       - uses: actions/checkout@v7
+      # The checkout is owned by the runner's user, not root; git refuses it otherwise.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install mise
         # mise's own installer, which falls back to mise's mirror when a GitHub download fails.
         run: |
