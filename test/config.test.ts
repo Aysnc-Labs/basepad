@@ -52,6 +52,22 @@ test("gives one plain description, apps' folders resolved from the config", asyn
 	});
 });
 
+test("worktrees default to the prefix `worktree`; a set `dir` resolves from the config", async () => {
+	const plain = await loadProject(await scratch({ "basepad.config.ts": twoApps }));
+	expect(plain.worktrees).toEqual({ prefix: "worktree" });
+	expect(plain.services.db).toMatchObject({ worktree: "copy" });
+	const dir = await scratch({
+		"basepad.config.ts": configFile(`{
+			name: "shop",
+			services: { db: postgres({ worktree: "empty" }) },
+			worktrees: { prefix: "wt", dir: "../trees" },
+		}`),
+	});
+	const project = await loadProject(dir);
+	expect(project.worktrees).toEqual({ prefix: "wt", dir: join(dir, "../trees") });
+	expect(project.services.db).toMatchObject({ worktree: "empty" });
+});
+
 describe("errors name the file and key, with no stack", () => {
 	const invalid: [string, string, string][] = [
 		["an unknown key", `{ name: "shop", app: {} }`, "unknown key `app`"],
@@ -65,6 +81,16 @@ describe("errors name the file and key, with no stack", () => {
 			"an unknown app key",
 			`{ name: "shop", apps: { web: { run: "x", domain: "a.test" } } }`,
 			"unknown key `apps.web.domain`",
+		],
+		[
+			"a bad worktree prefix",
+			`{ name: "shop", worktrees: { prefix: "Work Tree" } }`,
+			"`worktrees.prefix`: must be a lowercase DNS label",
+		],
+		[
+			"a bad Postgres worktree option",
+			`{ name: "shop", services: { db: postgres({ worktree: "clone" as "copy" }) } }`,
+			"`services.db.worktree`: Postgres `worktree` must be copy, empty or shared",
 		],
 		[
 			"a bad Postgres version",

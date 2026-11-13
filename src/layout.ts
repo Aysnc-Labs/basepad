@@ -64,6 +64,11 @@ export interface Layout {
 	services: Record<string, ServicePlace>;
 	/** The environment's supervisor definitions, generated into the home. */
 	definitions: string;
+	/**
+	 * Its namespace with the supervisor: `<name>` for main, `<name>.<suffix>` for a worktree. Every
+	 * service runs in main's, on one server per service for all of a project's environments.
+	 */
+	namespace: string;
 }
 
 /** One service's place in the environment, with the names its kind derives. */
@@ -86,9 +91,20 @@ const APP_PORT_BLOCKS = 600;
 const SERVICE_PORT_BASE = 15000;
 const SERVICE_PORTS = 5000;
 
+/**
+ * The worktree suffix a layout is checked against at load, so a name that leaves too little room
+ * fails before any worktree is made: the prefix with a three-digit number.
+ */
+const LONGEST_NUMBER = 999;
+
+/**
+ * Main's layout, or with `suffix` a worktree's. Main's also checks that a worktree's names will
+ * fit, with the longest suffix the prefix makes.
+ */
 export function layout(
-	project: Pick<Project, "file" | "name" | "apps" | "services">,
+	project: Pick<Project, "file" | "name" | "apps" | "services" | "worktrees">,
 	machine: Machine,
+	suffix?: string,
 ): Layout {
 	const fail = (reason: string): never => {
 		throw new BasepadError(`${project.file}: ${reason}`);
@@ -97,13 +113,16 @@ export function layout(
 	if (name.length > LABEL_MAX) {
 		fail(`\`name\` is ${name.length} characters; a domain label allows ${LABEL_MAX}.`);
 	}
+	if (suffix !== undefined && suffix.length > LABEL_MAX) {
+		fail(`the worktree name is ${suffix.length} characters; a domain label allows ${LABEL_MAX}.`);
+	}
 	const apps: Layout["apps"] = {};
 	const block = APP_PORT_BASE + (hash(name) % APP_PORT_BLOCKS) * APP_PORT_BLOCK;
 	for (const [i, key] of Object.keys(project.apps).entries()) {
 		if (key.length > LABEL_MAX) {
 			fail(`app \`${key}\` is ${key.length} characters; a domain label allows ${LABEL_MAX}.`);
 		}
-		const host = appHost(key, name);
+		const host = appHost(key, name, suffix);
 		const port = machine.portFree ? "" : `:${machine.proxyPort}`;
 		apps[key] = { host, url: `https://${host}${port}`, port: block + (i % APP_PORT_BLOCK) };
 	}
@@ -112,7 +131,7 @@ export function layout(
 		const dir = join(machine.home, "services", name, key);
 		let names: NamesOf<Service>;
 		try {
-			names = kindOf(service).names({ name, key, dir });
+			names = kindOf(service).names(service, { name, key, dir, suffix });
 		} catch (error) {
 			if (error instanceof BasepadError) fail(error.message);
 			throw error;
@@ -123,12 +142,45 @@ export function layout(
 			dir,
 		};
 	}
-	return { apps, services, definitions: join(machine.home, "environments", `${name}.toml`) };
+	// Last, so a name main itself cannot have is reported in main's words.
+	if (suffix === undefined) {
+		const longest = `${project.worktrees.prefix}-${LONGEST_NUMBER}`;
+		try {
+			layout(project, machine, longest);
+		} catch (error) {
+			if (!(error instanceof BasepadError) || !error.message.startsWith(`${project.file}: `)) {
+				throw error;
+			}
+			const reason = error.message.slice(project.file.length + 2);
+			const shorten = reason.startsWith("the worktree name")
+				? "Shorten `worktrees.prefix`."
+				: "Shorten `name`, the service key or `worktrees.prefix`.";
+			fail(`worktrees named like "${longest}" leave too little room: ${reason} ${shorten}`);
+		}
+	}
+	const namespace = suffix === undefined ? name : `${name}.${suffix}`;
+	return {
+		apps,
+		services,
+		definitions: join(machine.home, "environments", `${namespace}.toml`),
+		namespace,
+	};
 }
 
-/** An app's domain: `<app>.<name>.localhost`, as the supervisor's proxy serves it. */
-export function appHost(app: string, name: string): string {
-	return `${app}.${name}.localhost`;
+/**
+ * An app's domain: `<app>.<name>.localhost` in main, `<app>.<suffix>.<name>.localhost` in a
+ * worktree, as the supervisor's proxy serves it.
+ */
+export function appHost(app: string, name: string, suffix?: string): string {
+	return suffix === undefined ? `${app}.${name}.localhost` : `${app}.${suffix}.${name}.localhost`;
+}
+
+/** A new worktree's suffix: `<prefix>-<n>` with the lowest `n` from 1 that no name in `taken` has. */
+export function nextSuffix(prefix: string, taken: Iterable<string>): string {
+	const names = new Set(taken);
+	let n = 1;
+	while (names.has(`${prefix}-${n}`)) n++;
+	return `${prefix}-${n}`;
 }
 
 /** basepad's own pitchfork's folders in the home, and the CA its proxy signs with. */

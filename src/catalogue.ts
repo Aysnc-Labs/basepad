@@ -23,6 +23,8 @@ export interface NameInput {
 	key: string;
 	/** The service's own folder in basepad's home, from Layout. */
 	dir: string;
+	/** A worktree's suffix; absent in main. */
+	suffix?: string;
 }
 
 /** Where one service of an environment lives: Layout's place for it, with its kind's names. */
@@ -33,6 +35,8 @@ export type Place<N = unknown> = {
 	key: string;
 	/** The checkout that owns the environment: the config's folder. */
 	owner: string;
+	/** A worktree's suffix; absent in main. A worktree's service runs on main's server. */
+	suffix?: string;
 	/** The service's own folder in basepad's home: its data, nothing that records a decision. */
 	dir: string;
 	/** The port first tried; a taken one is passed over. */
@@ -45,10 +49,11 @@ export interface Kind<S extends ServiceBase, O, N> {
 	/** Validates one config entry of this kind: a strict object whose `kind` is a literal. */
 	schema: z.ZodType<S>;
 	/**
-	 * The names this kind derives for one service. Pure, so Layout calls it. Throws a
-	 * `BasepadError` with the reason when a name is past the kind's limit; never truncates.
+	 * The names this kind derives for one service, in main or in a worktree. Pure, so Layout calls
+	 * it. Throws a `BasepadError` with the reason when a name is past the kind's limit; never
+	 * truncates.
 	 */
-	names(input: NameInput): N;
+	names(service: S, input: NameInput): N;
 	/**
 	 * Installs what the service needs, prepares its data once and returns the daemon the
 	 * supervisor runs. Safe while the service runs: it keeps the port it has.
@@ -56,7 +61,8 @@ export interface Kind<S extends ServiceBase, O, N> {
 	prepare(service: S, place: Place<N>): Promise<Daemon>;
 	/**
 	 * Waits until the running service answers, provisions it for this environment and returns what
-	 * it gives to `env`. Throws a `BasepadError` when another checkout owns it, unless `claim`, and
+	 * it gives to `env`. In a worktree it provisions from main's, as the service's `worktree` option
+	 * says (a copy of main's data, empty, or main's own), so main's must be provisioned first. Throws a `BasepadError` when another checkout owns it, unless `claim`, and
 	 * `Stopped` (`internal/ports.ts`) as soon as `stopped` says its daemon is no longer running.
 	 */
 	provision(

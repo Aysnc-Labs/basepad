@@ -21,6 +21,12 @@ export interface Project {
 	/** Each app with its folder made absolute. */
 	apps: Record<string, Required<App>>;
 	env: (outputs: Outputs<Record<string, Service>, Record<string, App>>) => EnvFiles;
+	/** How worktrees are named, and where they are checked out when the config says. */
+	worktrees: {
+		prefix: string;
+		/** Absolute. When absent, beside the git repository (the Worktrees module decides). */
+		dir?: string;
+	};
 }
 
 /**
@@ -60,6 +66,10 @@ export async function loadProject(cwd: string): Promise<Project> {
 			]),
 		),
 		env: (config.env as Project["env"] | undefined) ?? (() => ({})),
+		worktrees: {
+			prefix: config.worktrees?.prefix ?? "worktree",
+			...(config.worktrees?.dir === undefined ? {} : { dir: resolve(root, config.worktrees.dir) }),
+		},
 	};
 }
 
@@ -73,6 +83,14 @@ function findConfig(cwd: string): string {
 		`No ${CONFIG_FILE} in ${cwd} or any folder above it. Run \`basepad init\` to write one.`,
 	);
 }
+
+/** What a config imports basepad as. */
+const PACKAGE = "@aysnc-labs/basepad";
+/** The running basepad's own entry: `index.ts` from source, `index.js` once built. */
+const OWN_INDEX = new URL(
+	import.meta.url.endsWith(".ts") ? "./index.ts" : "./index.js",
+	import.meta.url,
+).href;
 
 /** Real paths of the files basepad loads; the hook reads each as TypeScript ESM. */
 const typescriptFiles = new Set<string>();
@@ -88,6 +106,16 @@ async function importDefault(file: string): Promise<unknown> {
 	if (!hooked) {
 		hooked = true;
 		registerHooks({
+			resolve(specifier, context, nextResolve) {
+				try {
+					return nextResolve(specifier, context);
+				} catch (error) {
+					// A fresh worktree has no `node_modules` yet: its config gets the running basepad.
+					const fromConfig = context.parentURL && typescriptFiles.has(context.parentURL);
+					if (specifier !== PACKAGE || !fromConfig) throw error;
+					return { url: OWN_INDEX, shortCircuit: true };
+				}
+			},
 			load(url, context, nextLoad) {
 				if (!typescriptFiles.has(url)) return nextLoad(url, context);
 				const loaded = nextLoad(url, { ...context, format: "module-typescript" });
@@ -138,6 +166,15 @@ const ConfigSchema = z
 		env: z
 			.custom<Config["env"]>((value) => typeof value === "function", {
 				error: "`env` must be a function from outputs to env files",
+			})
+			.optional(),
+		worktrees: z
+			.strictObject({
+				prefix: label.optional(),
+				dir: z
+					.string({ error: "must be a folder relative to the config" })
+					.min(1, "must be a folder relative to the config")
+					.optional(),
 			})
 			.optional(),
 	})

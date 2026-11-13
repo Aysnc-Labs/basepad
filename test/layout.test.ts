@@ -1,16 +1,17 @@
 import { expect, test } from "vitest";
 import { postgres } from "../src/index.ts";
-import { layout, machine } from "../src/layout.ts";
+import { layout, machine, nextSuffix } from "../src/layout.ts";
 
 const app = { run: "next dev", cwd: "/p" };
 const here = { home: "/h", proxyPort: 7443, portFree: false };
 
-function project(name: string, apps: string[] = [], services: string[] = []) {
+function project(name: string, apps: string[] = [], services: string[] = [], prefix = "worktree") {
 	return {
 		file: "/p/basepad.config.ts",
 		name,
 		apps: Object.fromEntries(apps.map((key) => [key, app])),
 		services: Object.fromEntries(services.map((key) => [key, postgres()])),
+		worktrees: { prefix },
 	};
 }
 
@@ -51,8 +52,14 @@ test("a service's data lives in the home, under the name and the key", () => {
 });
 
 test("a database name of exactly 63 bytes is kept whole", () => {
+	// Shared, so no worktree database needs room beside it.
 	const name = "a".repeat(60);
-	expect(layout(project(name, [], ["db"]), here).services.db?.database).toBe(`${name}_db`);
+	const shared = { ...project(name), services: { db: postgres({ worktree: "shared" }) } };
+	expect(layout(shared, here).services.db?.database).toBe(`${name}_db`);
+	const tree = `${"b".repeat(48)}_db`;
+	expect(
+		layout(project("b".repeat(48), [], ["db"]), here, "worktree-12").services.db?.database,
+	).toBe(`${tree}_worktree_12`);
 });
 
 test("a name that makes a database name over 63 bytes is rejected with the reason", () => {
@@ -124,4 +131,53 @@ test("as root on Linux the proxy listens on 443 itself, so URLs are port-free", 
 		proxyPort: 9443,
 		portFree: false,
 	});
+});
+
+test("a worktree's apps are at https://<app>.<suffix>.<name>.localhost", () => {
+	const { apps } = layout(project("shop", ["web"]), here, "worktree-1");
+	expect(apps.web?.host).toBe("web.worktree-1.shop.localhost");
+	expect(apps.web?.url).toBe("https://web.worktree-1.shop.localhost:7443");
+});
+
+test("a worktree's database is <name>_<service>_<suffix>, on main's server", () => {
+	const main = layout(project("my-shop", [], ["db"]), here).services.db;
+	const tree = layout(project("my-shop", [], ["db"]), here, "worktree-12").services.db;
+	expect(tree?.database).toBe("my_shop_db_worktree_12");
+	expect(tree?.main).toBe("my_shop_db");
+	expect(tree?.port).toBe(main?.port);
+	expect(tree?.data).toBe(main?.data);
+});
+
+test("a shared service's worktree database is main's", () => {
+	const shared = { ...project("shop"), services: { db: postgres({ worktree: "shared" }) } };
+	expect(layout(shared, here, "worktree-1").services.db?.database).toBe("shop_db");
+});
+
+test("a worktree registers under its own namespace and definitions file", () => {
+	const main = layout(project("shop"), here);
+	const tree = layout(project("shop"), here, "worktree-1");
+	expect(main.namespace).toBe("shop");
+	expect(tree.namespace).toBe("shop.worktree-1");
+	expect(tree.definitions).toBe("/h/environments/shop.worktree-1.toml");
+});
+
+test("a name that leaves no room for a worktree's database is rejected at load, in main", () => {
+	// 50 + "_db_worktree_999" is 66 bytes, though main's own 53 fit.
+	const name = "a".repeat(50);
+	expect(() => layout(project(name, [], ["db"]), here)).toThrow(
+		`/p/basepad.config.ts: worktrees named like "worktree-999" leave too little room: service \`db\` makes a worktree's database name "${name}_db_worktree_999", which is 66 bytes; Postgres allows 63. Shorten \`name\`, the service key or \`worktrees.prefix\`.`,
+	);
+});
+
+test("a prefix too long for a domain label is rejected at load", () => {
+	const prefix = "p".repeat(60);
+	expect(() => layout(project("shop", ["web"], [], prefix), here)).toThrow(
+		`/p/basepad.config.ts: worktrees named like "${prefix}-999" leave too little room: the worktree name is 64 characters; a domain label allows 63. Shorten \`worktrees.prefix\`.`,
+	);
+});
+
+test("a worktree takes the lowest free number for the prefix", () => {
+	expect(nextSuffix("worktree", [])).toBe("worktree-1");
+	expect(nextSuffix("worktree", ["worktree-1", "worktree-3", "main"])).toBe("worktree-2");
+	expect(nextSuffix("wt", ["worktree-1", "wt-1", "wt-01"])).toBe("wt-2");
 });

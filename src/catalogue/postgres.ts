@@ -24,15 +24,27 @@ const READY_MS = 60_000;
 
 export type PostgresVersion = 17 | 18;
 
+/**
+ * What a worktree's database starts as: a copy of main's data, empty, or main's own database
+ * (`shared`, which a worktree never drops).
+ */
+export type PostgresWorktree = "copy" | "empty" | "shared";
+
 /** A Postgres server of the project's own, with one database for this service. */
 export interface PostgresService {
 	kind: "postgres";
 	version: PostgresVersion;
+	worktree: PostgresWorktree;
 }
 
-/** A Postgres server of the project's own. `version` is 17 or 18; it defaults to 18. */
-export function postgres(options: { version?: PostgresVersion } = {}): PostgresService {
-	return { kind: "postgres", version: options.version ?? 18 };
+/**
+ * A Postgres server of the project's own. `version` is 17 or 18; it defaults to 18. `worktree` is
+ * what a worktree's database starts as; it defaults to `copy`.
+ */
+export function postgres(
+	options: { version?: PostgresVersion; worktree?: PostgresWorktree } = {},
+): PostgresService {
+	return { kind: "postgres", version: options.version ?? 18, worktree: options.worktree ?? "copy" };
 }
 
 /** What a Postgres service gives to `env`. The password is a placeholder: local connections are trusted. */
@@ -47,8 +59,13 @@ export interface PostgresOutputs {
 
 /** The names a Postgres service derives. */
 export interface PostgresNames {
-	/** The environment's database: `<name>_<key>`, hyphens made underscores. */
+	/**
+	 * The environment's database: `<name>_<key>` in main, `<name>_<key>_<suffix>` in a worktree
+	 * (main's when the service is `shared`), hyphens made underscores.
+	 */
 	database: string;
+	/** Main's database, which a worktree's is made from. */
+	main: string;
 	/** The server's data folder, in the service's folder. */
 	data: string;
 }
@@ -62,17 +79,28 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		version: z.union([z.literal(17), z.literal(18)], {
 			error: "Postgres version must be 17 or 18",
 		}),
+		worktree: z.enum(["copy", "empty", "shared"], {
+			error: "Postgres `worktree` must be copy, empty or shared",
+		}),
 	}),
 
-	names({ name, key, dir }) {
-		const database = `${name}_${key}`.replaceAll("-", "_");
+	names(service, { name, key, dir, suffix }) {
+		const main = `${name}_${key}`.replaceAll("-", "_");
+		const mainBytes = Buffer.byteLength(main);
+		if (mainBytes > IDENTIFIER_MAX) {
+			throw new BasepadError(
+				`\`name\` and service \`${key}\` make the database name "${main}", which is ${mainBytes} bytes; Postgres allows ${IDENTIFIER_MAX}. Shorten \`name\` or the service key.`,
+			);
+		}
+		const own = suffix !== undefined && service.worktree !== "shared";
+		const database = own ? `${main}_${suffix.replaceAll("-", "_")}` : main;
 		const bytes = Buffer.byteLength(database);
 		if (bytes > IDENTIFIER_MAX) {
 			throw new BasepadError(
-				`\`name\` and service \`${key}\` make the database name "${database}", which is ${bytes} bytes; Postgres allows ${IDENTIFIER_MAX}. Shorten \`name\` or the service key.`,
+				`service \`${key}\` makes a worktree's database name "${database}", which is ${bytes} bytes; Postgres allows ${IDENTIFIER_MAX}.`,
 			);
 		}
-		return { database, data: join(dir, "data") };
+		return { database, main, data: join(dir, "data") };
 	},
 
 	async prepare(service, place) {
