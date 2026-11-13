@@ -307,11 +307,23 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	if (flags.detach !== true && process.stdin.isTTY && process.stdout.isTTY) {
 		// Loaded only here, so other commands never load the terminal UI.
 		const { missionControl } = await import("./mission-control/run.ts");
+		const main = environment.main ?? project;
 		await missionControl({
-			main: environment.main ?? project,
+			main,
 			machine: await machineWithPortFree(here, supervisor),
 			supervisor,
 			selected: lay.namespace,
+			// The commands themselves, from main, as `basepad worktree add` and `rm` there.
+			worktrees: {
+				add: (say) => worktreeAdd({ cwd: main.root, args: [], flags: {}, print: say }),
+				remove: (suffix, force, say) =>
+					worktreeRm({
+						cwd: main.root,
+						args: [suffix],
+						flags: force ? { force: true } : {},
+						print: say,
+					}),
+			},
 		});
 	}
 	if (failure !== undefined) throw new BasepadError(failure);

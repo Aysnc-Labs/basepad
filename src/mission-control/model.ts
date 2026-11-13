@@ -37,6 +37,8 @@ export interface EnvironmentView {
 	services: Part[];
 	/** Why its parts cannot be shown, such as a config that does not load. */
 	problem?: string;
+	/** A worktree whose git worktree has changes git would lose: modified, staged or untracked. */
+	changes?: boolean;
 }
 
 /** One line a part printed. */
@@ -60,6 +62,19 @@ export interface Snapshot {
 	logs: ReadonlyMap<string, readonly LogLine[]>;
 	/** Log lines that arrived in the last second. */
 	rate: number;
+	/** What the view has under way that takes a while: worktrees being added or removed. */
+	work?: readonly Work[];
+}
+
+/** A worktree being added or removed from the view. */
+export interface Work {
+	kind: "add" | "remove";
+	/** What it is, as the developer sees it: `Adding a worktree`, `Removing shop-1`. */
+	title: string;
+	/** The last line its command printed. */
+	line?: string;
+	/** The environment being removed. */
+	namespace?: string;
 }
 
 /** What the developer is looking at. */
@@ -78,6 +93,11 @@ export interface View {
 	search?: { query: string; typing: boolean };
 	/** The apps' logs in columns side by side, rather than merged into one stream. */
 	sideBySide?: true;
+	/**
+	 * A worktree's removal waiting for the developer's word: `remove` asks yes or no; `discard`, for
+	 * a worktree with uncommitted changes, wants its name typed (`typed`) and enter.
+	 */
+	confirm?: { namespace: string; suffix: string; step: "remove" | "discard"; typed?: string };
 }
 
 /**
@@ -85,7 +105,20 @@ export interface View {
  * `act.ts` does it. A part's actions name that part; an environment's name its apps, and main's
  * also its services, as `basepad down` and `up` do.
  */
-export type Intent = Action | { kind: "open"; url: string } | { kind: "copy"; text: string };
+export type Intent =
+	| Action
+	| { kind: "open"; url: string }
+	| { kind: "copy"; text: string }
+	| { kind: "add" }
+	| Removal;
+
+/** A worktree's removal, as `basepad worktree rm` does it: `force` loses its uncommitted changes. */
+export interface Removal {
+	kind: "remove";
+	suffix: string;
+	namespace: string;
+	force: boolean;
+}
 
 /** A start, stop or restart of daemons in one namespace. */
 export interface Action {
@@ -161,7 +194,19 @@ function indexOf(lines: readonly LogLine[], seq: number): number {
  * stream shows: a page up or down moves by that many.
  */
 export function reduce(previous: View, key: string, snapshot: Snapshot, page = 10): Step {
+	const step = react(previous, key, snapshot, page);
+	// Closing ends `up`, and a worktree's addition or removal with it, partway: it waits, unless
+	// the developer insists.
+	const [work] = snapshot.work ?? [];
+	if (!step.view.quit || work === undefined) return step;
+	const warning = `${work.title} is under way: closing now would stop it partway. q closes once it is done; ctrl-c again closes now.`;
+	if (key === "ctrl-c" && previous.notice === warning) return step;
+	return { view: { ...previous, notice: warning } };
+}
+
+function react(previous: View, key: string, snapshot: Snapshot, page: number): Step {
 	const { notice: _, ...view } = previous;
+	if (view.confirm !== undefined) return confirming(view, view.confirm, key, snapshot);
 	if (view.search?.typing) return { view: typing(view, view.search.query, key, snapshot) };
 	const envs = snapshot.environments;
 	const env = selectedOf(snapshot, view);
@@ -243,6 +288,24 @@ export function reduce(previous: View, key: string, snapshot: Snapshot, page = 1
 			const { sideBySide, until: _, ...rest } = view;
 			return { view: sideBySide ? rest : { ...rest, sideBySide: true } };
 		}
+		case "a":
+			if (snapshot.work?.some((w) => w.kind === "add")) {
+				const notice = "A worktree is being added; a adds another once it is made.";
+				return { view: { ...view, notice } };
+			}
+			return { view, intent: { kind: "add" } };
+		case "d": {
+			if (env === undefined || env === envs[0]) {
+				return {
+					view: { ...view, notice: "Main is not a worktree: only a worktree is removed here." },
+				};
+			}
+			if (snapshot.work?.some((w) => w.namespace === env.namespace)) {
+				return { view: { ...view, notice: `${env.label} is being removed.` } };
+			}
+			const confirm = { namespace: env.namespace, suffix: env.label, step: "remove" as const };
+			return { view: { ...view, confirm } };
+		}
 		case "/":
 			return { view: { ...view, search: { query: "", typing: true } } };
 		case "n":
@@ -259,6 +322,49 @@ export function reduce(previous: View, key: string, snapshot: Snapshot, page = 1
 		}
 		default:
 			return { view };
+	}
+}
+
+/**
+ * A key while a worktree's removal waits for the developer's word. Only `y` goes on, and for a
+ * worktree with uncommitted changes only its name typed out; any other key keeps it.
+ */
+function confirming(
+	view: View,
+	confirm: NonNullable<View["confirm"]>,
+	key: string,
+	snapshot: Snapshot,
+): Step {
+	const { confirm: _, ...rest } = view;
+	const { namespace, suffix } = confirm;
+	const env = snapshot.environments.find((e) => e.namespace === namespace);
+	if (key === "ctrl-c") return { view: { ...rest, quit: true } };
+	if (env === undefined) return { view: rest };
+	const removal = (force: boolean): Step => ({
+		view: rest,
+		intent: { kind: "remove", suffix, namespace, force },
+	});
+	const kept = (why = "") => ({ view: { ...rest, notice: `Kept ${suffix}${why}.` } });
+	if (confirm.step === "remove") {
+		if (key !== "y") return kept();
+		if (!env.changes) return removal(false);
+		return { view: { ...rest, confirm: { ...confirm, step: "discard", typed: "" } } };
+	}
+	const typed = confirm.typed ?? "";
+	switch (key) {
+		case "return":
+			return typed === suffix ? removal(true) : kept(`: the name typed was not ${suffix}`);
+		case "escape":
+			return kept();
+		case "backspace":
+			return {
+				view: { ...view, confirm: { ...confirm, typed: [...typed].slice(0, -1).join("") } },
+			};
+		default:
+			// A named key (an arrow, page up) is not text.
+			return [...key].length === 1
+				? { view: { ...view, confirm: { ...confirm, typed: typed + key } } }
+				: { view };
 	}
 }
 
