@@ -932,66 +932,85 @@ async function ask(question: string): Promise<boolean | undefined> {
 /** The label `db save` and `db load` use when given none. */
 const DEFAULT_LABEL = "default";
 
-/** One database service of the environment a `db` command runs in, on its running server. */
-interface DatabaseTarget {
+/** One database service of the environment a `db` command runs in. */
+interface DatabaseService {
 	key: string;
 	service: Service;
-	place: Place<NamesOf<Service>>;
 	database: Database<Service, NamesOf<Service>>;
 }
 
-/**
- * The environment `cwd` is in, made ready as `up` makes it, without starting apps, with the
- * database services `which` picks from its database services' keys. Of a worktree's own servers,
- * only those picked start.
- */
-async function databasesAt(
+/** A database service on its running server, where its kind's `db` commands act. */
+type DatabaseTarget = DatabaseService & { place: Place<NamesOf<Service>> };
+
+/** The environment `cwd` is in, with its database services; throws when it has none. */
+async function databaseServicesAt(
 	cwd: string,
-	print: Invocation["print"],
-	which: (project: Project, keys: string[]) => string[],
-): Promise<DatabaseTarget[]> {
+): Promise<{ environment: Environment; services: [DatabaseService, ...DatabaseService[]] }> {
 	const environment = await environmentAt(cwd);
 	const { project } = environment;
-	const keys = Object.keys(project.services).filter(
-		(key) => kindOf(project.services[key] as Service).database !== undefined,
-	);
-	if (keys.length === 0) {
+	const [first, ...rest] = Object.entries(project.services).flatMap(([key, service]) => {
+		const { database } = kindOf(service);
+		return database === undefined ? [] : [{ key, service, database }];
+	});
+	if (first === undefined) {
 		throw new BasepadError(`${project.file} names no database service.`);
 	}
-	const picked = which(project, keys);
-	const context = await open(environment, {}, print);
-	const lay = await ready(environment, context, { start: (key) => picked.includes(key) });
-	return picked.map((key) => {
-		const service = project.services[key] as Service;
-		const database = kindOf(service).database as Database<Service, NamesOf<Service>>;
-		return { key, service, place: placeOf(project, lay, context.here, key), database };
-	});
+	return { environment, services: [first, ...rest] };
 }
 
 /**
  * The database a `db` command acts on: `--service`'s, or the environment's one database. With
  * several and no `--service`, says which there are.
  */
-async function databaseAt({ cwd, flags, print }: Invocation): Promise<DatabaseTarget> {
-	const [target] = await databasesAt(cwd, print, (project, keys) => {
-		const names = keys.map((key) => `\`${key}\``).join(", ");
-		const wanted = flags.service;
-		if (typeof wanted === "string") {
-			if (!keys.includes(wanted)) {
-				throw new BasepadError(
-					`${project.file} has no database service \`${wanted}\`. Its databases: ${names}.`,
-				);
-			}
-			return [wanted];
-		}
-		if (keys.length > 1) {
+function chosen(
+	project: Project,
+	services: [DatabaseService, ...DatabaseService[]],
+	wanted: unknown,
+): DatabaseService {
+	const names = services.map(({ key }) => `\`${key}\``).join(", ");
+	if (typeof wanted === "string") {
+		const found = services.find(({ key }) => key === wanted);
+		if (found === undefined) {
 			throw new BasepadError(
-				`${project.file} has several databases: ${names}. Name one with \`--service <key>\`.`,
+				`${project.file} has no database service \`${wanted}\`. Its databases: ${names}.`,
 			);
 		}
-		return keys;
+		return found;
+	}
+	const [only, ...more] = services;
+	if (more.length > 0) {
+		throw new BasepadError(
+			`${project.file} has several databases: ${names}. Name one with \`--service <key>\`.`,
+		);
+	}
+	return only;
+}
+
+/**
+ * Makes the environment ready as `up` makes it, without starting apps, for `db` commands on
+ * `services`: of a worktree's own servers, only theirs start. Resolves to what puts a database
+ * service on its server.
+ */
+async function readyFor(
+	environment: Environment,
+	print: Invocation["print"],
+	services: DatabaseService[],
+): Promise<(service: DatabaseService) => DatabaseTarget> {
+	const keys = services.map(({ key }) => key);
+	const context = await open(environment, {}, print);
+	const lay = await ready(environment, context, { start: (key) => keys.includes(key) });
+	return (service) => ({
+		...service,
+		place: placeOf(environment.project, lay, context.here, service.key),
 	});
-	return target as DatabaseTarget;
+}
+
+/** The database a `db` command acts on, chosen as `chosen` says, ready on its server. */
+async function databaseAt({ cwd, flags, print }: Invocation): Promise<DatabaseTarget> {
+	const { environment, services } = await databaseServicesAt(cwd);
+	const service = chosen(environment.project, services, flags.service);
+	const onServer = await readyFor(environment, print, [service]);
+	return onServer(service);
 }
 
 /** A snapshot label given, or the default; a lowercase DNS label, as suffixes are. */
@@ -1028,7 +1047,9 @@ async function dbRm(invocation: Invocation): Promise<void> {
 
 /** Every database's snapshots in the environment. */
 async function dbSnapshots({ cwd, print }: Invocation): Promise<void> {
-	const targets = await databasesAt(cwd, print, (_, keys) => keys);
+	const { environment, services } = await databaseServicesAt(cwd);
+	const onServer = await readyFor(environment, print, services);
+	const targets = services.map(onServer);
 	const rows: string[][] = [];
 	for (const { key, service, place, database } of targets) {
 		for (const snapshot of await database.snapshots(service, place)) {
