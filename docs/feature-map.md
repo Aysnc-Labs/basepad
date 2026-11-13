@@ -59,8 +59,8 @@ Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### `basepad worktree add`
 
-Purpose: makes a worktree of main, ready to use: a git worktree named `<prefix>-<n>` beside the project, on a new branch or `--branch`'s, with `worktrees.clone` copied from main, its own databases (copied from main's while its app is connected, by the fastest route the server has; empty or shared), domains `<app>.<suffix>.<name>.localhost`, env files from main's, and `worktrees.setup` run in it. Its apps start on the first request to their domains (the supervisor's proxy, with main's services as dependencies), or at once with `--start`. `up`, `down` and `status` in its folder act on it. Worktrees are found from git; nothing is listed.
-Entry: `basepad worktree add [--json] [--branch <name>] [--start]`, `worktrees` in the config, `postgres({ worktree })`
+Purpose: makes a worktree of main, ready to use: a git worktree named `<prefix>-<n>` beside the project, on a new branch or `--branch`'s, with `worktrees.clone` copied from main, its own databases (copied from main's while its app is connected, by the fastest route the server has; empty or shared), domains `<app>.<suffix>.<name>.localhost`, env files from main's, and `worktrees.setup` run in it. Its apps start on the first request to their domains (the supervisor's proxy, with main's services as dependencies), or at once with `--start`. `up`, `down` and `status` in its folder act on it; `up` in a git worktree made by hand makes it a worktree named after its folder. Worktrees are found from git; nothing is listed.
+Entry: `basepad worktree add [--json] [--branch <name>] [--start]`, `basepad up` in a git worktree, `worktrees` in the config, `postgres({ worktree })`
 Paths: src/worktrees.ts, src/commands.ts, src/layout.ts, src/catalogue/postgres.ts
 
 ### `basepad worktree ls`, `worktree rm` and `prune`
@@ -68,6 +68,12 @@ Paths: src/worktrees.ts, src/commands.ts, src/layout.ts, src/catalogue/postgres.
 Purpose: lists worktrees (and `status` in main shows each); removes one from its name alone (apps, registration, databases, git worktree; branch kept; refuses uncommitted changes unless `--force`); clears what worktrees whose folder is gone left, and asks before deleting a removed service's data. Never drops main's databases.
 Entry: `basepad worktree ls`, `basepad worktree rm <name> [--force]`, `basepad prune [--yes]`, `basepad status` in main
 Paths: src/commands.ts, src/worktrees.ts, src/catalogue.ts, src/catalogue/postgres.ts, src/supervisor.ts, src/hosts.ts
+
+### Claude Code's worktree hooks
+
+Purpose: Claude Code's `WorktreeCreate` and `WorktreeRemove` hooks go through basepad, so every agent session gets a full worktree: `worktree add --claude` reads the hook input, uses its name as the branch and prints only the path; `worktree rm --claude` removes the worktree at its path, as `--force` does.
+Entry: `basepad worktree add --claude`, `basepad worktree rm --claude`
+Paths: src/claude-hooks.ts, src/commands.ts
 
 ### `basepad setup`
 

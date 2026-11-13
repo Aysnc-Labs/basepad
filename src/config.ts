@@ -146,7 +146,7 @@ function messageOf(error: unknown): string {
 }
 
 /** A lowercase DNS label: letters, digits and inner hyphens. */
-const LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+export const LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const label = z
 	.string({ error: "must be a string" })
 	.regex(LABEL, "must be a lowercase DNS label (letters, digits and inner hyphens)");

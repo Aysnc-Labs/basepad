@@ -213,6 +213,27 @@ npx basepad prune                     # clears what worktrees whose folder you d
 - `worktree rm` keeps the branch. It refuses a worktree with uncommitted or untracked files; `--force` removes it anyway, and they are lost. It works from the name alone, so a broken config or a folder already deleted does not stop it. It never drops main's database, so a `shared` service's stays.
 - `prune` lists what worktrees whose folder is gone left (git's record, databases, registrations), then asks before removing it; `--yes` removes it without asking. It also lists the data of services no longer in the config, main's included, and deletes that only when you answer yes on a terminal, even with `--yes`.
 
+#### A git worktree made by hand
+
+`basepad up` in any linked git worktree of main makes it a worktree, named after its folder: `git worktree add ../hand` then `basepad up` in `../hand` gives `shop_db_hand` with main's data and `https://web.hand.shop.localhost`. The folder name must be a lowercase DNS label (letters, digits and inner hyphens); any other is refused with the reason. `git worktree move` renames it.
+
+#### Claude Code
+
+Claude Code makes worktrees for `claude --worktree`, background sessions and subagents with `isolation: "worktree"`. Its `WorktreeCreate` and `WorktreeRemove` hooks route that through basepad, so every session gets a full environment. In `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "WorktreeCreate": [{ "hooks": [{ "type": "command", "command": "npx basepad worktree add --claude" }] }],
+    "WorktreeRemove": [{ "hooks": [{ "type": "command", "command": "npx basepad worktree rm --claude" }] }]
+  }
+}
+```
+
+- `worktree add --claude` reads the hook's input on stdin, makes a worktree as `worktree add --branch <name>` does with the name Claude Code asks for (`bold-oak-a3f2`), and prints only its path on stdout. Everything else goes to stderr. If setup fails, it exits 1 and the session does not start; the worktree is kept.
+- `worktree rm --claude` removes the worktree at the input's `worktree_path` as `worktree rm --force` does, since Claude Code asks before discarding work. The branch is kept.
+- Claude Code removes the worktree of a session you exit. It keeps a subagent's: remove it with `basepad worktree rm`.
+
 ### The local file
 
 `basepad.config.local.ts`, beside the config, adjusts it for your machine only; `basepad init` adds it to `.gitignore`. When it exists, basepad loads it after the config. Its default export is a function that gets the project's config and returns the changed one:
