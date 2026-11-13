@@ -129,7 +129,7 @@ function App(props: {
 }
 
 /** A key press as the reducer names it; text that arrives at once is a paste. */
-function pressOf(input: string, key: Key): Press {
+export function pressOf(input: string, key: Key): Press {
 	if (key.ctrl && input === "c") return "ctrl-c";
 	if (key.upArrow) return "up";
 	if (key.downArrow) return "down";

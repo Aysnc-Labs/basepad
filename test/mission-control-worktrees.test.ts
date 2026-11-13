@@ -103,6 +103,10 @@ test("the worktree's name pasted is typed: enter then removes it", () => {
 		namespace: "shop.shop-2",
 		force: true,
 	});
+	// A paste ending in a newline (copied with its line) types the suffix alone, and acts on nothing.
+	const line = press(["d", "y", { paste: "shop-2\r\n" }], from);
+	expect(line.view.confirm?.typed).toBe("shop-2");
+	expect(line.intent).toBeUndefined();
 	// Asked y or n, a paste is no answer: the question stays.
 	expect(press(["d", { paste: "yes" }], from).view.confirm?.step).toBe("remove");
 });

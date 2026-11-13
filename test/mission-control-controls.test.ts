@@ -174,6 +174,11 @@ test("while typing, keys are text: q does not close, backspace deletes, escape c
 
 test("text pasted into a search is its query; elsewhere a paste presses no key", () => {
 	expect(scroll(["/", { paste: "line 4" }]).search).toEqual({ query: "line 4", typing: true });
+	// Control characters (a newline, a tab, an escape, delete) are left out: a query is one line.
+	expect(scroll(["/", { paste: "line\n4\r\t\u001b\u007f" }]).search).toEqual({
+		query: "line4",
+		typing: true,
+	});
 	const idle = scroll(["right", { paste: "qdvx/" }]);
 	expect(idle).toEqual(scroll(["right"]));
 });

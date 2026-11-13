@@ -197,9 +197,17 @@ function indexOf(lines: readonly LogLine[], seq: number): number {
  */
 export type Press = string | { paste: string };
 
-/** The text a press types into a field: a character or a paste; a named key types none. */
+/**
+ * The text a press types into a field: a character, or a paste without its control characters (a
+ * newline it was copied with, a tab), since a field is one line and a paste never acts; a named
+ * key types none.
+ */
 const textOf = (key: Press): string | undefined =>
-	typeof key !== "string" ? key.paste : [...key].length === 1 ? key : undefined;
+	typeof key !== "string"
+		? [...key.paste].filter((c) => c >= " " && c !== "\u007f").join("")
+		: [...key].length === 1
+			? key
+			: undefined;
 
 /**
  * What a key press does. `page` is how many log lines the stream shows: a page up or down moves
