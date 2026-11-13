@@ -129,7 +129,7 @@ export default defineConfig({
 | Key        | Required | What it is                                                                                                                                |
 | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`     | yes      | The project's one key: a lowercase DNS label (letters, digits, hyphens). Every database and domain is built from it.                      |
-| `services` | no       | The services basepad provides, by key. The one kind is Postgres: `postgres()`, or `postgres({ version: 17 })`. 18 is the default. |
+| `services` | no       | The services basepad provides, by key: Postgres, `postgres()` or `postgres({ version: 17 })` (18 is the default), and [Mailpit](#mailpit), `mailpit()`. |
 | `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config.              |
 | `env`      | no       | A function from every service's and app's outputs to the env files to write: each file's path, relative to the config, to its keys.       |
 | `worktrees` | no      | How [worktrees](#worktrees) are made: `prefix` (default `worktree`) names them `<prefix>-<n>`; `dir`, relative to the config, is where they are checked out (default `<repository>/../<name>.worktrees`); `clone` lists untracked paths copied from main, such as `node_modules`; `setup` lists shell commands run once in each new worktree. |
@@ -150,6 +150,8 @@ A service gives:
 | `user`     | `postgres`                                                  |
 | `password` | `basepad`, a placeholder: local connections need none       |
 | `database` | `<name>_<key>`, with hyphens made underscores: `shop_db`    |
+
+Mailpit gives `url` (`smtp://main:basepad@127.0.0.1:<port>`; a worktree's user is its suffix), `host`, `port`, `user`, `password` (`basepad`, a placeholder: any is accepted) and `inbox` (`https://<key>.<name>.localhost`).
 
 An app gives `url`: `https://<key>.<name>.localhost`, with the proxy's port (`:7443`) until `basepad setup` has been run. An app's port isn't given: it changes from run to run.
 
@@ -177,6 +179,14 @@ basepad sets exactly the keys `env` returns, in the files it names:
 - `up` creates the database `<name>_<key>`, and keeps its data across `down` and `up` in `~/.basepad/services/<name>/<key>`.
 - Postgres's standard extensions and pgvector are there for `CREATE EXTENSION`. basepad enables none; see [Extensions](#extensions).
 - Data from another Postgres major version is refused, never converted. To change `version`, dump the database first.
+
+### Mailpit
+
+- `mail: mailpit()` catches every message the project sends: nothing reaches a real inbox. Read them at `https://mail.<name>.localhost`, the service's key as its domain; a key that is also an app's is refused.
+- One Mailpit per project, from mise, its SMTP server on `127.0.0.1` only. No other project shares it; main and every worktree do.
+- Each environment sends as its own SMTP user, `main` or the worktree's suffix, and Mailpit tags each message with it. Use `url`, or set your mailer's username to `user`, or mail arrives untagged.
+- Its SMTP port comes from the project's name, as Postgres's does. Its messages are kept across `down` and `up` in `~/.basepad/services/<name>/<key>`.
+- After `down`, opening the inbox starts Mailpit again.
 
 ### Worktrees
 

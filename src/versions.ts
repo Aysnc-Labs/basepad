@@ -18,5 +18,8 @@ export const PITCHFORK_VERSION = "2.34.0";
  */
 export const PGVECTOR_VERSIONS = { 17: "0.8.0", 18: "0.8.6" } as const;
 
+/** Mailpit's major, from mise's registry. */
+export const MAILPIT_VERSION = "1";
+
 /** Redis's major, from mise (conda-forge's build). */
 export const REDIS_VERSION = "8";

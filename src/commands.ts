@@ -247,10 +247,14 @@ async function ready(environment: Environment, context: Context, start = true): 
 		for (const line of await trustAsRoot(supervisor)) print(line);
 	}
 	const lay = layout(project, await machineWithPortFree(here, supervisor), suffix);
-	for (const line of await syncHosts(
-		lay.namespace,
-		Object.values(lay.apps).map((a) => a.host),
-	)) {
+	// Services' domains are main's, as the services are.
+	const domains = Object.values(lay.services).flatMap((place) =>
+		place.web === undefined || suffix !== undefined ? [] : [place.web.host],
+	);
+	for (const line of await syncHosts(lay.namespace, [
+		...Object.values(lay.apps).map((a) => a.host),
+		...domains,
+	])) {
 		print(line);
 	}
 	const since = new Date(Date.now() - 1000);
@@ -258,7 +262,13 @@ async function ready(environment: Environment, context: Context, start = true): 
 	const started = services.filter((key) => start || namespaceOfService(lay, key) !== lay.namespace);
 	for (const namespace of new Set(started.map((key) => namespaceOfService(lay, key)))) {
 		const keys = started.filter((key) => namespaceOfService(lay, key) === namespace);
-		const states = await supervisor.start(namespace, keys, APP_WAIT_MS, {});
+		const hosts = Object.fromEntries(
+			keys.flatMap((key) => {
+				const web = lay.services[key]?.web;
+				return web === undefined ? [] : [[key, web.host]];
+			}),
+		);
+		const states = await supervisor.start(namespace, keys, APP_WAIT_MS, hosts);
 		const failed = keys.filter((key) => states[key] === "failed");
 		if (failed.length > 0)
 			throw new BasepadError(await failures(supervisor, namespace, failed, since));

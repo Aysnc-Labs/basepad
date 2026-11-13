@@ -5,6 +5,8 @@
 
 import type { OutputsOf, Service } from "./catalogue.ts";
 
+export type { MailpitOutputs, MailpitService } from "./catalogue/mailpit.ts";
+export { mailpit } from "./catalogue/mailpit.ts";
 // Each service kind's factory and types, from its module in the catalogue.
 export type {
 	PostgresOutputs,
