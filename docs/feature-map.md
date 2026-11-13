@@ -66,7 +66,7 @@ Paths: src/worktrees.ts, src/commands.ts, src/layout.ts, src/catalogue/postgres.
 ### `basepad worktree ls`, `worktree rm` and `prune`
 
 Purpose: lists worktrees (and `status` in main shows each); removes one from its suffix alone (apps, registration, databases, git worktree; branch kept; refuses uncommitted changes unless `--force`); clears what worktrees whose folder is gone left, and asks before deleting a removed service's data. Never drops main's databases.
-Entry: `basepad worktree ls`, `basepad worktree rm <name> [--force]`, `basepad prune [--yes]`, `basepad status` in main
+Entry: `basepad worktree ls`, `basepad worktree rm <worktree> [--force]`, `basepad prune [--yes]`, `basepad status` in main
 Paths: src/commands.ts, src/worktrees.ts, src/catalogue.ts, src/catalogue/postgres.ts, src/supervisor.ts, src/hosts.ts
 
 ### Claude Code's worktree hooks

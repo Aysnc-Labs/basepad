@@ -197,6 +197,56 @@ test("rm removes a hand-made worktree whose folder name is too long to be a suff
 	await mainIntact();
 });
 
+test("rm works from inside a worktree with no config at all", async () => {
+	const bare = join(box.root, "bare");
+	await git(main, "worktree", "add", "--quiet", "-b", "bare", bare);
+	await git(bare, "rm", "--quiet", "basepad.config.ts");
+	await git(bare, "commit", "--quiet", "-m", "no config");
+	const out = await box.basepad(bare, "worktree", "rm", "bare");
+	expect(out.stderr).toBe("");
+	expect(out.code).toBe(0);
+	expect(existsSync(bare)).toBe(false);
+});
+
+test("rm and prune clean up worktrees whose names main's config has since made too long", async () => {
+	// 48 characters: room for `db` and `old` beside it, not for a service key of 10.
+	const suffixes = ["x", "y"].map((end) => `my-long-feature-${end.repeat(32)}`);
+	const [kept, gone] = suffixes.map((suffix) => join(box.root, suffix)) as [string, string];
+	const named = (key: string, suffix: string) => `t18shop_${key}_${suffix.replaceAll("-", "_")}`;
+	for (const [i, folder] of [kept, gone].entries()) {
+		await git(main, "worktree", "add", "--quiet", "-b", `long-feature-${i}`, folder);
+		const up = await box.basepad(folder, "up");
+		expect(up.stderr).toBe("");
+		expect(up.code).toBe(0);
+	}
+	for (const suffix of suffixes) expect(await databases("db")).toContain(named("db", suffix));
+	await writeFile(
+		join(main, "basepad.config.ts"),
+		config(
+			`db: postgres(), ref: postgres({ worktree: "shared" }), old: postgres(), "longer-key": postgres()`,
+			"db, ref, old",
+		),
+	);
+	try {
+		const out = await box.basepad(main, "worktree", "rm", suffixes[0] as string);
+		expect(out.stderr).toBe("");
+		expect(out.code).toBe(0);
+		expect(existsSync(kept)).toBe(false);
+		await rm(gone, { recursive: true, force: true });
+		const pruned = await box.basepad(main, "prune", "--yes");
+		expect(pruned.stderr).toBe("");
+		expect(pruned.code).toBe(0);
+		for (const suffix of suffixes) {
+			for (const key of ["db", "old"])
+				expect(await databases(key)).not.toContain(named(key, suffix));
+			expect(existsSync(join(box.root, `home/environments/t18shop.${suffix}.toml`))).toBe(false);
+		}
+		await mainIntact();
+	} finally {
+		await writeFile(join(main, "basepad.config.ts"), full);
+	}
+});
+
 test("rm of a worktree git does not know is refused", async () => {
 	const out = await box.basepad(main, "worktree", "rm", "worktree-9");
 	expect(out.code).toBe(1);

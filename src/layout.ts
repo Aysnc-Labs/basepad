@@ -148,7 +148,7 @@ export function layout(
 			...names,
 			port: SERVICE_PORT_BASE + (hash(`${name}.${key}`) % SERVICE_PORTS),
 			dir,
-			daemon: `${name}/${key}`,
+			daemon: daemonId(name, key),
 		};
 	}
 	// Last, so a name main itself cannot have is reported in main's words.
@@ -167,11 +167,11 @@ export function layout(
 			fail(`worktree suffixes like "${longest}" leave too little room: ${reason} ${shorten}`);
 		}
 	}
-	const namespace = suffix === undefined ? name : `${name}.${suffix}`;
+	const namespace = namespaceOf(name, suffix);
 	return {
 		apps,
 		services,
-		definitions: join(machine.home, "environments", `${namespace}.toml`),
+		definitions: definitionsFile(machine, namespace),
 		namespace,
 		mainNamespace: name,
 		...(suffix === undefined ? {} : { suffix }),
@@ -184,6 +184,24 @@ export function layout(
  */
 export function appHost(app: string, name: string, suffix?: string): string {
 	return suffix === undefined ? `${app}.${name}.localhost` : `${app}.${suffix}.${name}.localhost`;
+}
+
+/**
+ * An environment's namespace with the supervisor: `<name>` for main, `<name>.<suffix>` for a
+ * worktree. Unchecked, so what basepad made for a worktree is found whatever its names' limits.
+ */
+export function namespaceOf(name: string, suffix?: string): string {
+	return suffix === undefined ? name : `${name}.${suffix}`;
+}
+
+/** The file in basepad's home holding a namespace's supervisor definitions. */
+export function definitionsFile(machine: Pick<Machine, "home">, namespace: string): string {
+	return join(machine.home, "environments", `${namespace}.toml`);
+}
+
+/** A daemon's id with the supervisor: `<namespace>/<name>`. */
+export function daemonId(namespace: string, name: string): string {
+	return `${namespace}/${name}`;
 }
 
 /** The suffix of `namespace` when it is a worktree's of the project `name`; else none. */

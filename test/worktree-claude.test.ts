@@ -183,8 +183,8 @@ test("worktree rm --claude fails for a path that is no worktree of main", async 
 	expect(out.stderr).toContain(join(main, "elsewhere"));
 });
 
-test("worktree rm without --claude still needs a name", async () => {
+test("worktree rm without --claude still needs a worktree", async () => {
 	const out = await box.basepad(main, "worktree", "rm");
 	expect(out.code).toBe(1);
-	expect(out.stderr).toContain("Usage: basepad worktree rm <name>");
+	expect(out.stderr).toContain("Usage: basepad worktree rm <worktree>");
 });

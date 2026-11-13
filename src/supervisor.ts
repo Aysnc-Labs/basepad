@@ -6,7 +6,7 @@ import { connect } from "node:tls";
 import { z } from "zod";
 import { interactive, must, shellQuote } from "./internal/exec.ts";
 import { answers } from "./internal/ports.ts";
-import { type Machine, supervisorPaths } from "./layout.ts";
+import { daemonId, type Machine, supervisorPaths } from "./layout.ts";
 import { install } from "./tools.ts";
 import { PITCHFORK_VERSION } from "./versions.ts";
 
@@ -308,7 +308,7 @@ export async function openSupervisor(
 			);
 			// basepad waits on them itself, below, so pitchfork's readiness here is immediate.
 			if (idle.length > 0) {
-				await run("start", ...idle.map((name) => `${namespace}/${name}`), "--cmd", "true");
+				await run("start", ...idle.map((name) => daemonId(namespace, name)), "--cmd", "true");
 			}
 			const until = Date.now() + waitMs;
 			for (;;) {
@@ -337,7 +337,7 @@ export async function openSupervisor(
 		async logs(namespace, name, since, lines) {
 			const out = await run(
 				"logs",
-				`${namespace}/${name}`,
+				daemonId(namespace, name),
 				"-n",
 				String(lines),
 				"--since",
@@ -349,7 +349,8 @@ export async function openSupervisor(
 		},
 
 		logsCommand(namespace, name) {
-			return `PITCHFORK_LOGS_DIR=${shellQuote(dirs.PITCHFORK_LOGS_DIR)} mise exec pitchfork@${PITCHFORK_VERSION} -- pitchfork logs ${namespace}/${name}`;
+			// basepad's own pitchfork binary, so the command needs no mise and no PATH.
+			return `PITCHFORK_LOGS_DIR=${shellQuote(dirs.PITCHFORK_LOGS_DIR)} ${shellQuote(pitchfork)} logs ${daemonId(namespace, name)}`;
 		},
 	};
 }
