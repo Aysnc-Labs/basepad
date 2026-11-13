@@ -357,8 +357,9 @@ export async function openSupervisor(
 				const now = await states(namespace);
 				const settled = names.every((name) => now[name] !== "starting");
 				if (settled || Date.now() >= until) {
-					// With no app failed, pitchfork's refusal is its own trouble.
-					if (refused !== undefined && !names.some((name) => now[name] === "failed")) {
+					// With none it was asked to start failed, pitchfork's refusal is its own trouble: an
+					// app already live, left alone here, that has failed since does not explain it.
+					if (refused !== undefined && !idle.some((name) => now[name] === "failed")) {
 						throw refused;
 					}
 					// The proxy re-reads its routes every 2 s, so a new daemon's domain can lag.
