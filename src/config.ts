@@ -219,6 +219,15 @@ const ConfigSchema = z
 			.optional(),
 	})
 	.superRefine((config, ctx) => {
+		for (const [key, app] of Object.entries(config.apps ?? {})) {
+			if (app.port === false && app.domain === false) {
+				ctx.addIssue({
+					code: "custom",
+					path: ["apps", key, "domain"],
+					message: "an app with no port has no domain already; drop `domain`",
+				});
+			}
+		}
 		// Services and apps share one namespace: `env`'s outputs and the supervisor's daemons.
 		for (const key of Object.keys(config.services ?? {})) {
 			if (config.apps && key in config.apps) {

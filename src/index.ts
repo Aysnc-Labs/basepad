@@ -29,7 +29,7 @@ export interface App {
 	/**
 	 * `false` for an app that another app's page loads from, such as Vite: no domain and no `url`
 	 * in `env`. It serves HTTPS itself at `https://localhost:$PORT`, with the certificate basepad
-	 * gives it as `BASEPAD_TLS_CERT` and `BASEPAD_TLS_KEY`, so the page's browser keeps it local.
+	 * gives it as `BASEPAD_TLS_CERT` and `BASEPAD_TLS_KEY`.
 	 */
 	domain?: false;
 }

@@ -93,6 +93,11 @@ describe("errors name the file and key, with no stack", () => {
 			"`apps.web.domain`: `domain` can only be `false`, for an app served at `https://localhost:$PORT`",
 		],
 		[
+			"an app with no port and no domain",
+			`{ name: "shop", apps: { queue: { run: "x", port: false, domain: false } } }`,
+			"`apps.queue.domain`: an app with no port has no domain already; drop `domain`",
+		],
+		[
 			"a bad worktree prefix",
 			`{ name: "shop", worktrees: { prefix: "Work Tree" } }`,
 			"`worktrees.prefix`: must be a lowercase DNS label",
