@@ -230,7 +230,10 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			})
 			.filter((data) => data.name !== place.main);
 		if (place.suffix === undefined) return all;
-		return all.filter((data) => data.name === place.database || data.owner === place.owner);
+		// By name only while unstamped: one stamped elsewhere is another checkout's worktree's.
+		return all.filter(
+			(data) => data.owner === place.owner || (data.owner === "" && data.name === place.database),
+		);
 	},
 
 	async dropWorktreeData(service, place, names) {

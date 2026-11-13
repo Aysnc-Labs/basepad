@@ -81,8 +81,8 @@ export interface Kind<S extends ServiceBase, O, N> {
 	): Promise<O>;
 	/**
 	 * The worktree data this service holds on main's server, never main's own. In main's place,
-	 * every worktree's; in a worktree's, that worktree's, found by its name or its stamp (`owner`),
-	 * so it needs no worktree config. None while the server is not running.
+	 * every worktree's; in a worktree's, that worktree's: stamped with its folder (`owner`), or
+	 * unstamped under its name. Needs no worktree config. None while the server is not running.
 	 */
 	worktreeData(service: S, place: Place<N>): Promise<WorktreeData[]>;
 	/** Deletes worktree data by name. Throws on main's own, and deletes nothing. */

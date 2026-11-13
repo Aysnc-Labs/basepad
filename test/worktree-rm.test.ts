@@ -206,6 +206,21 @@ test("rm works from inside a worktree with no config at all", async () => {
 	expect(out.stderr).toBe("");
 	expect(out.code).toBe(0);
 	expect(existsSync(bare)).toBe(false);
+	await mainIntact();
+});
+
+test("rm keeps a database with the worktree's name that another checkout's worktree owns", async () => {
+	// Another clone under the same name: its worktree `other` has this name on the same server.
+	const other = join(box.root, "other");
+	await git(main, "worktree", "add", "--quiet", "-b", "other", other);
+	await sql(urls.db as string, "create database t18shop_db_other");
+	await sql(urls.db as string, "comment on database t18shop_db_other is '/elsewhere/other'");
+	const out = await box.basepad(main, "worktree", "rm", "other");
+	expect(out.stderr).toBe("");
+	expect(out.code).toBe(0);
+	expect(existsSync(other)).toBe(false);
+	expect(await databases("db")).toContain("t18shop_db_other");
+	await mainIntact();
 });
 
 test("rm and prune clean up worktrees whose names main's config has since made too long", async () => {
