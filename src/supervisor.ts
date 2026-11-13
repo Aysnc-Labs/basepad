@@ -343,14 +343,24 @@ export async function openSupervisor(
 				(name) => !listed.some((d) => d.name === name && LIVE.has(d.status)),
 			);
 			// basepad waits on them itself, below, so pitchfork's readiness here is immediate.
+			// pitchfork fails the start when a daemon fails: that is an app's failure, read below.
+			let refused: unknown;
 			if (idle.length > 0) {
-				await run("start", ...idle.map((name) => daemonId(namespace, name)), "--cmd", "true");
+				await run("start", ...idle.map((name) => daemonId(namespace, name)), "--cmd", "true").catch(
+					(error: unknown) => {
+						refused = error;
+					},
+				);
 			}
 			const until = Date.now() + waitMs;
 			for (;;) {
 				const now = await states(namespace);
 				const settled = names.every((name) => now[name] !== "starting");
 				if (settled || Date.now() >= until) {
+					// With no app failed, pitchfork's refusal is its own trouble.
+					if (refused !== undefined && !names.some((name) => now[name] === "failed")) {
+						throw refused;
+					}
 					// The proxy re-reads its routes every 2 s, so a new daemon's domain can lag.
 					for (const [name, host] of Object.entries(hosts)) {
 						if (now[name] !== "running") continue;
