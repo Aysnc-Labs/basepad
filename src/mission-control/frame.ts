@@ -824,9 +824,14 @@ function columns(
 	height: number,
 	c: Palette,
 ): ReactElement[] {
+	if (env.apps.length === 0) return [];
 	const fit = Math.max(1, Math.floor((width + 3) / (MIN_COLUMN + 3)));
 	const apps = env.apps.slice(0, fit);
-	if (apps.length === 0) return [];
+	const more = env.apps.length - apps.length;
+	// The apps that don't fit are told on a row of their own, so the columns keep their width.
+	const top =
+		more > 0 ? [line("more", width, [run(`+${more} more: widen the terminal`, c.dim)])] : [];
+	const tall = height - top.length;
 	const each = Math.floor((width - 3 * (apps.length - 1)) / apps.length);
 	const bound = last ?? Number.POSITIVE_INFINITY;
 	const cells = apps.map((app) => {
@@ -837,7 +842,7 @@ function columns(
 		);
 		const lines = (snapshot.logs.get(app.id) ?? [])
 			.filter((l) => l.seq <= bound)
-			.slice(-Math.max(0, height - title.length));
+			.slice(-Math.max(0, tall - title.length));
 		return [
 			...title,
 			...lines.map((l) =>
@@ -852,14 +857,12 @@ function columns(
 			),
 		];
 	});
-	const more = env.apps.length - apps.length;
-	const rows: ReactElement[] = [];
-	for (let i = 0; i < height; i++) {
+	const rows = top;
+	for (let i = 0; i < tall; i++) {
 		const runs = cells.flatMap((cell, k) => [
 			...(k === 0 ? [] : [run(" │ ", c.frame)]),
 			...(cell[i] ?? [run(" ".repeat(each))]),
 		]);
-		if (i === 0 && more > 0) runs.push(run(`  +${more} more: widen the terminal`, c.dim));
 		rows.push(line(`row ${i}`, width, runs));
 	}
 	return rows;
