@@ -2,7 +2,7 @@ import { kindOf, type Service } from "../catalogue.ts";
 import { loadProject, type Project } from "../config.ts";
 import { BasepadError } from "../internal/exec.ts";
 import { daemonId, layout, type Machine, namespaceOf, placeOf } from "../layout.ts";
-import type { DaemonInfo, LogEntry, Supervisor } from "../supervisor.ts";
+import type { DaemonInfo, Supervisor } from "../supervisor.ts";
 import { hasChanges, listWorktrees, mainBranch } from "../worktrees.ts";
 import type { EnvironmentView, LogLine, Part, Snapshot } from "./model.ts";
 
@@ -44,38 +44,19 @@ export async function openFeed(options: {
 	changed(): void;
 }): Promise<Feed> {
 	const { main, machine, supervisor, changed } = options;
-	const logs = new Map<string, LogLine[]>();
 	const arrivals: number[] = [];
 	/** Each worktree's config by folder, read once: a config that does not load, as its reason. */
 	const configs = new Map<string, Project | string>();
 	let environments: EnvironmentView[] = [];
-	let seq = 0;
 	let dirty = false;
-	let following = "";
-	let unfollow = () => {};
 	let closed = false;
+	const book = logBook(supervisor.follow, HISTORY, () => {
+		arrivals.push(Date.now());
+		dirty = true;
+	});
 	/** While worktrees are being added, the suffixes of those there before: only they show. */
 	let before: Set<string> | undefined;
 	let additions = 0;
-
-	const take = (entry: LogEntry) => {
-		const lines = logs.get(entry.id) ?? [];
-		lines.push({ seq: seq++, id: entry.id, time: entry.time, text: entry.text });
-		if (lines.length > KEEP * 1.5) lines.splice(0, lines.length - KEEP);
-		logs.set(entry.id, lines);
-		arrivals.push(Date.now());
-		dirty = true;
-	};
-
-	/** Follows every part shown, again from its history whenever the set of parts changes. */
-	const follow = (ids: string[]) => {
-		const key = ids.join(" ");
-		if (key === following || closed) return;
-		following = key;
-		unfollow();
-		logs.clear();
-		unfollow = supervisor.follow(ids, HISTORY, take);
-	};
 
 	const configOf = async (root: string): Promise<Project | string> => {
 		let config = configs.get(root);
@@ -115,7 +96,7 @@ export async function openFeed(options: {
 		environments = next;
 		dirty = true;
 		const ids = new Set(next.flatMap((env) => [...env.apps, ...env.services].map((p) => p.id)));
-		follow([...ids].sort());
+		if (!closed) book.follow([...ids].sort());
 	};
 
 	let reading = false;
@@ -140,7 +121,7 @@ export async function openFeed(options: {
 		snapshot() {
 			const since = Date.now() - 1000;
 			while (arrivals.length > 0 && (arrivals[0] as number) < since) arrivals.shift();
-			return { project: main.name, environments, logs, rate: arrivals.length };
+			return { project: main.name, environments, logs: book.logs, rate: arrivals.length };
 		},
 		refresh() {
 			void tick();
@@ -160,7 +141,63 @@ export async function openFeed(options: {
 		close() {
 			closed = true;
 			for (const timer of timers) clearInterval(timer);
-			unfollow();
+			book.close();
+		},
+	};
+}
+
+/**
+ * Every shown part's output, followed live: the scrollback, by daemon id. `follow` sets the parts
+ * shown. A part shown for the first time is followed from its last `history` lines; a part already
+ * followed keeps its lines and their arrival numbers, so a paused stream stays where it is. A part
+ * no longer shown loses its lines. `read` is told of each line.
+ */
+export function logBook(
+	follow: Supervisor["follow"],
+	history: number,
+	read: () => void,
+): {
+	logs: ReadonlyMap<string, readonly LogLine[]>;
+	follow(ids: readonly string[]): void;
+	close(): void;
+} {
+	const logs = new Map<string, LogLine[]>();
+	/** One supervisor follower: the ids it was started for that are still its own. */
+	interface Follower {
+		ids: Set<string>;
+		stop(): void;
+	}
+	/** Which follower each shown id's lines are taken from. */
+	const owner = new Map<string, Follower>();
+	let seq = 0;
+	return {
+		logs,
+		follow(ids) {
+			const shown = new Set(ids);
+			for (const [id, follower] of owner) {
+				if (shown.has(id)) continue;
+				owner.delete(id);
+				logs.delete(id);
+				follower.ids.delete(id);
+				if (follower.ids.size === 0) follower.stop();
+			}
+			const added = ids.filter((id) => !owner.has(id));
+			if (added.length === 0) return;
+			const follower: Follower = { ids: new Set(added), stop: () => {} };
+			for (const id of added) owner.set(id, follower);
+			follower.stop = follow(added, history, (entry) => {
+				// A part shown again has a follower of its own; an old one's copy is not taken.
+				if (owner.get(entry.id) !== follower) return;
+				const lines = logs.get(entry.id) ?? [];
+				lines.push({ seq: seq++, id: entry.id, time: entry.time, text: entry.text });
+				if (lines.length > KEEP * 1.5) lines.splice(0, lines.length - KEEP);
+				logs.set(entry.id, lines);
+				read();
+			});
+		},
+		close() {
+			for (const follower of new Set(owner.values())) follower.stop();
+			owner.clear();
 		},
 	};
 }
