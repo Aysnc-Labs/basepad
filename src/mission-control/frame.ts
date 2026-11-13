@@ -175,7 +175,7 @@ const COLORS: Palette = {
 	bad: "#f7768e",
 	accent: "#7aa2f7",
 	keyBg: "#283457",
-	parts: ["#7aa2f7", "#bb9af7", "#7dcfff", "#ff9e64", "#c3a6ff", "#73daca"],
+	parts: ["#7aa2f7", "#bb9af7", "#7dcfff", "#ff9e64", "#9d7cd8", "#73daca"],
 };
 
 /**

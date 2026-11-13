@@ -479,6 +479,35 @@ test("256 colours and true colour: the palette, which chalk fits to the terminal
 	expect(draw(colourful(), initialView("shop"), 140, 40, "rgb")).toContain("\u001b[38;5;150m● ");
 });
 
+test("256 colours: running, starting, failed and idle each keep a colour, and each app one of its own", () => {
+	chalk.level = 2;
+	const states: Record<string, Partial<Part>> = {
+		api: { state: "failed" },
+		worker: { state: "starting" },
+		mail: { state: "idle" },
+	};
+	const names = ["web", "api", "worker", "admin", "mail", "search"];
+	const apps = names.map((name) => app("shop", name, states[name]));
+	const out = draw(snap([{ ...main, apps }]), initialView("shop"), 160, 40, "rgb");
+	/** In the parts panel, the 256-colour codes of an app's state glyph and of its name. */
+	const colours = (glyph: string, name: string) => {
+		const found = new RegExp(
+			`\u001b\\[38;5;(\\d+)m${glyph} \u001b\\[1m\u001b\\[38;5;(\\d+)m${name} `,
+		).exec(out);
+		expect(found, name).not.toBeNull();
+		return { state: found?.[1], own: found?.[2] };
+	};
+	const running = colours("●", "web").state;
+	const looks = [running, colours("◐", "worker").state, colours("✖", "api").state];
+	const idle = colours("○", "mail").state;
+	expect(new Set([...looks, idle]).size).toBe(4);
+	const glyphs: Record<string, string> = { api: "✖", worker: "◐", mail: "○" };
+	const own = names.map((name) => colours(glyphs[name] ?? "●", name).own);
+	expect(new Set(own).size).toBe(names.length);
+	// An app's own colour is never a state's, so a name never reads as running or failed.
+	for (const code of own) expect(looks).not.toContain(code);
+});
+
 test("which colours: NO_COLOR set to anything turns them off; else as many as the terminal has", () => {
 	expect(colorsFor("1", 3)).toBe("none");
 	expect(colorsFor("", 3)).toBe("rgb");
