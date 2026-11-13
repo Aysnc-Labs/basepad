@@ -1,12 +1,12 @@
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readdir, realpath, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { readdir, realpath, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { z } from "zod";
 import { kindOf, type NamesOf, type Place, type Service, type WorktreeData } from "./catalogue.ts";
 import { readHookInput } from "./claude-hooks.ts";
-import { CONFIG_FILE, LABEL, loadProject, type Project } from "./config.ts";
-import { writeEnvFiles } from "./env-files.ts";
+import { CONFIG_FILE, findConfig, LABEL, loadProject, type Project } from "./config.ts";
+import { copyEnvFiles, writeEnvFiles } from "./env-files.ts";
 import { dropHosts, syncHosts } from "./hosts.ts";
 import type { EnvFiles } from "./index.ts";
 import { init } from "./init.ts";
@@ -21,6 +21,7 @@ import {
 	machine,
 	type ServicePlace,
 	servicesHome,
+	suffixOf,
 } from "./layout.ts";
 import { setup, trustAsRoot } from "./setup.ts";
 import { type Daemon, type DaemonState, openSupervisor, type Supervisor } from "./supervisor.ts";
@@ -162,7 +163,7 @@ async function environmentAt(cwd: string): Promise<Environment> {
 	if (checkout.suffix === undefined) return { project };
 	if (!LABEL.test(checkout.suffix)) {
 		throw new BasepadError(
-			`${project.root} is git worktree \`${checkout.suffix}\`, and a worktree's folder name is its name in domains and databases, so it must be a lowercase DNS label (letters, digits and inner hyphens). Rename it with \`git worktree move <folder> <new-folder>\`.`,
+			`${project.root} is git worktree \`${checkout.suffix}\`, and a worktree's folder name is its suffix in domains and databases, so it must be a lowercase DNS label (letters, digits and inner hyphens). Rename it with \`git worktree move <folder> <new-folder>\`.`,
 		);
 	}
 	if (!existsSync(join(checkout.main, CONFIG_FILE))) {
@@ -224,7 +225,7 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 			dir: app.cwd,
 			port: ports.apps[key]?.port,
 			// So the proxy's start on a first request starts the servers first, wherever they run.
-			depends: services.map((service) => `${project.name}/${service}`),
+			depends: services.map((service) => (ports.services[service] as ServicePlace).daemon),
 		};
 	}
 	await supervisor.register({
@@ -247,10 +248,10 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 	const since = new Date(Date.now() - 1000);
 	const outputs: Record<string, unknown> = {};
 	if (services.length > 0) {
-		const states = await supervisor.start(project.name, services, APP_WAIT_MS, {});
+		const states = await supervisor.start(lay.mainNamespace, services, APP_WAIT_MS, {});
 		const failed = services.filter((key) => states[key] === "failed");
 		if (failed.length > 0)
-			throw new BasepadError(await failures(supervisor, project.name, failed, since));
+			throw new BasepadError(await failures(supervisor, lay.mainNamespace, failed, since));
 		for (const key of services) {
 			const service = project.services[key] as Service;
 			try {
@@ -258,13 +259,13 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 					claim: context.claim,
 					print,
 					stopped: async () => {
-						const state = (await supervisor.status(project.name))[key];
+						const state = (await supervisor.status(lay.mainNamespace))[key];
 						return state === "failed" || state === "stopped";
 					},
 				});
 			} catch (error) {
 				if (!(error instanceof Stopped)) throw error;
-				throw new BasepadError(await failures(supervisor, project.name, [key], since));
+				throw new BasepadError(await failures(supervisor, lay.mainNamespace, [key], since));
 			}
 		}
 	}
@@ -273,20 +274,6 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 	if (main !== undefined) await copyEnvFiles(main.root, project.root, Object.keys(files));
 	await writeEnvFiles(project.root, files);
 	return lay;
-}
-
-/**
- * Copies each env file a worktree lacks from main's folder, so its other lines (secrets, settings)
- * come along before basepad sets its own keys. A file the worktree has is its own, and kept.
- */
-async function copyEnvFiles(from: string, to: string, paths: string[]): Promise<void> {
-	for (const path of paths) {
-		const source = resolve(from, path);
-		const target = resolve(to, path);
-		if (existsSync(target) || !existsSync(source)) continue;
-		await mkdir(dirname(target), { recursive: true });
-		await copyFile(source, target);
-	}
 }
 
 /** Opens the supervisor, and readies main first when the environment is a worktree. */
@@ -309,7 +296,7 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const lay = await ready(environment, context);
 	const { states, failure } = await startApps(supervisor, project, lay);
 	print(
-		await stateTables(environment, lay, here, await withServices(supervisor, environment, states)),
+		await stateTables(environment, lay, here, await withServices(supervisor, project, lay, states)),
 	);
 	if (failure !== undefined) throw new BasepadError(failure);
 }
@@ -384,7 +371,7 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	if (flags.json === true) {
 		print(JSON.stringify({ name: suffix, path: root }));
 	} else {
-		const all = await withServices(context.supervisor, environment, states);
+		const all = await withServices(context.supervisor, environment.project, lay, states);
 		say(await stateTables(environment, lay, context.here, all));
 		say("");
 		say(
@@ -398,11 +385,12 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 /** A worktree's daemon states with its services', which run in main's namespace. */
 async function withServices(
 	supervisor: Supervisor,
-	{ project, suffix }: Environment,
+	project: Project,
+	lay: Pick<Layout, "suffix" | "mainNamespace">,
 	states: Record<string, DaemonState>,
 ): Promise<Record<string, DaemonState>> {
-	if (suffix === undefined) return states;
-	const main = await supervisor.status(project.name);
+	if (lay.suffix === undefined) return states;
+	const main = await supervisor.status(lay.mainNamespace);
 	const services = Object.keys(project.services).map((key) => [key, main[key] ?? "stopped"]);
 	return { ...states, ...Object.fromEntries(services) };
 }
@@ -526,8 +514,13 @@ async function status({ cwd, print }: Invocation): Promise<void> {
 		return;
 	}
 	const supervisor = await openSupervisor(here, print);
-	const { namespace } = layout(project, here, suffix);
-	const states = await withServices(supervisor, environment, await supervisor.status(namespace));
+	const ports = layout(project, here, suffix);
+	const states = await withServices(
+		supervisor,
+		project,
+		ports,
+		await supervisor.status(ports.namespace),
+	);
 	// With no supervisor running nothing answers on 443, so the URL form is the port's default.
 	const lay = layout(
 		project,
@@ -538,10 +531,14 @@ async function status({ cwd, print }: Invocation): Promise<void> {
 	if (suffix === undefined) await printWorktrees(project, here, supervisor, print);
 }
 
-/** Main's project, from main's folder or a worktree's. */
+/**
+ * Main's project, from main's folder or a worktree's. Reads main's config alone, so a worktree's
+ * broken config does not stand in the way.
+ */
 async function mainAt(cwd: string): Promise<Project> {
-	const at = await environmentAt(cwd);
-	return at.main ?? at.project;
+	const root = dirname(findConfig(cwd));
+	const checkout = await checkoutOf(root);
+	return loadProject(checkout.suffix === undefined ? root : checkout.main);
 }
 
 /**
@@ -563,11 +560,12 @@ async function printWorktrees(
 		}
 		try {
 			const environment = await environmentAt(tree.root);
-			const { namespace } = layout(environment.project, here, tree.suffix);
+			const ports = layout(environment.project, here, tree.suffix);
 			const states = await withServices(
 				supervisor,
-				environment,
-				await supervisor.status(namespace),
+				environment.project,
+				ports,
+				await supervisor.status(ports.namespace),
 			);
 			const lay = layout(
 				environment.project,
@@ -605,7 +603,7 @@ async function worktreeLs({ cwd, print }: Invocation): Promise<void> {
 }
 
 /**
- * `worktree rm`: removes a worktree from its name alone (git's record, the name pattern of its data,
+ * `worktree rm`: removes a worktree from its suffix alone (git's record, the name pattern of its data,
  * its registration), so it works whatever state its folder or config is in. Its branch stays.
  */
 async function worktreeRm({ cwd, flags, args, print }: Invocation): Promise<void> {
@@ -681,7 +679,14 @@ async function removeEnvironment(
 	root: string,
 	{ here, supervisor }: Context,
 ): Promise<void> {
-	const lay = layout(main, here, suffix);
+	let lay: Layout;
+	try {
+		lay = layout(main, here, suffix);
+	} catch (error) {
+		// A suffix past the limits never had an environment: `up` refused it before making anything.
+		if (error instanceof BasepadError) return;
+		throw error;
+	}
 	await supervisor.unregister(lay);
 	await dropHosts(lay.namespace);
 	for (const [key, service] of Object.entries(main.services)) {
@@ -720,7 +725,7 @@ async function leftoversOf(
 		if (gone.length > 0) data.push({ key, data: gone });
 	}
 	const registrations = (await supervisor.registrations()).filter(
-		(entry) => entry.namespace.startsWith(`${main.name}.`) && !existsSync(entry.dir),
+		(entry) => suffixOf(main.name, entry.namespace) !== undefined && !existsSync(entry.dir),
 	);
 	return { checkouts, data, registrations };
 }
@@ -785,7 +790,7 @@ async function prune({ cwd, flags, print }: Invocation): Promise<void> {
 		if (yes === true) {
 			// A service taken out of the config keeps running until stopped.
 			await supervisor.stop(
-				main.name,
+				layout(main, here).mainNamespace,
 				services.map(([key]) => key),
 			);
 			for (const [, folder] of services) await rm(folder, { recursive: true, force: true });
@@ -815,7 +820,7 @@ async function removeLeftovers(main: Project, left: Leftovers, context: Context)
 		);
 	}
 	for (const { namespace } of left.registrations) {
-		const definitions = layout(main, here, namespace.slice(main.name.length + 1)).definitions;
+		const definitions = layout(main, here, suffixOf(main.name, namespace)).definitions;
 		await supervisor.unregister({ namespace, definitions });
 		await dropHosts(namespace);
 	}

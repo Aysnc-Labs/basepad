@@ -21,8 +21,8 @@ The project's one key, set in its config. Every database and domain of its envir
 _Avoid_: Prefix, slug, project id
 
 **Suffix**:
-A worktree's own name, combined with the main's names to form the worktree's.
-_Avoid_: Label, slug
+What sets a worktree apart: its git worktree's folder name, combined with the main's names to form the worktree's.
+_Avoid_: Label, slug, worktree name
 
 **Service**:
 Something basepad provides to an environment from its catalogue, such as a Postgres database.

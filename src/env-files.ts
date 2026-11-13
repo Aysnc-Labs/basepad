@@ -2,9 +2,24 @@
  * Env files: basepad sets exactly the keys the config names, and nothing else in the file changes.
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { EnvFiles } from "./index.ts";
+
+/**
+ * Copies each env file a worktree lacks from main's folder, so its other lines (secrets, settings)
+ * come along before basepad sets its own keys. A file the worktree has is its own, and kept.
+ */
+export async function copyEnvFiles(from: string, to: string, paths: string[]): Promise<void> {
+	for (const path of paths) {
+		const source = resolve(from, path);
+		const target = resolve(to, path);
+		if (existsSync(target) || !existsSync(source)) continue;
+		await mkdir(dirname(target), { recursive: true });
+		await copyFile(source, target);
+	}
+}
 
 /**
  * Sets each file's keys, paths resolved from `root`, creating a file that is missing. A file whose

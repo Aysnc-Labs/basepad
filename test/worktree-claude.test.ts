@@ -96,7 +96,7 @@ beforeAll(async () => {
 }, 300_000);
 afterAll(() => box?.dispose());
 
-test("up in a git worktree made by hand makes it a worktree named after its folder", async () => {
+test("up in a git worktree made by hand makes it a worktree whose suffix is its folder name", async () => {
 	const hand = join(box.root, "hand");
 	await git(main, "worktree", "add", "--quiet", "-b", "by-hand", hand);
 	const out = await box.basepad(hand, "up");
@@ -159,6 +159,22 @@ test("worktree rm --claude removes the worktree at worktree_path, changes and al
 	expect(existsSync(made)).toBe(false);
 	expect(await databases()).not.toContain("t19shop_db_worktree_1");
 	expect(await git(main, "branch", "--list", "bold-oak-a3f2")).toContain("bold-oak-a3f2");
+});
+
+test("worktree rm --claude, run inside a long-named worktree whose config is broken, removes it", async () => {
+	const long = join(box.root, "l".repeat(64));
+	await git(main, "worktree", "add", "--quiet", "-b", "long", long);
+	await writeFile(join(long, "basepad.config.ts"), "this is not a config {");
+	const out = await box.basepadWith(
+		{ input: hookInput("WorktreeRemove", { worktree_path: long, cwd: long }) },
+		long,
+		"worktree",
+		"rm",
+		"--claude",
+	);
+	expect(out.stderr).toContain("Removed worktree");
+	expect(out.code).toBe(0);
+	expect(existsSync(long)).toBe(false);
 });
 
 test("worktree rm --claude fails for a path that is no worktree of main", async () => {

@@ -310,8 +310,7 @@ async function copyDatabase(pg: Tool, port: number, from: string, to: string): P
 	const offered = await sql(
 		"select coalesce(enumvals::text, '') from pg_settings where name = 'file_copy_method'",
 	);
-	// File by file, not the default WAL_LOG: about 4 times faster on a 1 GB database, and a clone
-	// needs it.
+	// File by file, not the default WAL_LOG: faster on a large database, and a clone needs it.
 	const create = `create database ${identifier(to)} template ${identifier(from)} strategy file_copy`;
 	const routes: [Route, string[]][] = [["template copy", [create]]];
 	// One session: the setting is the session's own.

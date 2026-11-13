@@ -184,5 +184,5 @@ test("a prefix that would make too long a name fails before anything is made", a
 	});
 	const out = await box.basepad(dir, "worktree", "add");
 	expect(out.code).toBe(1);
-	expect(out.stderr).toContain("leave too little room: the worktree name is 64 characters");
+	expect(out.stderr).toContain("leave too little room: the worktree suffix is 64 characters");
 });

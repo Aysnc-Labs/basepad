@@ -20,8 +20,7 @@ export async function install(tool: string, version: string, cwd: string): Promi
 	await mkdir(cwd, { recursive: true });
 	// Always, not only when `mise where` fails: `where` answers for an install still in progress
 	// (another basepad installing at the same moment), and `install` waits on mise's lock for it.
-	// mise 2026.11 also fetches skills a tool declares, and fails the install when that fetch
-	// fails (pitchfork 2.34.0's is gone); basepad needs only the tool.
+	// mise fails an install when it cannot fetch a skill the tool declares; basepad needs only the tool.
 	await must("mise", ["install", "--quiet", spec], {
 		cwd,
 		env: { ...process.env, MISE_SKILLS_FETCH: "false" },
