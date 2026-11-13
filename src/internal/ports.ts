@@ -12,21 +12,28 @@ export async function freePort(from: number): Promise<number> {
 	throw new BasepadError(`No free port on 127.0.0.1 from ${from} to ${from + SPAN - 1}.`);
 }
 
-/** Whether something accepts connections on 127.0.0.1:`port`. */
-function answers(port: number): Promise<boolean> {
-	return new Promise((resolve) => {
-		const socket = createConnection({ host: "127.0.0.1", port });
-		socket.setTimeout(500);
-		socket.on("connect", () => {
-			socket.destroy();
-			resolve(true);
+/** Whether something accepts connections on `port` at any of `hosts`, tried in order. */
+export async function answers(
+	port: number,
+	hosts: readonly string[] = ["127.0.0.1"],
+): Promise<boolean> {
+	for (const host of hosts) {
+		const ok = await new Promise<boolean>((resolve) => {
+			const socket = createConnection({ host, port });
+			socket.setTimeout(500);
+			socket.on("connect", () => {
+				socket.destroy();
+				resolve(true);
+			});
+			socket.on("timeout", () => {
+				socket.destroy();
+				resolve(false);
+			});
+			socket.on("error", () => resolve(false));
 		});
-		socket.on("timeout", () => {
-			socket.destroy();
-			resolve(false);
-		});
-		socket.on("error", () => resolve(false));
-	});
+		if (ok) return true;
+	}
+	return false;
 }
 
 function canListen(port: number): Promise<boolean> {

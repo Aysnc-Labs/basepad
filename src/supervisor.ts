@@ -1,11 +1,11 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { request as httpsRequest } from "node:https";
-import { createConnection } from "node:net";
 import { dirname, join } from "node:path";
 import { connect } from "node:tls";
 import { z } from "zod";
 import { interactive, must, shellQuote } from "./internal/exec.ts";
+import { answers } from "./internal/ports.ts";
 import type { Machine } from "./layout.ts";
 import { install } from "./tools.ts";
 import { PITCHFORK_VERSION } from "./versions.ts";
@@ -387,24 +387,9 @@ async function stateOf(daemon: Listed): Promise<DaemonState> {
 	return "stopped";
 }
 
-async function listening(port: number): Promise<boolean> {
-	for (const host of ["127.0.0.1", "::1"]) {
-		const ok = await new Promise<boolean>((resolve) => {
-			const socket = createConnection({ host, port });
-			socket.setTimeout(500);
-			socket.on("connect", () => {
-				socket.destroy();
-				resolve(true);
-			});
-			socket.on("timeout", () => {
-				socket.destroy();
-				resolve(false);
-			});
-			socket.on("error", () => resolve(false));
-		});
-		if (ok) return true;
-	}
-	return false;
+/** Whether a daemon listens on `port`, on either loopback address. */
+function listening(port: number): Promise<boolean> {
+	return answers(port, ["127.0.0.1", "::1"]);
 }
 
 /**
