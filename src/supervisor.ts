@@ -93,7 +93,8 @@ export interface Supervisor {
  */
 function settings(machine: Machine): Record<string, string> {
 	return {
-		// Every daemon basepad runs is waited on by basepad itself, never by a fixed delay.
+		// Every daemon basepad runs is waited on by basepad itself, never by a fixed delay (and each
+		// has a `ready_cmd`, which pitchfork prefers to the delay; see `toml`).
 		"general.ready_delay": "0s",
 		// Domains are <daemon>.<name>.localhost; a git worktree must not add its label to them.
 		"general.worktree": "false",
@@ -395,6 +396,11 @@ function listening(port: number): Promise<boolean> {
 /**
  * The definitions file. pitchfork's own `dir` key would make the proxy refuse a daemon that runs
  * outside the registered folder, so each daemon `cd`s into its folder itself.
+ *
+ * Each daemon is ready once `true` runs. pitchfork 2.34.0's delay readiness, the default, asks
+ * whether the process is live as the delay ends; with no delay that is mid-`exec` on macOS, which
+ * can read as dead, and then `pitchfork start` waits forever on a daemon that runs. basepad waits
+ * on daemons itself (`start`, a kind's `provision`), so readiness only has to be immediate.
  */
 function toml(daemons: Record<string, Daemon>): string {
 	return Object.entries(daemons)
@@ -402,6 +408,7 @@ function toml(daemons: Record<string, Daemon>): string {
 			const lines = [
 				`[daemons.${name}]`,
 				`run = ${JSON.stringify(`cd ${shellQuote(daemon.dir)} && ${daemon.run}`)}`,
+				`ready_cmd = "true"`,
 			];
 			if (daemon.port !== undefined) {
 				lines.push(`port = { expect = [${daemon.port}], bump = true }`);
