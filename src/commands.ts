@@ -249,7 +249,7 @@ async function failures(
 
 async function down({ cwd, print }: Invocation): Promise<void> {
 	const project = await loadProject(cwd);
-	const supervisor = await openSupervisor(machine(process.env));
+	const supervisor = await openSupervisor(machine(process.env), print);
 	await supervisor.stop(project.name);
 	print(`Stopped ${project.name}'s apps and services.`);
 }
@@ -261,7 +261,7 @@ async function status({ cwd, print }: Invocation): Promise<void> {
 		print(`${project.file} names no apps or services.`);
 		return;
 	}
-	const supervisor = await openSupervisor(here);
+	const supervisor = await openSupervisor(here, print);
 	const states = await supervisor.status(project.name);
 	// With no supervisor running nothing answers on 443, so the URL form is the port's default.
 	const lay = layout(

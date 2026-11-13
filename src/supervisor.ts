@@ -119,7 +119,7 @@ export const RESTART_WARNING =
  */
 export async function openSupervisor(
 	machine: Machine,
-	print: (line: string) => void = () => {},
+	print: (line: string) => void,
 ): Promise<Supervisor> {
 	const paths = supervisorPaths(machine);
 	const dirs = {
