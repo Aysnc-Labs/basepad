@@ -43,6 +43,8 @@ export interface Sandbox {
 	run(file: string, args: string[]): Promise<Result>;
 	/** Runs `psql` from mise's Postgres 18 with `args` (a URL, or `-h`, `-p` and the rest). */
 	psql(args: string[], sql: string): Promise<Result>;
+	/** Runs `redis-cli` from mise's Redis 8 against a Redis URL. */
+	redis(url: string, ...args: string[]): Promise<Result>;
 	/** Runs `sql` against the `DATABASE_URL` that `up` wrote to the project's `.env.local`. */
 	sql(project: string, sql: string): Promise<Result>;
 	/**
@@ -136,6 +138,10 @@ export async function sandbox(): Promise<Sandbox> {
 		basepad: (cwd, ...args) => exec(process.execPath, [cli, ...args], cwd),
 		run: (file, args) => exec(file, args, root),
 		psql,
+		redis: (url, ...args) =>
+			exec("mise", ["exec", "redis@8", "--", "redis-cli", "-u", url, ...args], root, {
+				MISE_SKILLS_FETCH: "false",
+			}),
 		async sql(project, sql) {
 			const url = (await readEnv(project, ".env.local")).DATABASE_URL as string;
 			return psql([url], sql);

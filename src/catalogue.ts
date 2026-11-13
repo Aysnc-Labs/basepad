@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import { mailpitKind } from "./catalogue/mailpit.ts";
 import { postgresKind } from "./catalogue/postgres.ts";
+import { redisKind } from "./catalogue/redis.ts";
 import type { Machine } from "./layout.ts";
 import type { Daemon } from "./supervisor.ts";
 
@@ -36,7 +37,7 @@ export type Place<N = unknown> = {
 	key: string;
 	/** The checkout that owns the environment: the config's folder. */
 	owner: string;
-	/** A worktree's suffix; absent in main. A worktree's service runs on main's server. */
+	/** A worktree's suffix; absent in main. */
 	suffix?: string;
 	/** The service's own folder in basepad's home: its data, nothing that records a decision. */
 	dir: string;
@@ -59,7 +60,7 @@ export interface Web {
 	port: number;
 }
 
-/** One piece of a worktree's data on main's server, such as a database. */
+/** One piece of a worktree's data, such as its database on main's server. */
 export interface WorktreeData {
 	/** Its name on the server. */
 	name: string;
@@ -77,6 +78,11 @@ export interface Kind<S extends ServiceBase, O, N> {
 	 */
 	web?: true;
 	/**
+	 * Whether a worktree runs a server of its own for this service; absent or false, it uses main's,
+	 * one server for all of a project's environments. Pure, so Layout calls it.
+	 */
+	perEnvironment?(service: S): boolean;
+	/**
 	 * The names this kind derives for one service, in main or in a worktree. Pure, so Layout calls
 	 * it. Throws a `BasepadError` with the reason when a name is past the kind's limit; never
 	 * truncates.
@@ -93,16 +99,24 @@ export interface Kind<S extends ServiceBase, O, N> {
 	 * says (a copy of main's data, empty, or main's own), so main's must be provisioned first. Throws a `BasepadError` when another checkout owns it, unless `claim`, and
 	 * `Stopped` (`internal/ports.ts`) as soon as `stopped` says its daemon is no longer running.
 	 * `print` tells the developer what it did that they would want to know, such as how it copied.
+	 * Not `started` (a worktree's own server, until the worktree starts): waits for nothing and
+	 * returns what it will give once its prepared daemon runs.
 	 */
 	provision(
 		service: S,
 		place: Place<N>,
-		options: { claim: boolean; stopped: () => Promise<boolean>; print(line: string): void },
+		options: {
+			claim: boolean;
+			started: boolean;
+			stopped: () => Promise<boolean>;
+			print(line: string): void;
+		},
 	): Promise<O>;
 	/**
-	 * The worktree data this service holds on main's server, never main's own. In main's place,
-	 * every worktree's; in a worktree's, that worktree's: stamped with its folder (`owner`), or
-	 * unstamped under its name. Needs no worktree config. None while the server is not running.
+	 * The worktree data this service keeps, never main's own, such as a worktree's database on main's
+	 * server. In main's place, every worktree's; in a worktree's, that worktree's: stamped with its
+	 * folder (`owner`), or unstamped under its name. Needs no worktree config. Data only a running
+	 * server can list is not found while it is stopped.
 	 */
 	worktreeData(service: S, place: Place<N>): Promise<WorktreeData[]>;
 	/** Deletes worktree data by name. Throws on main's own, and deletes nothing. */
@@ -112,7 +126,7 @@ export interface Kind<S extends ServiceBase, O, N> {
 }
 
 /** Every kind, by the name its factory has in a config. */
-const CATALOGUE = { postgres: postgresKind, mailpit: mailpitKind };
+const CATALOGUE = { postgres: postgresKind, redis: redisKind, mailpit: mailpitKind };
 type Catalogue = typeof CATALOGUE;
 
 /** Something basepad provides to an environment: one config entry of a kind in the catalogue. */

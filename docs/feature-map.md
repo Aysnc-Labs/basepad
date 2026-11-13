@@ -17,7 +17,7 @@ flowchart LR
   Commands --> Config["config: basepad.config.ts"]
   Commands --> Layout["layout (pure)"]
   Layout --> Catalogue
-  Commands --> Catalogue["catalogue: postgres, mailpit"]
+  Commands --> Catalogue["catalogue: postgres, redis, mailpit"]
   Commands --> Supervisor
   Commands -- "up, on a terminal" --> MissionControl["mission control (Ink)"]
   MissionControl -- "reads states, follows logs; start, stop" --> Supervisor
@@ -29,6 +29,7 @@ flowchart LR
   Supervisor --> Tools
   Tools -- "exec" --> Mise["mise"]
   Catalogue -- "SQL" --> Postgres["Postgres server"]
+  Catalogue -- "PING" --> Redis["Redis server, per environment"]
   Supervisor -- "proxy: the inbox's domain" --> Mailpit["Mailpit (one per project)"]
 ```
 
@@ -99,6 +100,12 @@ Paths: src/setup.ts, src/hosts.ts
 Purpose: a Postgres 17 or 18 server per project, with its database stamped to the owning checkout, pgvector available, and connection values for `env`.
 Entry: `services: { db: postgres({ version }) }` in the config
 Paths: src/catalogue.ts, src/catalogue/postgres.ts, src/internal/service-user.ts
+
+### Redis
+
+Purpose: a Redis per environment, in memory, on a port derived from the environment's name (the next free one when taken, and env files follow), with `url`, `host` and `port` for `env`. A worktree's is its own and empty, started only with the worktree (`up`, `--start` or the first request to its apps), stopped by its `down` and removed by `worktree rm`; `worktree: "shared"` gives it main's.
+Entry: `services: { cache: redis({ worktree }) }` in the config
+Paths: src/catalogue.ts, src/catalogue/redis.ts, src/layout.ts
 
 ### Mailpit
 

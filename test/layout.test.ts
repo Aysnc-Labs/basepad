@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { PostgresNames } from "../src/catalogue/postgres.ts";
-import { mailpit, postgres } from "../src/index.ts";
+import { mailpit, postgres, redis } from "../src/index.ts";
 import {
 	daemonId,
 	type Layout,
@@ -230,6 +230,17 @@ test("a worktree takes the lowest free number for the prefix", () => {
 	expect(nextSuffix("worktree", [])).toBe("worktree-1");
 	expect(nextSuffix("worktree", ["worktree-1", "worktree-3", "main"])).toBe("worktree-2");
 	expect(nextSuffix("wt", ["worktree-1", "wt-1", "wt-01"])).toBe("wt-2");
+});
+
+test("a worktree's own Redis runs in its namespace, on a port from its name; a shared one is main's", () => {
+	const services = { cache: redis(), ref: redis({ worktree: "shared" }) };
+	const main = layout({ ...project("shop"), services }, here).services;
+	const tree = layout({ ...project("shop"), services }, here, "worktree-1").services;
+	expect(main.cache?.daemon).toBe("shop/cache");
+	expect(tree.cache?.daemon).toBe("shop.worktree-1/cache");
+	expect(tree.cache?.port).not.toBe(main.cache?.port);
+	expect(tree.ref?.daemon).toBe("shop/ref");
+	expect(tree.ref?.port).toBe(main.ref?.port);
 });
 
 test("a service with a domain is served at <key>.<name>.localhost in main and every worktree, and an app of that key is refused", () => {
