@@ -124,7 +124,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		};
 	},
 
-	async provision(service, place, { claim }) {
+	async provision(service, place, { claim, stopped }) {
 		const pg = await installPostgres(service.version, place.machine.home);
 		const { data } = place;
 		const port = await waitFor(
@@ -136,6 +136,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			},
 			`Postgres for \`${place.key}\` didn't answer within ${READY_MS / 1000} s.`,
 			READY_MS,
+			stopped,
 		);
 		const sql = (text: string) => query(pg, port, text);
 		const db = place.database;

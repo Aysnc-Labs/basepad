@@ -1,4 +1,6 @@
+import { readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
+import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, type Result, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
 
@@ -171,4 +173,23 @@ test("when the port is taken, the next free one is used and the env files follow
 	} finally {
 		await new Promise((resolve) => squatter.close(resolve));
 	}
+});
+
+test("a server that exits after it starts is reported with its output, and up fails promptly", async () => {
+	await box.basepad(shop, "down");
+	const conf = join(box.root, "home/services/pg-shop/db/data/postgresql.conf");
+	const kept = await readFile(conf, "utf8");
+	await writeFile(conf, `${kept}\nmax_connections = 'none'\n`);
+	try {
+		const started = Date.now();
+		const out = await box.basepad(shop, "up");
+		expect(Date.now() - started).toBeLessThan(20_000);
+		expect(out.code).toBe(1);
+		expect(out.stderr).toContain("basepad: `db` exited on start. Its last output:");
+		expect(out.stderr).toContain("max_connections");
+		expect(out.stderr).toMatch(/pitchfork logs pg-shop\/db/);
+	} finally {
+		await writeFile(conf, kept);
+	}
+	expect((await box.basepad(shop, "up")).code).toBe(0);
 });

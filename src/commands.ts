@@ -7,6 +7,7 @@ import { syncHosts } from "./hosts.ts";
 import type { EnvFiles } from "./index.ts";
 import { init } from "./init.ts";
 import { BasepadError, shellQuote } from "./internal/exec.ts";
+import { Stopped } from "./internal/ports.ts";
 import { table } from "./internal/table.ts";
 import {
 	isRootOnLinux,
@@ -130,9 +131,18 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 			throw new BasepadError(await failures(supervisor, project, failed, since));
 		for (const key of services) {
 			const service = project.services[key] as Service;
-			outputs[key] = await kindOf(service).provision(service, placeOf(project, lay, here, key), {
-				claim: flags.claim === true,
-			});
+			try {
+				outputs[key] = await kindOf(service).provision(service, placeOf(project, lay, here, key), {
+					claim: flags.claim === true,
+					stopped: async () => {
+						const state = (await supervisor.status(project.name))[key];
+						return state === "failed" || state === "stopped";
+					},
+				});
+			} catch (error) {
+				if (!(error instanceof Stopped)) throw error;
+				throw new BasepadError(await failures(supervisor, project, [key], since));
+			}
 		}
 	}
 	for (const [key, app] of Object.entries(lay.apps)) outputs[key] = { url: app.url };

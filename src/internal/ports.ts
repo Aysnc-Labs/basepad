@@ -46,17 +46,25 @@ function canListen(port: number): Promise<boolean> {
 	});
 }
 
-/** Polls `check` until it resolves, or throws `failure` with the last error after `timeoutMs`. */
+/** What `waitFor` throws when what it waits on has stopped: waiting longer cannot help. */
+export class Stopped extends Error {}
+
+/**
+ * Polls `check` until it resolves, or throws `failure` with the last error after `timeoutMs`.
+ * After each failed check it asks `stopped`, and throws `Stopped` at once when it says so.
+ */
 export async function waitFor<T>(
 	check: () => Promise<T>,
 	failure: string,
 	timeoutMs: number,
+	stopped: () => Promise<boolean> = async () => false,
 ): Promise<T> {
 	const deadline = Date.now() + timeoutMs;
 	for (;;) {
 		try {
 			return await check();
 		} catch (error) {
+			if (await stopped()) throw new Stopped(failure);
 			if (Date.now() > deadline) {
 				throw new BasepadError(`${failure}\n${(error as Error).message}`);
 			}

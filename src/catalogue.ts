@@ -56,9 +56,14 @@ export interface Kind<S extends ServiceBase, O, N> {
 	prepare(service: S, place: Place<N>): Promise<Daemon>;
 	/**
 	 * Waits until the running service answers, provisions it for this environment and returns what
-	 * it gives to `env`. Throws a `BasepadError` when another checkout owns it, unless `claim`.
+	 * it gives to `env`. Throws a `BasepadError` when another checkout owns it, unless `claim`, and
+	 * `Stopped` (`internal/ports.ts`) as soon as `stopped` says its daemon is no longer running.
 	 */
-	provision(service: S, place: Place<N>, options: { claim: boolean }): Promise<O>;
+	provision(
+		service: S,
+		place: Place<N>,
+		options: { claim: boolean; stopped: () => Promise<boolean> },
+	): Promise<O>;
 	/** Where a client reaches the service: where it runs, else where it would first be tried. */
 	address(service: S, place: Place<N>): Promise<string>;
 }
