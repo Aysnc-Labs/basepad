@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { request as httpsRequest } from "node:https";
 import { createConnection } from "node:net";
 import { dirname, join } from "node:path";
 import { connect } from "node:tls";
@@ -209,7 +210,18 @@ export async function openSupervisor(machine: Machine): Promise<Supervisor> {
 			for (;;) {
 				const now = await states(namespace);
 				const settled = names.every((name) => now[name] !== "starting");
-				if (settled || Date.now() >= until) return now;
+				if (settled || Date.now() >= until) {
+					// The proxy re-reads its routes every 2 s, so a new daemon's domain can lag.
+					const ported = (await list(namespace)).filter((d) => (d.port ?? []).length > 0);
+					for (const daemon of ported) {
+						if (now[daemon.name] !== "running") continue;
+						const host = `${daemon.name}.${namespace}.localhost`;
+						while (!(await routed(machine.proxyPort, host)) && Date.now() < until + 3000) {
+							await new Promise((resolve) => setTimeout(resolve, 200));
+						}
+					}
+					return now;
+				}
 				await new Promise((resolve) => setTimeout(resolve, 200));
 			}
 		},
@@ -253,6 +265,36 @@ function supervisorEnv(dirs: Record<string, string>): NodeJS.ProcessEnv {
 	if (env.BASEPAD_PATH) env.PATH = env.BASEPAD_PATH;
 	delete env.BASEPAD_PATH;
 	return { ...env, ...dirs };
+}
+
+/** Whether the proxy has a route for `host`: its answer is anything but its own "No route". */
+function routed(port: number, host: string): Promise<boolean> {
+	return new Promise((resolve) => {
+		const req = httpsRequest(
+			{
+				host: "127.0.0.1",
+				port,
+				servername: host,
+				headers: { host },
+				rejectUnauthorized: false,
+				timeout: 1000,
+			},
+			(res) => {
+				let body = "";
+				res.setEncoding("utf8").on("data", (chunk: string) => {
+					body += chunk;
+				});
+				res.on("end", () => resolve(!(res.statusCode === 404 && body.includes("No route for"))));
+			},
+		);
+		// A slow answer comes from the app, so the proxy did route it.
+		req.on("timeout", () => {
+			resolve(true);
+			req.destroy();
+		});
+		req.on("error", () => resolve(false));
+		req.end();
+	});
 }
 
 /** The name the probe asks the proxy for: any name under `localhost` gets a certificate. */
