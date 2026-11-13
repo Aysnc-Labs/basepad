@@ -130,7 +130,7 @@ export default defineConfig({
 | Key        | Required | What it is                                                                                                                                |
 | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`     | yes      | The project's one key: a lowercase DNS label (letters, digits, hyphens). Every database and domain is built from it.                      |
-| `services` | no       | The services basepad provides, by key: Postgres, `postgres()` or `postgres({ version: 17 })` (18 is the default), and [Mailpit](#mailpit), `mailpit()`. |
+| `services` | no       | The services basepad provides, by key: Postgres, `postgres()` or `postgres({ version: 17 })` (18 is the default), Redis, `redis()` or `redis({ worktree: "shared" })`, and [Mailpit](#mailpit), `mailpit()`. |
 | `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config, and `port: false` for one that listens on nothing. |
 | `env`      | no       | A function from every service's and app's outputs to the env files to write: each file's path, relative to the config, to its keys.       |
 | `worktrees` | no      | How [worktrees](#worktrees) are made: `prefix` (default `worktree`) names them `<prefix>-<n>`; `dir`, relative to the config, is where they are checked out (default `<repository>/../<name>.worktrees`); `clone` lists untracked paths copied from main, such as `node_modules`; `setup` lists shell commands run once in each new worktree. |
@@ -151,6 +151,8 @@ A service gives:
 | `user`     | `postgres`                                                  |
 | `password` | `basepad`, a placeholder: local connections need none       |
 | `database` | `<name>_<key>`, with hyphens made underscores: `shop_db`    |
+
+Redis gives `url` (`redis://127.0.0.1:<port>`, with no database index: clients pick their own), `host` and `port`.
 
 Mailpit gives `url` (`smtp://main:basepad@127.0.0.1:<port>`; a worktree's user is its suffix), `host`, `port`, `user`, `password` (`basepad`, a placeholder: any is accepted) and `inbox` (`https://<key>.<name>.localhost`).
 
@@ -225,11 +227,12 @@ npx basepad worktree add --start  # starts its apps now
 
 - It is a git worktree, named `worktree-1`, `worktree-2` and so on: the lowest number no git worktree, branch or folder already has. It is checked out on a new branch of the same name from main's `HEAD`, or on `--branch`'s, beside the repository in `../<name>.worktrees`, so main's watchers never see it.
 - Each Postgres service gets a database `<name>_<key>_<suffix>` (`shop_db_worktree_1`) on main's server, holding a copy of main's data. `postgres({ worktree: "empty" })` gives an empty one instead, and `postgres({ worktree: "shared" })` uses main's own database.
+- Each Redis service gets a Redis of its own, empty; `redis({ worktree: "shared" })` uses main's. Redis keeps its data in memory: it starts empty and keeps nothing after it stops.
 - Its apps answer at `https://<app>.<suffix>.<name>.localhost`, beside main's.
 - Each env file `env` names starts as a copy of main's, secrets included, then basepad sets its keys for the worktree. A file the worktree already has is kept.
 - Each path in `worktrees.clone` is copied from main, copy-on-write where the filesystem can (APFS, btrfs, XFS) and fully otherwise, so the worktree's writes never reach main's files. A path main lacks is skipped with a note. A full copy is slow: about 10 s for a `node_modules` of 34,000 files on Linux's ext4.
 - Then the commands in `worktrees.setup` run in order in the worktree, with its env files written. The first that fails is shown with its output, the rest don't run, `worktree add` exits 1 and the worktree is kept.
-- `worktree add` starts no app: an app starts when its domain is first opened, with main's services if they are stopped, or straight away with `--start`. After `down`, an app stays stopped until `up`. `basepad up`, `down` and `status` in the worktree's folder act on it, with the config in that folder. A worktree's services are main's servers, so `up` there starts main's services too, and `down` there stops only the worktree's apps.
+- `worktree add` starts no app: an app starts when its domain is first opened, with main's services if they are stopped, or straight away with `--start`. After `down`, an app stays stopped until `up`. `basepad up`, `down` and `status` in the worktree's folder act on it, with the config in that folder. A worktree's services are main's servers, apart from a Redis of its own, so `up` there starts main's services too, and `down` there stops only the worktree's apps.
 - The copy works while main's app is connected. basepad closes main's database to connections for the copy, ends its sessions and opens it again; main's app reconnects by itself. A node-postgres `Pool` needs an `error` listener (`pool.on("error", …)`), or an ended idle client crashes its process. If a copy is interrupted, the next `basepad up` opens main's database again.
 - The copy is a file clone where the server offers one (Postgres 18 on APFS, btrfs or XFS with reflink: copy-on-write), else a template copy (about 1 s per GB on Linux), else dump and restore. The output says which.
 
