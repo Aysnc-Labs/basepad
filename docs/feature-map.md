@@ -28,7 +28,7 @@ Starts at: `setKeys` (pure) and `writeEnvFiles` in `src/env-files.ts`.
 
 ## Tools
 
-Installs a tool through mise when missing and locates its install folder and programs. Runs mise from the home, so no project's mise config is read.
+Installs a tool through mise (always asking mise, which waits for an install another basepad has in progress, and is a no-op once installed) and locates its install folder and programs. Runs mise from the home, so no project's mise config is read.
 
 Starts at: `install` in `src/tools.ts`.
 
@@ -40,7 +40,7 @@ Starts at: `openSupervisor` in `src/supervisor.ts`.
 
 ## `basepad up`
 
-Registers the apps with the supervisor; as root on Linux trusts the CA (system store and browsers' NSS stores, no prompt); asks port 443 for the URL form; adds the project's domains to `/etc/hosts` where they do not resolve for server-side code (or prints the lines when it cannot write); writes the env files with each app's URL (each runs from its folder with its own and the project's `node_modules/.bin` on PATH, and gets a free `PORT`), starts what is not running, waits up to 5 s, prints the APP/URL/STATE table and returns. An app that exits on start is shown with its last output and the command for its full log, and `up` exits 1. `-d` is accepted. Refuses a config with `services` until Postgres lands.
+Registers the apps with the supervisor; as root on Linux trusts the CA (system store and browsers' NSS stores, no prompt); asks port 443 for the URL form; adds the project's domains to `/etc/hosts` where they do not resolve for server-side code (or prints the lines when it cannot write); writes the env files with each app's URL (each runs from its folder with its own and the project's `node_modules/.bin` on PATH, and gets a free `PORT`), starts what is not running, waits up to 5 s (and up to 3 s more for the proxy, which re-reads routes every 2 s, to route each new domain), prints the APP/URL/STATE table and returns. An app that exits on start is shown with its last output and the command for its full log, and `up` exits 1. `-d` is accepted. Refuses a config with `services` until Postgres lands.
 
 Starts at: `up` in `src/commands.ts`.
 
