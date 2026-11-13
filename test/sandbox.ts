@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { request } from "node:https";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -42,6 +43,13 @@ export interface Sandbox {
 	run(file: string, args: string[]): Promise<Result>;
 	/** Runs `psql` from mise's Postgres 18 with `args` (a URL, or `-h`, `-p` and the rest). */
 	psql(args: string[], sql: string): Promise<Result>;
+	/** Runs `sql` against the `DATABASE_URL` that `up` wrote to the project's `.env.local`. */
+	sql(project: string, sql: string): Promise<Result>;
+	/**
+	 * GETs a URL through basepad's proxy on 127.0.0.1, trusting only the sandbox's certificate
+	 * authority, and returns its JSON body. Rejects on any status but 200.
+	 */
+	get<T = unknown>(url: string): Promise<T>;
 	/** `basepad` with extra environment variables, or under another program (an older Node). */
 	basepadWith(
 		options: { env?: NodeJS.ProcessEnv; via?: string[] },
@@ -89,11 +97,17 @@ export async function sandbox(): Promise<Sandbox> {
 		}
 	};
 
+	const ca = () => readFile(join(root, "home/pitchfork/state/proxy/ca.pem"), "utf8");
+	const psql = (args: string[], sql: string) =>
+		exec("mise", ["exec", "postgres@18", "--", "psql", ...args, "-tAX", "-c", sql], root, {
+			PGCONNECT_TIMEOUT: "5",
+		});
+
 	return {
 		root,
 		env,
 		proxyPort,
-		ca: () => readFile(join(root, "home/pitchfork/state/proxy/ca.pem"), "utf8"),
+		ca,
 		async project(name, files = {}) {
 			const dir = join(root, name);
 			await mkdir(dir, { recursive: true });
@@ -107,10 +121,44 @@ export async function sandbox(): Promise<Sandbox> {
 		},
 		basepad: (cwd, ...args) => exec(process.execPath, [cli, ...args], cwd),
 		run: (file, args) => exec(file, args, root),
-		psql: (args, sql) =>
-			exec("mise", ["exec", "postgres@18", "--", "psql", ...args, "-tAX", "-c", sql], root, {
-				PGCONNECT_TIMEOUT: "5",
-			}),
+		psql,
+		async sql(project, sql) {
+			const url = (await readEnv(project, ".env.local")).DATABASE_URL as string;
+			return psql([url], sql);
+		},
+		async get(url) {
+			const { hostname, host, port } = new URL(url);
+			const pem = await ca();
+			return new Promise((resolve, reject) => {
+				const req = request(
+					{
+						host: "127.0.0.1",
+						port: port || 443,
+						servername: hostname,
+						headers: { host },
+						ca: pem,
+					},
+					(res) => {
+						let body = "";
+						res.setEncoding("utf8").on("data", (chunk: string) => {
+							body += chunk;
+						});
+						res.on("end", () =>
+							res.statusCode === 200
+								? resolve(JSON.parse(body))
+								: reject(
+										new Error(
+											`${url}: ${res.statusCode} ${body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")}`,
+										),
+									),
+						);
+					},
+				);
+				req.setTimeout(10_000, () => req.destroy(new Error(`${url}: timed out`)));
+				req.on("error", reject);
+				req.end();
+			});
+		},
 		basepadWith: (options, cwd, ...args) => {
 			const [file, ...via] = options.via ?? [process.execPath];
 			return exec(file as string, [...via, cli, ...args], cwd, options.env);
@@ -148,6 +196,17 @@ function freePort(): Promise<number> {
 /** Drops the parent shell's mise activation, so it can't leak config from the developer's cwd. */
 function stripMise(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	return Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith("__MISE")));
+}
+
+/** An env file's keys and values, as written unquoted. */
+export async function readEnv(dir: string, file: string): Promise<Record<string, string>> {
+	const text = await readFile(join(dir, file), "utf8");
+	return Object.fromEntries(
+		text
+			.split("\n")
+			.filter((line) => line.includes("="))
+			.map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+	);
 }
 
 /** A `basepad.config.ts` exporting `body` through `defineConfig`. */

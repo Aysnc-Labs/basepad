@@ -53,36 +53,8 @@ async function files(dir: string): Promise<Map<string, { text: string; mtime: nu
 	return out;
 }
 
-/** GETs a URL through basepad's proxy, trusting only the sandbox's certificate authority. */
-async function get(url: string): Promise<{ cwd: string; port: number; pid: number }> {
-	const { hostname, port } = new URL(url);
-	const ca = await box.ca();
-	return new Promise((resolve, reject) => {
-		const req = request(
-			{
-				host: "127.0.0.1",
-				port,
-				servername: hostname,
-				headers: { host: `${hostname}:${port}` },
-				ca,
-			},
-			(res) => {
-				let body = "";
-				res.setEncoding("utf8").on("data", (chunk: string) => {
-					body += chunk;
-				});
-				res.on("end", () =>
-					res.statusCode === 200
-						? resolve(JSON.parse(body))
-						: reject(new Error(`${url}: ${res.statusCode} ${body}`)),
-				);
-			},
-		);
-		req.setTimeout(5000, () => req.destroy(new Error(`${url}: timed out`)));
-		req.on("error", reject);
-		req.end();
-	});
-}
+type Echo = { cwd: string; port: number; pid: number };
+const get = (url: string) => box.get<Echo>(url);
 
 /** Opens a WebSocket through the proxy, as a hot-reload client does, and returns its first message. */
 async function websocket(url: string): Promise<string> {

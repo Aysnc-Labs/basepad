@@ -1,8 +1,6 @@
-import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
-import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { configFile, type Result, type Sandbox, sandbox } from "./sandbox.ts";
+import { configFile, type Result, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
 
 let box: Sandbox;
 let shop: string;
@@ -31,19 +29,8 @@ beforeAll(async () => {
 }, 300_000);
 afterAll(() => box?.dispose());
 
-/** An env file's keys and values; values here are never quoted. */
-async function env(dir: string, file: string): Promise<Record<string, string>> {
-	const text = await readFile(join(dir, file), "utf8");
-	return Object.fromEntries(
-		text
-			.split("\n")
-			.filter((line) => line.includes("="))
-			.map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
-	);
-}
-
 async function sql(dir: string, query: string): Promise<string> {
-	const out = await box.psql([(await env(dir, ".env.local")).DATABASE_URL as string], query);
+	const out = await box.sql(dir, query);
 	expect(out.stderr).toBe("");
 	return out.stdout.trim();
 }
@@ -57,7 +44,7 @@ test("up runs the project's Postgres (18 by default, on loopback), and a client 
 });
 
 test("a client connects with the split values, and the server needs no password", async () => {
-	const split = await env(shop, "backend/.env");
+	const split = await readEnv(shop, "backend/.env");
 	expect(split.DB_HOST).toBe("127.0.0.1");
 	expect(split.DB_DATABASE).toBe("pg_shop_db");
 	expect(split.DB_USERNAME).toBe("postgres");
@@ -87,7 +74,7 @@ test("pgvector and Postgres's standard extensions can be created; basepad enable
 
 test("status lists the service with its state and address", async () => {
 	const out = await box.basepad(shop, "status");
-	const { DB_PORT } = await env(shop, "backend/.env");
+	const { DB_PORT } = await readEnv(shop, "backend/.env");
 	expect(out.code).toBe(0);
 	expect(out.stdout).toMatch(
 		new RegExp(`^db +postgresql://postgres@127\\.0\\.0\\.1:${DB_PORT}/pg_shop_db +running$`, "m"),
@@ -98,7 +85,7 @@ test("rows written before down are there after up, and down stops the server", a
 	await sql(shop, "create table notes (body text); insert into notes values ('kept')");
 	const down = await box.basepad(shop, "down");
 	expect(down.code).toBe(0);
-	const url = (await env(shop, ".env.local")).DATABASE_URL as string;
+	const url = (await readEnv(shop, ".env.local")).DATABASE_URL as string;
 	expect((await box.psql([url], "select 1")).code).not.toBe(0);
 	expect((await box.basepad(shop, "status")).stdout).toMatch(/^db +\S+ +stopped$/m);
 	const up = await box.basepad(shop, "up");
@@ -107,7 +94,7 @@ test("rows written before down are there after up, and down stops the server", a
 });
 
 test("down stops the server promptly while a client is connected", async () => {
-	const url = (await env(shop, ".env.local")).DATABASE_URL as string;
+	const url = (await readEnv(shop, ".env.local")).DATABASE_URL as string;
 	const client = box.psql([url], "select pg_sleep(60)");
 	await new Promise((resolve) => setTimeout(resolve, 1000));
 	const started = Date.now();
@@ -170,16 +157,16 @@ test("up --claim makes the second checkout the owner, and the first is then refu
 });
 
 test("when the port is taken, the next free one is used and the env files follow", async () => {
-	const before = Number((await env(shop, "backend/.env")).DB_PORT);
+	const before = Number((await readEnv(shop, "backend/.env")).DB_PORT);
 	await box.basepad(shop, "down");
 	const squatter: Server = createServer();
 	await new Promise<void>((resolve) => squatter.listen(before, "127.0.0.1", resolve));
 	try {
 		const up = await box.basepad(shop, "up");
 		expect(up.stderr).toBe("");
-		const after = Number((await env(shop, "backend/.env")).DB_PORT);
+		const after = Number((await readEnv(shop, "backend/.env")).DB_PORT);
 		expect(after).not.toBe(before);
-		expect((await env(shop, ".env.local")).DATABASE_URL).toContain(`:${after}/`);
+		expect((await readEnv(shop, ".env.local")).DATABASE_URL).toContain(`:${after}/`);
 		expect(await sql(shop, "select body from notes")).toBe("kept");
 	} finally {
 		await new Promise((resolve) => squatter.close(resolve));

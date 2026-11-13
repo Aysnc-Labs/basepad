@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { request } from "node:https";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, type Sandbox, sandbox } from "./sandbox.ts";
@@ -10,7 +9,6 @@ import { configFile, type Sandbox, sandbox } from "./sandbox.ts";
 // takes port 443 itself (BASEPAD_PROXY_PORT unset), so only this file may run it there.
 const rootOnLinux = process.platform === "linux" && process.getuid?.() === 0;
 const env = rootOnLinux ? { BASEPAD_PROXY_PORT: "" } : {};
-const port = () => (rootOnLinux ? 443 : box.proxyPort);
 const suffix = () => (rootOnLinux ? "" : `:${box.proxyPort}`);
 
 let box: Sandbox;
@@ -87,40 +85,9 @@ test("one app fetches another by its HTTPS domain from server-side code", async 
 	expect(up.stdout).toContain(`web  https://web.pair.localhost${suffix()}  running`);
 	expect(await readFile(join(dir, ".env"), "utf8")).toBe(`API_URL=${api}\n`);
 
-	const reply = await get(`https://web.pair.localhost${suffix()}`);
+	const reply = await box.get(`https://web.pair.localhost${suffix()}`);
 	expect(reply).toMatchObject({ url: api, status: 200, body: { cwd: join(dir, "api") } });
 
 	const status = await basepad(dir, "status");
 	expect(status.stdout).toContain(`web  https://web.pair.localhost${suffix()}  running`);
 });
-
-/** GETs a URL through basepad's proxy on 127.0.0.1, trusting only the sandbox's CA. */
-async function get(url: string): Promise<unknown> {
-	const { hostname } = new URL(url);
-	const ca = await box.ca();
-	return new Promise((resolve, reject) => {
-		const req = request(
-			{ host: "127.0.0.1", port: port(), servername: hostname, headers: { host: hostname }, ca },
-			(res) => {
-				let body = "";
-				res.setEncoding("utf8").on("data", (chunk: string) => {
-					body += chunk;
-				});
-				res.on("end", () => {
-					try {
-						resolve(JSON.parse(body));
-					} catch {
-						reject(
-							new Error(
-								`${url}: ${res.statusCode} ${body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")}`,
-							),
-						);
-					}
-				});
-			},
-		);
-		req.setTimeout(10_000, () => req.destroy(new Error(`${url}: timed out`)));
-		req.on("error", reject);
-		req.end();
-	});
-}

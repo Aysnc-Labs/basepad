@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, type Sandbox, sandbox } from "./sandbox.ts";
 
@@ -12,17 +10,13 @@ beforeAll(async () => {
 		"basepad.config.ts": configFile(`{
 			name: "pg-blog",
 			services: { db: postgres({ version: 17 }) },
-			env: ({ db }) => ({ ".env": { DATABASE_URL: db.url } }),
+			env: ({ db }) => ({ ".env.local": { DATABASE_URL: db.url } }),
 		}`),
 	});
 }, 60_000);
 afterAll(() => box?.dispose());
 
-async function sql(query: string) {
-	const text = await readFile(join(blog, ".env"), "utf8");
-	const url = /^DATABASE_URL=(.*)$/m.exec(text)?.[1] as string;
-	return box.psql([url], query);
-}
+const sql = (query: string) => box.sql(blog, query);
 
 test("a project on Postgres 17 gets 17, and pgvector can be created", async () => {
 	const up = await box.basepad(blog, "up");
