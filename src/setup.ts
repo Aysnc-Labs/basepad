@@ -6,6 +6,7 @@ import { createInterface } from "node:readline/promises";
 import type { Invocation } from "./commands.ts";
 import { BasepadError, exec } from "./internal/exec.ts";
 import { isRootOnLinux, type Machine, machine } from "./layout.ts";
+import type { Check } from "./mission-control/launch.ts";
 import { openSupervisor, type Supervisor } from "./supervisor.ts";
 
 /**
@@ -37,9 +38,22 @@ export async function setup({ flags, print }: Invocation): Promise<void> {
 		: (macPlan?.steps ?? (await supervisor.proxySetupPlan()));
 	if (stores.length > 0) plan.push(await nssStep(stores));
 	if (plan.length === 0) {
+		// On a terminal, what is already done stands go, and the rocket lifts off when all is.
+		if (process.stdout.isTTY) {
+			const pad = await launchPad(["trust basepad's CA", "port 443 reaches basepad's proxy"], mac);
+			pad.go(0);
+			if (port === "proxy") await pad.liftOff(true, print);
+			else {
+				pad.fail(print);
+				print(portKept(mac, here));
+			}
+		}
 		print("basepad setup: nothing to do; basepad's CA is already trusted.");
 		return;
 	}
+	// On a terminal, the plan stands as a checklist beside the rocket on its pad.
+	const pad = process.stdout.isTTY ? await launchPad(plan, mac) : undefined;
+	pad?.show(print);
 	print("basepad setup will:");
 	for (const step of plan) print(`  ${step}`);
 	if (!mac) {
@@ -56,32 +70,101 @@ export async function setup({ flags, print }: Invocation): Promise<void> {
 	}
 	if (!root && !flags.yes && !(await consent())) return;
 
-	if (root) await supervisor.trust();
-	else if (macPlan !== undefined) {
-		if (macPlan.removeRedirect) {
-			const code = await supervisor.proxyUndo();
-			if (code !== 0)
-				throw new BasepadError(`pitchfork's proxy setup --undo failed (exit ${code}).`);
+	try {
+		if (root) await supervisor.trust();
+		else if (macPlan !== undefined) {
+			if (macPlan.removeRedirect) {
+				const code = await supervisor.proxyUndo();
+				if (code !== 0)
+					throw new BasepadError(`pitchfork's proxy setup --undo failed (exit ${code}).`);
+				pad?.go(0);
+			}
+			// Undo takes the CA's trust away too.
+			if (!macPlan.trusted || macPlan.removeRedirect) await supervisor.trust();
+		} else {
+			const code = await supervisor.proxySetup();
+			if (code !== 0) throw new BasepadError(`pitchfork's proxy setup failed (exit ${code}).`);
 		}
-		// Undo takes the CA's trust away too.
-		if (!macPlan.trusted || macPlan.removeRedirect) await supervisor.trust();
-	} else {
-		const code = await supervisor.proxySetup();
-		if (code !== 0) throw new BasepadError(`pitchfork's proxy setup failed (exit ${code}).`);
+	} catch (error) {
+		pad?.fail(print);
+		throw error;
 	}
 	for (const line of await trustInBrowsers(supervisor.ca, stores)) print(line);
-	if ((await supervisor.standardPort()) === "proxy") {
+	const portFree = (await supervisor.standardPort()) === "proxy";
+	await pad?.liftOff(portFree, print);
+	if (portFree) {
 		print("URLs are port-free: https://<app>.<name>.localhost");
 		print("Run `basepad up` in each project to write the port-free URLs into its env files.");
-	} else {
-		print(
-			mac
-				? here.forwards443
-					? `Something else answers on port 443 (Herd, Valet?), so URLs keep :${here.proxyPort}.`
-					: `BASEPAD_PROXY_PORT is set, so URLs keep :${here.proxyPort}.`
-				: `Port 443 does not reach basepad's proxy yet, so URLs keep :${here.proxyPort}. Run \`basepad setup\` again.`,
-		);
-	}
+	} else print(portKept(mac, here));
+}
+
+/** Why URLs keep the proxy's port. */
+function portKept(mac: boolean, here: Machine): string {
+	return mac
+		? here.forwards443
+			? `Something else answers on port 443 (Herd, Valet?), so URLs keep :${here.proxyPort}.`
+			: `BASEPAD_PROXY_PORT is set, so URLs keep :${here.proxyPort}.`
+		: `Port 443 does not reach basepad's proxy yet, so URLs keep :${here.proxyPort}. Run \`basepad setup\` again.`;
+}
+
+/** Setup's launch on a terminal: the plan's checklist beside the rocket. */
+interface Pad {
+	/** Prints the checklist as it stands. */
+	show(print: (line: string) => void): void;
+	/** Step `i` of the plan is done. */
+	go(i: number): void;
+	/** Applying failed: what was not done is no-go, the rocket stays on its pad. */
+	fail(print: (line: string) => void): void;
+	/** Every step done: the rocket lifts off when URLs are port-free, else stands, all go. */
+	liftOff(portFree: boolean, print: (line: string) => void): Promise<void>;
+}
+
+async function launchPad(plan: string[], mac: boolean): Promise<Pad> {
+	// Loaded only on a terminal, so piped runs never load the terminal UI.
+	const [{ launchFrame, liftOff }, { colorsFor }, { default: chalk }, { renderToString }] =
+		await Promise.all([
+			import("./mission-control/launch.ts"),
+			import("./mission-control/frame.ts"),
+			import("chalk"),
+			import("ink"),
+		]);
+	const checks: Check[] = plan.map((step, i) => ({ name: checkOf(step, i), state: "waiting" }));
+	const input = () => ({
+		title: "SETUP",
+		subtitle: mac ? "this mac" : "this machine",
+		checks,
+		tick: 0,
+		lift: 0,
+		cols: process.stdout.columns || 80,
+		color: colorsFor(process.env.NO_COLOR, chalk.level),
+	});
+	const show = (print: (line: string) => void) =>
+		print(renderToString(launchFrame(input()), { columns: process.stdout.columns || 80 }));
+	return {
+		show,
+		go(i) {
+			const check = checks[i];
+			if (check !== undefined) check.state = "go";
+		},
+		fail(print) {
+			for (const check of checks) if (check.state !== "go") check.state = "nogo";
+			show(print);
+		},
+		async liftOff(portFree, print) {
+			for (const check of checks) check.state = "go";
+			if (portFree) await liftOff(input());
+			else show(print);
+		},
+	};
+}
+
+/** A step of the plan as the checklist names it, by what it does. */
+function checkOf(step: string, i: number): string {
+	if (/pf redirect/.test(step)) return "REMOVE PF REDIRECT";
+	if (/Chrome and Firefox/.test(step)) return "BROWSERS";
+	if (/\b443\b/.test(step)) return "PORT 443";
+	if (/\bCA\b/.test(step)) return "TRUST CA";
+	return `STEP ${i + 1}`;
 }
 
 /** Asks on the terminal; with none to ask, refuses. */

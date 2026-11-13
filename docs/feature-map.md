@@ -56,14 +56,14 @@ Paths: src/init.ts
 
 ### `basepad up`, `down` and `status`
 
-Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.localhost`, starts services, sets the env keys the config names; stops them; shows their state.
+Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.localhost`, starts services, sets the env keys the config names; stops them (on a terminal, the landing in `src/mission-control/launch.ts` shows them coming down); shows their state.
 Entry: `basepad up [-d] [--claim]`, `basepad down`, `basepad status`
-Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts, src/tls.ts
+Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts, src/mission-control/launch.ts, src/tls.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### Mission control
 
-Purpose: one place to see and steer a project while it runs, so nothing needs another command: every environment (main and each worktree) at a glance, the selected one's apps and services with their addresses, and their logs live, with crashes standing out. Its keys are in the README. It only reads and asks: the supervisor runs everything, and worktrees are added and removed by the `worktree add` and `worktree rm` commands in processes of their own (`work.ts`), so closing or crashing the view stops nothing. A pure frame (state to Ink element) and a pure reducer (key to view and intent), behind one feed (git, configs, the supervisor's states and `pitchfork logs --tail`, worktree work under way), one place that performs intents (`act.ts`) and one terminal adapter.
+Purpose: one place to see and steer a project while it runs, so nothing needs another command. It opens at once, while `up` readies the environment, so its logs show from the start; a failure shows as a notice. Then every environment (main and each worktree) at a glance, the selected one's apps and services with their addresses, and their logs live, with crashes standing out. Its keys are in the README. It only reads and asks: the supervisor runs everything, and worktrees are added and removed by the `worktree add` and `worktree rm` commands in processes of their own (`work.ts`), so closing or crashing the view stops nothing. A pure frame (state to Ink element) and a pure reducer (key to view and intent), behind one feed (git, configs, the supervisor's states and `pitchfork logs --tail`, worktree work under way), one place that performs intents (`act.ts`) and one terminal adapter.
 Entry: `basepad up` on a terminal (`-d`, or no terminal, skips it)
 Paths: src/mission-control/, src/supervisor.ts, src/commands.ts, src/worktrees.ts
 
@@ -87,9 +87,9 @@ Paths: src/claude-hooks.ts, src/commands.ts
 
 ### `basepad setup`
 
-Purpose: one-time machine setup: trusts basepad's CA, and on Linux makes URLs port-free; adds domains to `/etc/hosts` where `*.localhost` doesn't resolve.
+Purpose: one-time machine setup: trusts basepad's CA, and on Linux makes URLs port-free; adds domains to `/etc/hosts` where `*.localhost` doesn't resolve. On a terminal, its plan is a checklist beside a rocket on its pad (`launch.ts`), which lifts off once URLs are port-free.
 Entry: `basepad setup [--dry-run] [--yes]`
-Paths: src/setup.ts, src/hosts.ts
+Paths: src/setup.ts, src/hosts.ts, src/mission-control/launch.ts
 
 ### Port 443 on macOS
 

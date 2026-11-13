@@ -6,6 +6,7 @@ import {
 	type Part,
 	type PartState,
 	partsOf,
+	printed,
 	type Snapshot,
 	selectedOf,
 	streamLines,
@@ -28,6 +29,12 @@ export interface FrameInput {
 	now: string;
 	/** How to colour it: `none` for `NO_COLOR`; meaning never rests on colour alone. */
 	color: Colors;
+	/** The time in milliseconds, for motion: what started, changed or arrived how long ago. */
+	clock?: number;
+	/** When each part last changed state, by id, in the clock's milliseconds. */
+	changed?: ReadonlyMap<string, number>;
+	/** How long the notice has shown, in milliseconds: it fades after a few seconds. */
+	noticeAge?: number;
 }
 
 /**
@@ -51,8 +58,9 @@ export const MIN_ROWS = 16;
 /** Below this many rows the frame is compact: no blank rows, tighter keys, fewer alert lines. */
 const SHORT_ROWS = 24;
 
-export function frame({ snapshot, view, cols, rows, now, color }: FrameInput): ReactElement {
-	const c = palette(color);
+export function frame(input: FrameInput): ReactElement {
+	const { snapshot, view, cols, rows, now, color } = input;
+	const c: Palette = { ...palette(color), motion: motionOf(input) };
 	if (cols < MIN_COLS || rows < MIN_ROWS) {
 		return centred(
 			cols,
@@ -85,7 +93,9 @@ export function frame({ snapshot, view, cols, rows, now, color }: FrameInput): R
 				Box,
 				{ flexDirection: "column", width: right },
 				partsPanel(env, view, snapshot, right, table, short, c),
-				stream(env, view, snapshot, right, body - table, c),
+				view.help
+					? help(right, body - table, c)
+					: stream(env, view, snapshot, right, body - table, c),
 			),
 		),
 		...bottom,
@@ -115,7 +125,10 @@ function arrange(
 		alerts.length > 0 && !short ? gap("g2") : null,
 	].filter((e) => e !== null);
 	const said = status(snapshot, view, cols, short, c);
-	const bottom = [...(said.length === 0 && !short ? [gap("g4")] : said), ...footer(cols, short, c)];
+	const bottom = [
+		...(said.length === 0 && !short ? [gap("g4")] : said),
+		...footer(cols, short, snapshot.environments.length, c),
+	];
 	const body = rows - top.length - bottom.length;
 	const side = Math.min(34, Math.max(24, Math.floor(cols * 0.2)));
 	const right = cols - side - 1;
@@ -143,7 +156,9 @@ export function pageOf(snapshot: Snapshot, view: View, cols: number, rows: numbe
 // ── colour ────────────────────────────────────────────────────────────────────────────────────
 
 type Color = string | undefined;
-interface Palette {
+export interface Palette {
+	/** The moment it is drawn at, where anything moves. */
+	motion?: Motion;
 	frame: Color;
 	focus: Color;
 	text: Color;
@@ -197,7 +212,7 @@ const NAMED: Palette = {
 	parts: ["blueBright", "magenta", "cyan", "magentaBright", "cyanBright", "blue"],
 };
 
-function palette(colors: Colors): Palette {
+export function palette(colors: Colors): Palette {
 	if (colors === "rgb") return COLORS;
 	if (colors === "16") return NAMED;
 	const none = Object.fromEntries(Object.keys(COLORS).map((key) => [key, undefined]));
@@ -209,15 +224,116 @@ const STATES: Record<
 	{ glyph: string; word: string; tone: "ok" | "warn" | "bad" | "dim" }
 > = {
 	running: { glyph: "●", word: "running", tone: "ok" },
-	starting: { glyph: "◐", word: "starting", tone: "warn" },
+	starting: { glyph: "◉", word: "starting", tone: "warn" },
 	failed: { glyph: "✖", word: "failed", tone: "bad" },
-	stopped: { glyph: "■", word: "stopped", tone: "dim" },
+	stopped: { glyph: "–", word: "stopped", tone: "dim" },
 	idle: { glyph: "○", word: "idle", tone: "dim" },
 };
 
 function partColor(env: EnvironmentView, id: string, c: Palette): string | undefined {
 	const i = partsOf(env).findIndex((part) => part.id === id);
 	return c.parts[Math.max(0, i) % c.parts.length];
+}
+
+// ── motion ────────────────────────────────────────────────────────────────────────────────────
+
+/** A starting part's dot breathes: amber, toward dim, and back, once in this long. */
+const BREATH_MS = 1400;
+/** How long a part that changed state stays lit, fading. */
+const FLASH_MS = 1200;
+/** How long a new log line takes to settle to its colour. */
+const FADE_IN_MS = 350;
+/** How long a notice shows before it fades, and how long it fades. */
+export const NOTICE_MS = 4000;
+export const NOTICE_FADE_MS = 1000;
+/** The background a lit row fades to: the palette's own. */
+const BACKGROUND = "#1a1b26";
+
+interface Motion {
+	/** Fades, glows and breaths, which need every colour: without, nothing moves. */
+	rgb: boolean;
+	clock: number;
+	changed: ReadonlyMap<string, number>;
+	noticeAge?: number;
+}
+
+function motionOf({ clock = 0, changed = new Map(), noticeAge, color }: FrameInput): Motion {
+	return {
+		rgb: color === "rgb",
+		clock,
+		changed,
+		...(noticeAge === undefined ? {} : { noticeAge }),
+	};
+}
+
+/** Whether anything in the frame moves now: the view repaints fast only while it does. */
+export function animating({
+	snapshot,
+	clock,
+	changed,
+	noticeAge,
+}: Pick<FrameInput, "snapshot" | "changed" | "noticeAge"> & { clock: number }): boolean {
+	const parts = snapshot.environments.flatMap((env) => [...env.apps, ...env.services]);
+	if (parts.some((part) => part.state === "starting")) return true;
+	for (const at of changed?.values() ?? []) if (clock - at < FLASH_MS) return true;
+	for (const lines of snapshot.logs.values()) {
+		const at = lines.at(-1)?.at;
+		if (at !== undefined && clock - at < FADE_IN_MS) return true;
+	}
+	return (
+		noticeAge !== undefined && noticeAge >= NOTICE_MS && noticeAge < NOTICE_MS + NOTICE_FADE_MS
+	);
+}
+
+/** `from` moved toward `to` by `t` (0 to 1): two `#rrggbb` colours. */
+function mix(from: string, to: string, t: number): string {
+	const k = Math.max(0, Math.min(1, t));
+	const channel = (hex: string, i: number) => Number.parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16);
+	return `#${[0, 1, 2]
+		.map((i) => Math.round(channel(from, i) + (channel(to, i) - channel(from, i)) * k))
+		.map((n) => n.toString(16).padStart(2, "0"))
+		.join("")}`;
+}
+
+/** A starting part's colour, breathing; its own where colours are few. */
+function breathe(color: string | undefined, c: Palette): string | undefined {
+	const m = c.motion;
+	if (m === undefined || !m.rgb || color === undefined || c.dim === undefined) return color;
+	const t = (1 - Math.cos((2 * Math.PI * m.clock) / BREATH_MS)) / 2;
+	return mix(color, c.dim, t * 0.8);
+}
+
+/** The background of a part's row: lit in its new state's colour just after it changed. */
+function glow(id: string, color: string | undefined, c: Palette): string | undefined {
+	const m = c.motion;
+	const at = m?.changed.get(id);
+	if (m === undefined || !m.rgb || at === undefined || color === undefined) return undefined;
+	const age = m.clock - at;
+	if (age < 0 || age >= FLASH_MS) return undefined;
+	return mix(mix(color, BACKGROUND, 0.6), BACKGROUND, age / FLASH_MS);
+}
+
+/** A log line's colour: dim as it arrives, settling to its own. */
+function settled(line: LogLine, color: string | undefined, c: Palette): string | undefined {
+	const m = c.motion;
+	if (
+		m === undefined ||
+		!m.rgb ||
+		line.at === undefined ||
+		color === undefined ||
+		c.dim === undefined
+	)
+		return color;
+	const age = m.clock - line.at;
+	return age >= FADE_IN_MS ? color : mix(c.dim, color, Math.max(0, age) / FADE_IN_MS);
+}
+
+/** The notice's colour: its own, then fading to dim after a few seconds. */
+function fading(color: string | undefined, c: Palette): string | undefined {
+	const age = c.motion?.noticeAge;
+	if (!c.motion?.rgb || age === undefined || color === undefined || c.dim === undefined)
+		return color;
+	return age <= NOTICE_MS ? color : mix(color, c.dim, (age - NOTICE_MS) / NOTICE_FADE_MS);
 }
 
 // ── text runs ─────────────────────────────────────────────────────────────────────────────────
@@ -382,7 +498,11 @@ function rollup(env: EnvironmentView): { state: PartState | "problem"; note: str
 function lookOf(state: PartState | "problem", c: Palette) {
 	if (state === "problem") return { glyph: "▲", word: "problem", color: c.warn };
 	const s = STATES[state];
-	return { glyph: s.glyph, word: s.word, color: c[s.tone] };
+	return {
+		glyph: s.glyph,
+		word: s.word,
+		color: state === "starting" ? breathe(c[s.tone], c) : c[s.tone],
+	};
 }
 
 /** How a log line reads: an error, a warning, or plain. */
@@ -394,7 +514,10 @@ function tone(text: string, c: Palette): string | undefined {
 
 /** A line without the date, zone and pid a server stamps on it itself (Postgres does). */
 const clean = (text: string) =>
-	text.replace(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)? \w+ (\[\d+\] )?/, "");
+	text.replace(
+		/^\s*\[?\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(?:[.,]\d+)?(?:Z|[+-]\d\d:?\d\d| [A-Z]{2,5})?\]?\s+(?:\[\d+\]\s+)?/,
+		"",
+	);
 
 /** How far back a failed part's output is searched for the line that names its error. */
 const LAST_OUTPUT = 20;
@@ -414,7 +537,7 @@ function lastError(lines: readonly LogLine[] = []): string {
 /** The newest `n` lines of the given parts, merged in arrival order. */
 function merged(logs: Snapshot["logs"], ids: string[], n: number): LogLine[] {
 	const all: LogLine[] = [];
-	for (const id of ids) all.push(...(logs.get(id) ?? []).slice(-n));
+	for (const id of ids) all.push(...(logs.get(id) ?? []).filter(printed).slice(-n));
 	return all.sort((a, b) => a.seq - b.seq).slice(-n);
 }
 
@@ -438,8 +561,11 @@ function header(snapshot: Snapshot, cols: number, now: string, c: Palette): Reac
 		run("● ", c.ok),
 		run(`${count("running")} running   `, c.soft),
 		...(failed > 0 ? [run("✖ ", c.bad), run(`${failed} failed   `, c.bad, { bold: true })] : []),
-		run("○ ", c.dim),
-		run(`${count("idle")} idle   `, c.soft),
+		// Idle and stopped only where there are any: what runs or failed is always said.
+		...(count("idle") > 0 ? [run("○ ", c.dim), run(`${count("idle")} idle   `, c.soft)] : []),
+		...(count("stopped") > 0
+			? [run("– ", c.dim), run(`${count("stopped")} stopped   `, c.soft)]
+			: []),
 		run("⇣ ", c.mute),
 		run(`${snapshot.rate}${wide ? " lines/s" : "/s"}   `, c.soft),
 		run(now, c.text, { bold: true }),
@@ -486,7 +612,7 @@ function status(
 		.slice(0, short ? 1 : 2)
 		.map((w, i) =>
 			line(`work ${i}`, cols, [
-				run(" ◐ ", c.warn, { bold: true }),
+				run(` ${STATES.starting.glyph} `, breathe(c.warn, c), { bold: true }),
 				run(w.title, c.warn, { bold: true }),
 				run(w.line === undefined ? "" : `  ${w.line}`, c.soft),
 			]),
@@ -513,36 +639,49 @@ function status(
 			run("  esc\u00a0keeps\u00a0it", c.mute),
 		];
 	} else if (view.notice !== undefined) {
-		said = [run(view.notice, c.accent)];
+		said = [run(view.notice, fading(c.accent, c))];
 	}
 	const rows = said.length === 0 ? [] : flow(said, cols - 2).slice(0, short ? 2 : 3);
 	return [...work, ...rows.map((runs, i) => line(`said ${i}`, cols, [run(" "), ...runs]))];
 }
 
-/** Every key with what it does, as many to a row as fit. */
-const KEYS: [string, string][] = [
-	["↑↓", "environment"],
-	["←→", "app or service"],
-	["s", "start"],
-	["x", "stop"],
-	["r", "restart"],
-	["o", "open"],
-	["c", "copy"],
-	["a", "add worktree"],
-	["d", "remove worktree"],
-	["v", "side by side"],
-	["/", "search"],
-	["n N", "next match"],
-	["PgUp PgDn", "scroll"],
-	["esc", "back"],
-	["q", "close"],
+/** The keys used most, below the view: the rest are under `?` (`HELP`). */
+function keysOf(environments: number): [string, string][] {
+	return [
+		["↑↓", "select"],
+		...(environments > 1 ? ([["tab", "environment"]] as [string, string][]) : []),
+		["enter", "open"],
+		["space", "start/stop"],
+		["r", "restart"],
+		["/", "search"],
+		["?", "all keys"],
+		["q", "close"],
+	];
+}
+
+/** Every key, with what it does: what `?` shows in place of the logs. */
+const HELP: [string, string][] = [
+	["↑↓", "select an app or service; above the first, all of them"],
+	["tab ⇧tab", "next or previous environment (← → too)"],
+	["1–9", "go to an environment, by its number"],
+	["enter", "open the selected app, else the first"],
+	["space", "start or stop it"],
+	["r", "restart it, else the whole environment"],
+	["c", "copy its address"],
+	["/", "search the logs"],
+	["n N", "older and newer match"],
+	["PgUp PgDn", "scroll the logs; Home and End for the oldest and live"],
+	["a", "add a worktree"],
+	["d", "remove the selected worktree"],
+	["esc", "back a step"],
+	["q", "close mission control; everything keeps running"],
 ];
 
 /** The keys, in rows: each key's label stays with its key. Short, they sit closer together. */
-function footer(cols: number, short: boolean, c: Palette): ReactElement[] {
+function footer(cols: number, short: boolean, environments: number, c: Palette): ReactElement[] {
 	const rows: Run[][] = [[run(" ")]];
 	const space = short ? "  " : "   ";
-	for (const [k, label] of KEYS) {
+	for (const [k, label] of keysOf(environments)) {
 		const key = short ? k : ` ${k} `;
 		const item = [run(key, c.text, { bg: c.keyBg, bold: true }), run(` ${label}${space}`, c.mute)];
 		let last = rows[rows.length - 1] as Run[];
@@ -552,9 +691,6 @@ function footer(cols: number, short: boolean, c: Palette): ReactElement[] {
 		}
 		last.push(...item);
 	}
-	const last = rows[rows.length - 1] as Run[];
-	const tail = run("·  everything keeps running", c.dim);
-	if (widthOf(last) + widthOf([tail]) <= cols) last.push(tail);
 	// A row's trailing gap would push it past the edge and cut it with `…`.
 	return rows.map((runs, i) => {
 		const end = runs[runs.length - 1] as Run;
@@ -578,28 +714,34 @@ function sidebar(
 ): ReactElement {
 	const inner = width - 4;
 	const removing = new Set((snapshot.work ?? []).map((w) => w.namespace));
-	const blocks = snapshot.environments.map((env) => {
+	// Each is numbered, as `1`–`9` select it; the rows below its name line up past the number.
+	const digits = String(snapshot.environments.length).length;
+	const indent = run(" ".repeat(digits + 3));
+	const blocks = snapshot.environments.map((env, i) => {
 		const on = env === selected;
 		const s = rollup(env);
 		const look = lookOf(s.state, c);
 		const bar = on ? run("▌", c.accent) : run(" ");
 		const k = env.namespace;
+		const branch = env.branch ?? "(detached)";
 		const rows = [
 			line(`${k} name`, inner, [
 				bar,
+				run(`${String(i + 1).padStart(digits)} `, c.dim),
 				run(`${look.glyph} `, look.color),
 				run(env.label, on ? c.text : c.soft, { bold: on }),
 			]),
-			...wrap(env.branch ?? "(detached)", inner - 3).map((piece, i) =>
-				line(`${k} branch ${i}`, inner, [bar, run("  "), run(piece, on ? c.soft : c.mute)]),
+			// Its branch, where it is not its name already (main on main).
+			...(branch === env.label ? [] : wrap(branch, inner - indent.text.length - 1)).map(
+				(piece, j) =>
+					line(`${k} branch ${j}`, inner, [bar, indent, run(piece, on ? c.soft : c.mute)]),
 			),
-			line(`${k} note`, inner, [
-				bar,
-				run("  "),
-				removing.has(k)
-					? run("being removed…", c.warn)
-					: run(s.note, s.state === "running" ? c.mute : look.color),
-			]),
+			// Its state, where it is not simply running: the header counts those.
+			...(removing.has(k)
+				? [line(`${k} note`, inner, [bar, indent, run("being removed…", c.warn)])]
+				: s.state === "running"
+					? []
+					: [line(`${k} note`, inner, [bar, indent, run(s.note, look.color)])]),
 		];
 		if (!short) rows.push(gap(`${k} gap`));
 		return rows;
@@ -691,7 +833,14 @@ function partBlocks(
 	const nameWidth =
 		Math.max(inner < 60 ? 0 : 8, ...partsOf(env).map((p) => [...p.name].length)) + 2;
 	const words = inner >= 96;
+	// A part that just changed state is lit for a moment in its new state's colour.
 	const block = (part: Part): Row[] => {
+		const bg = glow(part.id, lookOf(part.state, c).color, c);
+		const rows = plainBlock(part);
+		if (bg === undefined) return rows;
+		return rows.map((row) => ({ ...row, runs: row.runs.map((r) => ({ ...r, bg: r.bg ?? bg })) }));
+	};
+	const plainBlock = (part: Part): Row[] => {
 		const look = lookOf(part.state, c);
 		const on = view?.focus === part.id;
 		const lead = [
@@ -706,10 +855,11 @@ function partBlocks(
 			return [{ key: part.id, runs: [...lead, ...error] }];
 		}
 		const color = part.state === "running" ? c.text : c.soft;
+		// Its port and pid only matter on a closer look: they show when it is selected.
 		const detail =
 			part.state === "idle"
 				? run("   starts on its first request", c.dim)
-				: run(part.note === undefined ? "" : `   ${part.note}`, c.dim);
+				: run(part.note === undefined || !on ? "" : `   ${part.note}`, c.dim);
 		const address = part.address ?? "";
 		const whole = [...lead, run(address, color)];
 		if (widthOf(whole) <= inner) {
@@ -726,16 +876,12 @@ function partBlocks(
 			})),
 		];
 	};
-	const group = (heading: string, parts: Part[], first: boolean): Row[][] =>
+	const group = (heading: string, parts: Part[]): Row[][] =>
 		parts.map((part, i) => [
-			...(i > 0 || short ? [] : first ? [] : [{ key: `${heading} gap`, runs: [] }]),
 			...(i > 0 || short ? [] : [{ key: heading, runs: [run(heading, c.dim, { bold: true })] }]),
 			...block(part),
 		]);
-	return [
-		...group("APPS", env.apps, true),
-		...group("SERVICES", env.services, env.apps.length === 0),
-	];
+	return [...group("APPS", env.apps), ...group("SERVICES", env.services)];
 }
 
 /** The selected environment's apps and services: state, address, and a detail. */
@@ -772,7 +918,7 @@ function partsPanel(
 		// The branch, a name, shows whole or not at all: the sidebar has it whole.
 		[
 			run(env.label, c.text, { bold: true }),
-			...(widthOf([run(`${env.label}  · ${branch}`)]) <= width - 6
+			...(branch !== env.label && widthOf([run(`${env.label}  · ${branch}`)]) <= width - 6
 				? [run(`  · ${branch}`, c.soft)]
 				: []),
 		],
@@ -860,73 +1006,6 @@ function marked(text: string, query: string, color: string | undefined): Run[] {
 	return runs;
 }
 
-/** The narrowest a column of logs side by side gets; fewer columns show when they would be less. */
-const MIN_COLUMN = 28;
-
-/**
- * The environment's apps' logs in columns, a row at a time: each app's name, wrapped, then its newest lines
- * up to `last` (the newest shown, when paused). A search's match is marked in its column.
- */
-function columns(
-	env: EnvironmentView,
-	snapshot: Snapshot,
-	last: number | undefined,
-	match: number | undefined,
-	search: string,
-	width: number,
-	height: number,
-	c: Palette,
-): ReactElement[] {
-	if (env.apps.length === 0) return [];
-	const fit = Math.max(1, Math.floor((width + 3) / (MIN_COLUMN + 3)));
-	const apps = env.apps.slice(0, fit);
-	const more = env.apps.length - apps.length;
-	// The apps that don't fit are told on a row of their own, so the columns keep their width.
-	const top =
-		more > 0 ? [line("more", width, [run(`+${more} more: widen the terminal`, c.dim)])] : [];
-	const tall = height - top.length;
-	const each = Math.floor((width - 3 * (apps.length - 1)) / apps.length);
-	const bound = last ?? Number.POSITIVE_INFINITY;
-	const cells = apps.map((app) => {
-		const color = partColor(env, app.id, c);
-		// The name wraps in its column rather than be cut.
-		const title = wrap(app.name, Math.max(1, each - 2)).map((piece, i) =>
-			cut([run(i === 0 ? "■ " : "  ", color), run(piece, color, { bold: true })], each),
-		);
-		const lines = (snapshot.logs.get(app.id) ?? [])
-			.filter((l) => l.seq <= bound)
-			.slice(-Math.max(0, tall - title.length));
-		return [
-			...title,
-			...lines.map((l) =>
-				cut(
-					[
-						run(l.time, c.dim),
-						run(search !== "" && l.seq === match ? "›" : " ", c.warn, { bold: true }),
-						...marked(clean(l.text), search, tone(l.text, c)),
-					],
-					each,
-				),
-			),
-		];
-	});
-	const rows = [...top];
-	for (let i = 0; i < tall; i++) {
-		const runs = cells.flatMap((cell, k) => [
-			...(k === 0 ? [] : [run(" │ ", c.frame)]),
-			...(cell[i] ?? [run(" ".repeat(each))]),
-		]);
-		rows.push(line(`row ${i}`, width, runs));
-	}
-	return rows;
-}
-
-/** `runs` cut to `width` columns with `…`, or padded to it. */
-function cut(runs: Run[], width: number): Run[] {
-	const out = clip(runs, width);
-	return [...out, run(" ".repeat(Math.max(0, width - widthOf(out))))];
-}
-
 /** `runs` cut to at most `width` columns with `…`. */
 function clip(runs: Run[], width: number): Run[] {
 	const out: Run[] = [];
@@ -971,28 +1050,17 @@ function stream(
 	const shown =
 		paused === undefined ? merged(snapshot.logs, ids, n) : all.slice(Math.max(0, end - n), end);
 	const search = view.search !== undefined && !view.search.typing ? view.search.query : "";
-	const rows = view.sideBySide
-		? columns(
-				env,
-				snapshot,
-				paused === undefined ? undefined : shown.at(-1)?.seq,
-				paused,
-				search,
-				inner,
-				n,
-				c,
-			)
-		: shown.map((l) => {
-				const color = partColor(env, l.id, c);
-				const name = parts.find((part) => part.id === l.id)?.name ?? l.id;
-				const match = search !== "" && l.seq === paused;
-				return line(`${l.seq}`, inner, [
-					run(`${l.time} `, c.dim),
-					run(match ? "› " : "  ", c.warn, { bold: true }),
-					...(focused === undefined ? [run("▎", color), run(pad(name, nameWidth), color)] : []),
-					...marked(clean(l.text), search, tone(l.text, c)),
-				]);
-			});
+	const rows = shown.map((l) => {
+		const color = partColor(env, l.id, c);
+		const name = parts.find((part) => part.id === l.id)?.name ?? l.id;
+		const match = search !== "" && l.seq === paused;
+		return line(`${l.seq}`, inner, [
+			run(`${l.time} `, c.dim),
+			run(match ? "› " : "  ", c.warn, { bold: true }),
+			...(focused === undefined ? [run("▎", color), run(pad(name, nameWidth), color)] : []),
+			...marked(clean(l.text), search, settled(l, tone(l.text, c), c)),
+		]);
+	});
 	if (rows.length === 0) {
 		const idle = env.apps.length > 0 && env.apps.every((p) => p.state === "idle");
 		rows.push(
@@ -1004,20 +1072,10 @@ function stream(
 			]),
 		);
 	}
-	const legend = parts.flatMap((part, i) => [
-		run(i === 0 ? "" : "  "),
-		run("■ ", partColor(env, part.id, c)),
-		run(part.name, focused === undefined || focused === part ? c.soft : c.dim),
-	]);
 	// The focused part's name may be left out: the parts panel above marks it, and the border's colour.
 	const mode: Piece = {
 		runs: [
-			view.sideBySide
-				? run("  side by side", c.soft)
-				: run(
-						focused === undefined ? "  all" : `  ${focused.name} only`,
-						focused ? c.accent : c.soft,
-					),
+			run(focused === undefined ? "  all" : `  ${focused.name} only`, focused ? c.accent : c.soft),
 		],
 		gives: NAME,
 	};
@@ -1026,7 +1084,7 @@ function stream(
 		paused === undefined
 			? []
 			: [
-					{ runs: [run("  ⏸ paused", c.warn, { bold: true })] },
+					{ runs: [run("  ‖ paused", c.warn, { bold: true })] },
 					{ runs: [run(` · ${all.length - end} newer`, c.soft)], gives: NEWER },
 					{ runs: [run(" · end for live", c.soft)], gives: LIVE_HINT },
 				];
@@ -1034,13 +1092,23 @@ function stream(
 		[{ runs: [run("LOGS", c.mute, { bold: true })] }, mode, ...live, ...searchTitle(view, c)],
 		titleRoom(width),
 	);
+	return panel("stream", width, height, focused === undefined ? c.frame : c.focus, title, [], rows);
+}
+
+/** Every key with what it does, in place of the logs while `?` is on. */
+function help(width: number, height: number, c: Palette): ReactElement {
+	const inner = width - 4;
+	const keyWidth = Math.max(...HELP.map(([k]) => [...k].length)) + 3;
+	const rows = HELP.slice(0, Math.max(0, height - 2)).map(([k, what]) =>
+		line(`help ${k}`, inner, [run(pad(k, keyWidth), c.text, { bold: true }), run(what, c.soft)]),
+	);
 	return panel(
-		"stream",
+		"help",
 		width,
 		height,
-		focused === undefined || view.sideBySide ? c.frame : c.focus,
-		title,
-		legend,
+		c.focus,
+		[run("KEYS", c.mute, { bold: true }), run("  ? or esc to go back", c.dim)],
+		[],
 		rows,
 	);
 }

@@ -30,23 +30,31 @@ const snapshot: Snapshot = {
 const press = (keys: string[], from = initialView("shop")) =>
 	keys.reduce((view, key) => reduce(view, key, snapshot).view, from);
 
-test("down and up select the next and previous environment, stopping at the ends", () => {
-	expect(press(["down"]).selected).toBe("shop.worktree-1");
-	expect(press(["down", "down", "down"]).selected).toBe("shop.worktree-2");
-	expect(press(["j", "k", "up"]).selected).toBe("shop");
+test("tab and shift-tab select the next and previous environment, round again; left and right too", () => {
+	expect(press(["tab"]).selected).toBe("shop.worktree-1");
+	expect(press(["tab", "tab", "tab"]).selected).toBe("shop");
+	expect(press(["shift-tab"]).selected).toBe("shop.worktree-2");
+	expect(press(["right", "right", "left"]).selected).toBe("shop.worktree-1");
 });
 
-test("right steps from all through each app and service, then back to all; left goes back", () => {
-	expect(press(["right"]).focus).toBe("shop/web");
-	expect(press(["right", "right", "right"]).focus).toBe("shop/db");
-	expect(press(["right", "right", "right", "right"]).focus).toBeUndefined();
-	expect(press(["left"]).focus).toBe("shop/db");
-	expect(press(["l", "l", "h"]).focus).toBe("shop/web");
+test("a number selects the environment the sidebar numbers with it", () => {
+	expect(press(["3"]).selected).toBe("shop.worktree-2");
+	expect(press(["3", "1"]).selected).toBe("shop");
+	expect(press(["2", "9"]).selected).toBe("shop.worktree-1");
+});
+
+test("down steps from all through each app and service, stopping at the last; up goes back to all", () => {
+	expect(press(["down"]).focus).toBe("shop/web");
+	expect(press(["down", "down", "down"]).focus).toBe("shop/db");
+	expect(press(["down", "down", "down", "down"]).focus).toBe("shop/db");
+	expect(press(["down", "up"]).focus).toBeUndefined();
+	expect(press(["up"]).focus).toBeUndefined();
+	expect(press(["j", "j", "k"]).focus).toBe("shop/web");
 });
 
 test("escape shows all again, and changing environment does too", () => {
-	expect(press(["right", "escape"]).focus).toBeUndefined();
-	expect(press(["right", "down"]).focus).toBeUndefined();
+	expect(press(["down", "escape"]).focus).toBeUndefined();
+	expect(press(["down", "tab"]).focus).toBeUndefined();
 });
 
 test("q and ctrl-c quit", () => {
@@ -56,7 +64,7 @@ test("q and ctrl-c quit", () => {
 });
 
 test("a selected environment that is gone moves from the first", () => {
-	expect(press(["down"], initialView("shop.worktree-9")).selected).toBe("shop.worktree-1");
+	expect(press(["tab"], initialView("shop.worktree-9")).selected).toBe("shop.worktree-1");
 });
 
 test("text that arrives at once is a paste, a newline in it too; a character or a named key is a press", () => {
@@ -66,4 +74,7 @@ test("text that arrives at once is a paste, a newline in it too; a character or 
 	expect(pressOf("d", key())).toBe("d");
 	expect(pressOf("\r", key({ return: true }))).toBe("return");
 	expect(pressOf("c", key({ ctrl: true }))).toBe("ctrl-c");
+	expect(pressOf("\t", key({ tab: true }))).toBe("tab");
+	expect(pressOf("", key({ tab: true, shift: true }))).toBe("shift-tab");
+	expect(pressOf(" ", key())).toBe("space");
 });

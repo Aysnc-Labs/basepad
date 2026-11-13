@@ -307,10 +307,18 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 	return lay;
 }
 
-/** Opens the supervisor, and readies main first when the environment is a worktree. */
-async function open(environment: Environment, flags: Invocation["flags"], print: Context["print"]) {
+/**
+ * Opens the supervisor (or takes the one opened), and readies main first when the environment is a
+ * worktree.
+ */
+async function open(
+	environment: Environment,
+	flags: Invocation["flags"],
+	print: Context["print"],
+	opened?: Supervisor,
+) {
 	const here = machine(process.env);
-	const supervisor = await openSupervisor(here, print);
+	const supervisor = opened ?? (await openSupervisor(here, print));
 	const context: Context = { here, supervisor, claim: flags.claim === true, print };
 	// `--claim` in a worktree claims the worktree's, never main's.
 	if (environment.main !== undefined) {
@@ -321,6 +329,10 @@ async function open(environment: Environment, flags: Invocation["flags"], print:
 
 async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const environment = await environmentAt(cwd);
+	// Only on a terminal: scripts, CI and agents get `-d`'s behaviour without asking for it.
+	if (flags.detach !== true && process.stdin.isTTY && process.stdout.isTTY) {
+		return upOnTerminal(environment, flags, print);
+	}
 	const { project } = environment;
 	const context = await open(environment, flags, print);
 	const { supervisor, here } = context;
@@ -329,23 +341,72 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	print(
 		await stateTables(environment, lay, here, await withServices(supervisor, project, lay, states)),
 	);
-	// Only on a terminal: scripts, CI and agents get `-d`'s behaviour without asking for it.
-	if (flags.detach !== true && process.stdin.isTTY && process.stdout.isTTY) {
-		// Loaded only here, so other commands never load the terminal UI.
-		const { missionControl } = await import("./mission-control/run.ts");
-		const main = environment.main ?? project;
-		await missionControl({
-			main,
-			machine: await machineWithPortFree(here, supervisor),
-			supervisor,
-			selected: lay.namespace,
-			// This very command, run again on the same Node: mission control adds and removes worktrees
-			// with it, in processes of their own that outlive the view.
-			basepad: [process.execPath, ...process.execArgv, process.argv[1] as string],
-		});
-	}
 	if (failure !== undefined) throw new BasepadError(failure);
 }
+
+/**
+ * `up` on a terminal: mission control opens at once and the environment readies meanwhile, so its
+ * logs show from the start. What readying prints waits for the view to close; a failure shows in it
+ * as a notice.
+ */
+async function upOnTerminal(
+	environment: Environment,
+	flags: Invocation["flags"],
+	print: Invocation["print"],
+): Promise<void> {
+	const { project } = environment;
+	const here = machine(process.env);
+	// Loaded only here, so other commands never load the terminal UI.
+	const { missionControl } = await import("./mission-control/run.ts");
+	const held: string[] = [];
+	const say = (line: string) => held.push(line);
+	const supervisor = await openSupervisor(here, say);
+	let served = here;
+	let outcome: { lay: Layout; states: Record<string, DaemonState>; failure?: string } | undefined;
+	let error: unknown;
+	let notice: string | undefined;
+	const readying = (async () => {
+		const context = await open(environment, flags, say, supervisor);
+		const lay = await ready(environment, { ...context, print: say });
+		// The supervisor answers on 443 by now, so URLs show as they are served.
+		served = await machineWithPortFree(here, supervisor);
+		outcome = { lay, ...(await startApps(supervisor, project, lay)) };
+		if (outcome.failure !== undefined) {
+			const failed = Object.keys(project.apps).filter((key) => outcome?.states[key] === "failed");
+			notice = `${failed.map((key) => `\`${key}\``).join(", ")} exited on start; ${failed.length > 1 ? "their" : "its"} output is in the logs.`;
+		}
+	})().catch((caught: unknown) => {
+		error = caught;
+		notice = firstLine(caught instanceof Error ? caught.message : String(caught));
+	});
+	await missionControl({
+		main: environment.main ?? project,
+		machine: () => served,
+		supervisor,
+		failure: () => {
+			const told = notice;
+			notice = undefined;
+			return told;
+		},
+		selected: layout(project, here, environment.suffix).namespace,
+		// This very command, run again on the same Node: mission control adds and removes worktrees
+		// with it, in processes of their own that outlive the view.
+		basepad: [process.execPath, ...process.execArgv, process.argv[1] as string],
+	});
+	// Closed while it readies, the environment still finishes.
+	if (outcome === undefined && error === undefined) print("Still starting; finishing…");
+	await readying;
+	for (const line of held) print(line);
+	if (error !== undefined) throw error;
+	if (outcome === undefined) return;
+	const { lay, states, failure } = outcome;
+	print(
+		await stateTables(environment, lay, here, await withServices(supervisor, project, lay, states)),
+	);
+	if (failure !== undefined) throw new BasepadError(failure);
+}
+
+const firstLine = (text: string) => text.split("\n")[0] ?? text;
 
 /**
  * Starts the environment's apps and waits briefly for them. Returns their states, and the report
@@ -533,15 +594,47 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 	const { project, suffix } = await environmentAt(cwd);
 	const supervisor = await openSupervisor(machine(process.env), print);
 	const { namespace } = layout(project, machine(process.env), suffix);
-	// Held first, so no request starts an app again while it stops.
-	await supervisor.hold(namespace, Object.keys(project.apps));
-	await supervisor.stop(namespace);
+	const apps = Object.keys(project.apps);
+	// On a terminal, the landing shows while they stop: its apps, and its services in main.
+	const landed = process.stdout.isTTY
+		? await startLanding(project.name, suffix, [
+				...apps,
+				...(suffix === undefined ? Object.keys(project.services) : []),
+			])
+		: undefined;
+	try {
+		// Held first, so no request starts an app again while it stops.
+		await supervisor.hold(namespace, apps);
+		await supervisor.stop(namespace);
+	} catch (error) {
+		landed?.fail();
+		throw error;
+	}
+	if (landed !== undefined) {
+		await landed.land();
+		return;
+	}
 	// A worktree's services are main's, which keeps them.
 	print(
 		suffix === undefined
 			? `Stopped ${project.name}'s apps and services.`
 			: `Stopped worktree ${suffix}'s apps; its services are main's and keep running.`,
 	);
+}
+
+/** Opens the landing for an environment's apps and services on the terminal. */
+async function startLanding(project: string, suffix: string | undefined, parts: string[]) {
+	const [{ landing }, { colorsFor }, { default: chalk }] = await Promise.all([
+		import("./mission-control/launch.ts"),
+		import("./mission-control/frame.ts"),
+		import("chalk"),
+	]);
+	return landing({
+		project,
+		environment: suffix ?? "main",
+		parts,
+		color: colorsFor(process.env.NO_COLOR, chalk.level),
+	});
 }
 
 async function status({ cwd, print }: Invocation): Promise<void> {

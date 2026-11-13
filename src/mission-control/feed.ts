@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { kindOf, type Service } from "../catalogue.ts";
 import { loadProject, type Project } from "../config.ts";
 import { BasepadError } from "../internal/exec.ts";
@@ -33,12 +34,13 @@ const KEEP = 2000;
 
 /**
  * Opens the feed on `main`'s project and its worktrees, as served on `machine` (whose `portFree`
+ * may change while it is open: the supervisor starts after the view does, while `up` launches)
  * is known), with the worktree work in `work` (`startWork`'s folder). Resolves once the first read
  * is done. `changed` is called when there is something new.
  */
 export async function openFeed(options: {
 	main: Project;
-	machine: Machine;
+	machine(): Machine;
 	supervisor: Supervisor;
 	work: string;
 	changed(): void;
@@ -79,7 +81,8 @@ export async function openFeed(options: {
 			mainBranch(main),
 		]);
 		const byId = new Map(daemons.map((daemon) => [daemon.id, daemon]));
-		const next = [await environmentOf(main, undefined, branch, main.root, byId, machine)];
+		const here = machine();
+		const next = [await environmentOf(main, undefined, branch, main.root, byId, here)];
 		// A worktree being added shows once it is ready: until then, only those there before it began.
 		const adding = running.flatMap((w) => (w.before === undefined ? [] : [w.before]));
 		const shown = trees.filter((t) => t.present && adding.every((was) => was.includes(t.suffix)));
@@ -94,7 +97,7 @@ export async function openFeed(options: {
 			next.push({
 				...(typeof config === "string"
 					? troubled(main.name, tree.suffix, tree.branch, tree.root, config)
-					: await environmentOf(config, tree.suffix, tree.branch, tree.root, byId, machine)),
+					: await environmentOf(config, tree.suffix, tree.branch, tree.root, byId, here)),
 				...changed,
 			});
 		}
@@ -181,7 +184,7 @@ export function logBook(
 			// A part shown again has a follower of its own; an old one's copy is not taken.
 			if (owner.get(entry.id) !== follower) return;
 			const kept = logs.get(entry.id) ?? [];
-			kept.push({ seq: seq++, id: entry.id, time: entry.time, text: entry.text });
+			kept.push({ seq: seq++, id: entry.id, time: entry.time, text: entry.text, at: Date.now() });
 			if (kept.length > KEEP * 1.5) kept.splice(0, kept.length - KEEP);
 			logs.set(entry.id, kept);
 			read();
@@ -239,7 +242,7 @@ async function environmentOf(
 	const base = {
 		label: suffix ?? "main",
 		...(branch === undefined ? {} : { branch }),
-		dir,
+		dir: shortened(dir),
 	};
 	const apps = Object.entries(lay.apps).map(([key, app]): Part => {
 		const id = daemonId(lay.namespace, key);
@@ -285,9 +288,15 @@ function troubled(
 		namespace: namespaceOf(name, suffix),
 		label: suffix ?? "main",
 		...(branch === undefined ? {} : { branch }),
-		dir,
+		dir: shortened(dir),
 		apps: [],
 		services: [],
 		problem,
 	};
+}
+
+/** A folder as it is shown: under the home folder, from `~`. */
+function shortened(dir: string): string {
+	const home = homedir();
+	return dir === home || dir.startsWith(`${home}/`) ? `~${dir.slice(home.length)}` : dir;
 }
