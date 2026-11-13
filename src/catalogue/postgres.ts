@@ -49,6 +49,8 @@ export interface PostgresOutputs {
 export interface PostgresNames {
 	/** The environment's database: `<name>_<key>`, hyphens made underscores. */
 	database: string;
+	/** The server's data folder, in the service's folder. */
+	data: string;
 }
 
 /** Postgres silently truncates identifiers past this many bytes. */
@@ -62,7 +64,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		}),
 	}),
 
-	names({ name, key }) {
+	names({ name, key, dir }) {
 		const database = `${name}_${key}`.replaceAll("-", "_");
 		const bytes = Buffer.byteLength(database);
 		if (bytes > IDENTIFIER_MAX) {
@@ -70,13 +72,13 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 				`\`name\` and service \`${key}\` make the database name "${database}", which is ${bytes} bytes; Postgres allows ${IDENTIFIER_MAX}. Shorten \`name\` or the service key.`,
 			);
 		}
-		return { database };
+		return { database, data: join(dir, "data") };
 	},
 
 	async prepare(service, place) {
 		const pg = await installPostgres(service.version, place.machine.home);
 		const user = await serviceUser();
-		const data = join(place.dir, "data");
+		const { data } = place;
 		await mkdir(place.dir, { recursive: true });
 		await user.grant({ traverse: [pg.dir, place.dir], owned: [place.dir] });
 		const initialised = await readFile(join(data, "PG_VERSION"), "utf8").catch(() => undefined);
@@ -124,7 +126,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 
 	async provision(service, place, { claim }) {
 		const pg = await installPostgres(service.version, place.machine.home);
-		const data = join(place.dir, "data");
+		const { data } = place;
 		const port = await waitFor(
 			async () => {
 				const port = await runningPort(data);
@@ -168,7 +170,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 	},
 
 	async address(_service, place) {
-		const port = (await runningPort(join(place.dir, "data"))) ?? place.port;
+		const port = (await runningPort(place.data)) ?? place.port;
 		return `postgresql://${USER}@${HOST}:${port}/${place.database}`;
 	},
 };

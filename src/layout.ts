@@ -102,7 +102,7 @@ export function layout(
 		if (key.length > LABEL_MAX) {
 			fail(`app \`${key}\` is ${key.length} characters; a domain label allows ${LABEL_MAX}.`);
 		}
-		const host = `${key}.${name}.localhost`;
+		const host = appHost(key, name);
 		const port = machine.portFree ? "" : `:${machine.proxyPort}`;
 		apps[key] = { host, url: `https://${host}${port}`, port: block + (i % APP_PORT_BLOCK) };
 	}
@@ -123,6 +123,28 @@ export function layout(
 		};
 	}
 	return { apps, services, definitions: join(machine.home, "environments", `${name}.toml`) };
+}
+
+/** An app's domain: `<app>.<name>.localhost`, as the supervisor's proxy serves it. */
+export function appHost(app: string, name: string): string {
+	return `${app}.${name}.localhost`;
+}
+
+/** basepad's own pitchfork's folders in the home, and the CA its proxy signs with. */
+export function supervisorPaths(machine: Pick<Machine, "home">): {
+	state: string;
+	config: string;
+	logs: string;
+	ca: string;
+} {
+	const root = join(machine.home, "pitchfork");
+	const state = join(root, "state");
+	return {
+		state,
+		config: join(root, "config"),
+		logs: join(root, "logs"),
+		ca: join(state, "proxy", "ca.pem"),
+	};
 }
 
 /** FNV-1a: a stable spread of names over port blocks. */

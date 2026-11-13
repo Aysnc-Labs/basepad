@@ -6,7 +6,7 @@ import { connect } from "node:tls";
 import { z } from "zod";
 import { interactive, must, shellQuote } from "./internal/exec.ts";
 import { answers } from "./internal/ports.ts";
-import type { Machine } from "./layout.ts";
+import { appHost, type Machine, supervisorPaths } from "./layout.ts";
 import { install } from "./tools.ts";
 import { PITCHFORK_VERSION } from "./versions.ts";
 
@@ -111,18 +111,18 @@ function settings(machine: Machine): Record<string, string> {
 
 /** Installs pitchfork through mise and opens basepad's supervisor. Nothing starts until asked. */
 export async function openSupervisor(machine: Machine): Promise<Supervisor> {
-	const root = join(machine.home, "pitchfork");
+	const paths = supervisorPaths(machine);
 	const dirs = {
-		PITCHFORK_STATE_DIR: join(root, "state"),
-		PITCHFORK_CONFIG_DIR: join(root, "config"),
-		PITCHFORK_LOGS_DIR: join(root, "logs"),
+		PITCHFORK_STATE_DIR: paths.state,
+		PITCHFORK_CONFIG_DIR: paths.config,
+		PITCHFORK_LOGS_DIR: paths.logs,
 	};
 	const pitchfork = (await install("pitchfork", PITCHFORK_VERSION, machine.home)).bin("pitchfork");
 	const env = supervisorEnv(dirs);
 	const run = (...args: string[]) => must(pitchfork, args, { cwd: machine.home, env });
 
 	const running = () => existsSync(join(dirs.PITCHFORK_STATE_DIR, "sock"));
-	const ca = join(dirs.PITCHFORK_STATE_DIR, "proxy", "ca.pem");
+	const { ca } = paths;
 
 	/** Sets what differs; a running supervisor restarts to take changed settings (its daemons stop). */
 	const applySettings = async () => {
@@ -243,7 +243,7 @@ export async function openSupervisor(machine: Machine): Promise<Supervisor> {
 					const ported = (await list(namespace)).filter((d) => (d.port ?? []).length > 0);
 					for (const daemon of ported) {
 						if (now[daemon.name] !== "running") continue;
-						const host = `${daemon.name}.${namespace}.localhost`;
+						const host = appHost(daemon.name, namespace);
 						while (!(await routed(machine.proxyPort, host)) && Date.now() < until + 3000) {
 							await new Promise((resolve) => setTimeout(resolve, 200));
 						}
