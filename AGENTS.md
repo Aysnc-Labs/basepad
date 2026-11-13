@@ -1,31 +1,21 @@
 # basepad
 
-Before changing code, read `GLOSSARY.md`, `docs/adr/` and `docs/feature-map.md` (what each feature does and where it starts); keep the feature map current when a feature changes.
-
 ## Commands
 
-All tests are the `test` kind; there is no `e2e` or `check` kind yet.
+- `npm run check`: the one gate CI runs (biome, tsc, feature-map check, tests). Green locally means green in CI.
+- `npm test`: the tests; builds `dist` first. One file: `npx vitest run test/<file>.test.ts`.
 
-- `npm test`: every test. Builds `dist` first (`test/build.ts`), since CLI tests run the built bin. One file: `npx vitest run test/<file>.test.ts`.
-- `npm run check`: the gate CI runs: `biome check`, `tsc --noEmit` (which also checks the `@ts-expect-error` lines in `test/define-config.test.ts`), then `npm test`.
-- `npx biome check --write .`: format and fix lint. Biome skips Markdown, whose front matter and tables its formatter mangles.
+## Conventions
 
-Two seams, both `test`: pure modules called in process (Config, Layout, Hosts), and the built CLI in a sandbox (`test/sandbox.ts`). In-process config loading goes through Vite's TypeScript transform, not basepad's load hook, so anything about how a config file is loaded is tested through the CLI.
+- CLI tests go through `sandbox()` in `test/sandbox.ts` and dispose it; never touch the developer's `~/.basepad`, mise or pitchfork state.
+- Export `MISE_DATA_DIR` and `MISE_CACHE_DIR` to a temp dir before `npm test` to keep tool installs out of your own mise.
+- Give each test file's project its own `name`: a service's port comes from it.
+- Outside a container, run `basepad setup` only with `--dry-run`: it changes the trust store and asks for `sudo`.
 
-## Isolating a lane
+## Agent skills
 
-A lane is a git worktree of its own on its own branch. Its tests must never touch the user's basepad, mise or pitchfork state:
-
-- `test/sandbox.ts` gives every test file its own `BASEPAD_HOME`, `MISE_STATE_DIR`, `MISE_CONFIG_DIR` and `PITCHFORK_{STATE,CONFIG,LOGS}_DIR` under a fresh temp dir. Make new CLI tests through `sandbox()` and `box.project()`.
-- Tool installs go to `MISE_DATA_DIR`, which the sandbox leaves alone. Export `MISE_DATA_DIR` and `MISE_CACHE_DIR` to a lane temp dir before `npm test` to keep installs (Node 18 and 24 for the launcher test) out of the user's mise.
-- `test/postgres-17.test.ts` uninstalls and reinstalls `postgres@17`; it runs only when `CI` or `MISE_DATA_DIR` is set, so a developer's own install is left alone.
-- Ports: a sandbox picks free ports itself (`BASEPAD_PROXY_PORT` included); hard-coded ports collide between lanes. A service's port comes from the project's name, so give each test file's project its own name.
-- Processes: a sandbox's `dispose()` stops basepad's supervisor and its apps and services. A test that runs `up` must create its sandbox through `sandbox()` and dispose it, or apps outlive the run.
-- `basepad setup` changes the machine itself (trust store, a pf or iptables redirect, `sudo`): outside a container, run it only with `--dry-run`.
-- Running basepad by hand: `node dist/launcher.js <command>` with `BASEPAD_HOME` set to a temp dir and `BASEPAD_PROXY_PORT` to a free port. Stop its supervisor afterwards with `PITCHFORK_STATE_DIR=$BASEPAD_HOME/pitchfork/state mise exec pitchfork@<version> -- pitchfork supervisor stop`.
-
-## Skills to load
-
-- Any code change: `aysnc-skills:tdd` and `aysnc-skills:codebase-design`.
-- Glossary or ADR edits: `aysnc-skills:domain-modeling`.
-- This file, or any doc an agent reads: `aysnc-skills:writing-for-agents`.
+- Each feature's purpose, entry point and code: `docs/feature-map.md`. Start every task there.
+- Issue tracker: GitHub `Aysnc-Labs/basepad`, via `gh`; see `docs/agents/issue-tracker.md`. Labels: `docs/agents/triage-labels.md`.
+- Domain: `GLOSSARY.md` and `docs/adr/`, read as `docs/agents/domain.md` says.
+- Review rules: `CODING_STANDARDS.md`.
+- Code changes: load `aysnc-skills:tdd` and `aysnc-skills:codebase-design`. Glossary or ADR: `aysnc-skills:domain-modeling`. Docs agents read: `aysnc-skills:writing-for-agents`.

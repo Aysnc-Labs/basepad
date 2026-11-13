@@ -1,9 +1,8 @@
 name: CI
 
 on:
-  push:
-    branches: [main, core, "lane/**"]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -21,6 +20,7 @@ env:
 jobs:
   macos:
     name: Check (macOS, as a user)
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -36,6 +36,7 @@ jobs:
 
   linux-root:
     name: Check (Linux, as root)
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     container: ubuntu:24.04
     steps:
