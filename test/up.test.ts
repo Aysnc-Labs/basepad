@@ -223,4 +223,4 @@ test("up says so before a settings change restarts the supervisor, and only then
 	expect(out.stdout).toContain(`web  https://web.shop.localhost:${other}  running`);
 	// Back on the sandbox's own port, so the supervisor is left as the file found it.
 	expect((await box.basepad(shop, "down")).code).toBe(0);
-}, 240_000); // Two restarts, and as root on Linux pitchfork's supervisor takes about 60 s to stop.
+}, 240_000); // Two restarts. In a container without an init, each supervisor stop takes about 60 s.

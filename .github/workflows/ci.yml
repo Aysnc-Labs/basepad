@@ -38,7 +38,11 @@ jobs:
     name: Check (Linux, as root)
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
-    container: ubuntu:24.04
+    container:
+      image: ubuntu:24.04
+      # An init as PID 1 reaps orphans. The default, `tail -f /dev/null`, leaves pitchfork's stopped
+      # supervisor a zombie, and `supervisor stop` waits about 60 s for it to go.
+      options: --init
     steps:
       - run: apt-get update -qq && apt-get install -y -qq curl ca-certificates git xz-utils >/dev/null
       - uses: actions/checkout@v7
