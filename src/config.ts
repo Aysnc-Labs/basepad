@@ -88,8 +88,7 @@ async function importDefault(file: string): Promise<unknown> {
 		hooked = true;
 		registerHooks({
 			load(url, context, nextLoad) {
-				const bare = url.split("?")[0] as string;
-				if (!typescriptFiles.has(bare)) return nextLoad(url, context);
+				if (!typescriptFiles.has(url)) return nextLoad(url, context);
 				const loaded = nextLoad(url, { ...context, format: "module-typescript" });
 				return { ...loaded, format: "module-typescript" };
 			},
@@ -97,8 +96,7 @@ async function importDefault(file: string): Promise<unknown> {
 	}
 	let module: { default?: unknown };
 	try {
-		// A fresh URL each time, so a changed file is read again within one process.
-		module = await import(`${pathToFileURL(real).href}?t=${Date.now()}-${Math.random()}`);
+		module = await import(pathToFileURL(real).href);
 	} catch (error) {
 		throw new BasepadError(`${file} failed to load: ${messageOf(error)}`);
 	}
@@ -114,10 +112,9 @@ function messageOf(error: unknown): string {
 
 /** A lowercase DNS label: letters, digits and inner hyphens. */
 const LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
-const label = (what: string) =>
-	z
-		.string({ error: `${what} must be a string` })
-		.regex(LABEL, `${what} must be a lowercase DNS label (letters, digits and inner hyphens)`);
+const label = z
+	.string({ error: "must be a string" })
+	.regex(LABEL, "must be a lowercase DNS label (letters, digits and inner hyphens)");
 
 const Postgres = z.strictObject({
 	kind: z.literal("postgres"),
@@ -130,16 +127,16 @@ const AppSchema = z.strictObject({
 });
 
 const ConfigSchema = z.strictObject({
-	name: label("`name`"),
+	name: label,
 	services: z
 		.record(
-			label("A service key"),
+			label,
 			z.discriminatedUnion("kind", [Postgres], {
 				error: "a service must be made by a service function, such as `postgres()`",
 			}),
 		)
 		.optional(),
-	apps: z.record(label("An app key"), AppSchema).optional(),
+	apps: z.record(label, AppSchema).optional(),
 	env: z
 		.custom<Config["env"]>((value) => typeof value === "function", {
 			error: "`env` must be a function from outputs to env files",
@@ -156,7 +153,10 @@ function validate(value: unknown, file: string): Config {
 			const keys = issue.keys.map((key) => `\`${at ? `${at}.` : ""}${key}\``).join(", ");
 			return `unknown key ${keys}`;
 		}
-		return at ? `\`${at}\`: ${issue.message}` : issue.message;
+		// A bad record key's own reason is nested inside the issue.
+		const message =
+			issue.code === "invalid_key" ? (issue.issues[0]?.message ?? issue.message) : issue.message;
+		return at ? `\`${at}\`: ${message}` : message;
 	});
 	throw new BasepadError(`${file} is invalid:\n  ${lines.join("\n  ")}`);
 }
