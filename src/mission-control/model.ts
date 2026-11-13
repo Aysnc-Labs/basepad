@@ -16,7 +16,7 @@ export interface Part {
 	/** Its key in the config. */
 	name: string;
 	state: PartState;
-	/** Where it is reached: an app's URL, a service's address. None for an app with no port. */
+	/** Where it is reached: an app's URL, a service's address. None for an app with no domain. */
 	address?: string;
 	/** A detail after the address: an app's port and pid, a service's kind. */
 	note?: string;
@@ -259,7 +259,7 @@ export function reduce(previous: View, key: Press, snapshot: Snapshot, page = 10
 	}
 	// Open and copy take the selected part, else the environment's first app with an address.
 	const target = focused ?? env?.apps.find((app) => app.address !== undefined);
-	const noAddress = `${target?.name} listens on nothing, so it has no address.`;
+	const noAddress = `${target?.name} has no domain, so no address to open or copy.`;
 	switch (key) {
 		case "o":
 			if (target === undefined) return { view: { ...view, notice: "Nothing here to open." } };

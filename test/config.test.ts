@@ -84,8 +84,13 @@ describe("errors name the file and key, with no stack", () => {
 		],
 		[
 			"an unknown app key",
+			`{ name: "shop", apps: { web: { run: "x", host: "a.test" } } }`,
+			"unknown key `apps.web.host`",
+		],
+		[
+			"an app domain other than false",
 			`{ name: "shop", apps: { web: { run: "x", domain: "a.test" } } }`,
-			"unknown key `apps.web.domain`",
+			"`apps.web.domain`: `domain` can only be `false`, for an app served at `https://localhost:$PORT`",
 		],
 		[
 			"a bad worktree prefix",

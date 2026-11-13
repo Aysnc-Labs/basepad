@@ -29,5 +29,5 @@ Something basepad provides to an environment from its catalogue, such as a Postg
 _Avoid_: Daemon, dependency, backing service
 
 **App**:
-A process of the project's own that basepad runs and gives a domain, unless it listens on nothing, as a queue worker does.
+A process of the project's own that basepad runs and gives a domain, unless it listens on nothing, as a queue worker does, or serves another app's page from `localhost`, as Vite can.
 _Avoid_: Daemon, server, service

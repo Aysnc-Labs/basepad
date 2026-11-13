@@ -119,7 +119,7 @@ test("an app with no port has no address: o and c say so, and with none selected
 	for (const key of ["o", "c"]) {
 		const step = keys(["right", key]);
 		expect(step.intent).toBeUndefined();
-		expect(step.view.notice).toBe("queue listens on nothing, so it has no address.");
+		expect(step.view.notice).toBe("queue has no domain, so no address to open or copy.");
 	}
 	expect(keys(["o"]).intent).toEqual({ kind: "open", url: "https://web.shop.localhost" });
 	expect(keys(["c"]).intent).toEqual({ kind: "copy", text: "https://web.shop.localhost" });

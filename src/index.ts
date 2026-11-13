@@ -26,6 +26,12 @@ export interface App {
 	 * no `url` in `env`. It is ready once it runs, and starts with the environment's other apps.
 	 */
 	port?: false;
+	/**
+	 * `false` for an app that another app's page loads from, such as Vite: no domain and no `url`
+	 * in `env`. It serves HTTPS itself at `https://localhost:$PORT`, with the certificate basepad
+	 * gives it as `BASEPAD_TLS_CERT` and `BASEPAD_TLS_KEY`, so the page's browser keeps it local.
+	 */
+	domain?: false;
 }
 
 /** What an app gives to `env`. Its port is not given: it changes from run to run. */
@@ -39,7 +45,9 @@ export type EnvFiles = Record<string, Record<string, string | number>>;
 
 export type Outputs<S extends Record<string, Service>, A extends Record<string, App>> = {
 	[K in keyof S]: OutputsOf<S[K]>;
-} & { [K in keyof A as A[K] extends { port: false } ? never : K]: AppOutputs };
+} & {
+	[K in keyof A as A[K] extends { port: false } | { domain: false } ? never : K]: AppOutputs;
+};
 
 export interface Config<
 	S extends Record<string, Service> = Record<string, Service>,
@@ -51,8 +59,8 @@ export interface Config<
 	name: string;
 	services?: S;
 	/**
-	 * Each app is served at `https://<key>.<name>.localhost`, unless its `port` is `false`; keys
-	 * are lowercase DNS labels.
+	 * Each app is served at `https://<key>.<name>.localhost`, unless its `port` or `domain` is
+	 * `false`; keys are lowercase DNS labels.
 	 */
 	apps?: A;
 	/**

@@ -61,7 +61,10 @@ export function isRootOnLinux(): boolean {
  * never truncates.
  */
 export interface Layout {
-	/** Each app, with its domain and port; empty for an app whose `port` is `false`. */
+	/**
+	 * Each app, with its domain and port; no domain for an app whose `domain` is `false`, and
+	 * neither for one whose `port` is.
+	 */
 	apps: Record<
 		string,
 		{
@@ -146,9 +149,14 @@ export function layout(
 		if (key.length > LABEL_MAX) {
 			fail(`app \`${key}\` is ${key.length} characters; a domain label allows ${LABEL_MAX}.`);
 		}
+		const port = block + (i % APP_PORT_BLOCK);
+		if (app.domain === false) {
+			apps[key] = { port };
+			continue;
+		}
 		const host = appHost(key, name, suffix);
-		const port = machine.portFree ? "" : `:${machine.proxyPort}`;
-		apps[key] = { host, url: `https://${host}${port}`, port: block + (i % APP_PORT_BLOCK) };
+		const proxy = machine.portFree ? "" : `:${machine.proxyPort}`;
+		apps[key] = { host, url: `https://${host}${proxy}`, port };
 	}
 	const services: Layout["services"] = {};
 	for (const [key, service] of Object.entries(project.services)) {
@@ -277,12 +285,13 @@ export function workHome(machine: Pick<Machine, "home">, name: string): string {
 	return join(machine.home, "work", name);
 }
 
-/** basepad's own pitchfork's folders in the home, and the CA its proxy signs with. */
+/** basepad's own pitchfork's folders in the home, and the CA its proxy signs with, and its key. */
 export function supervisorPaths(machine: Pick<Machine, "home">): {
 	state: string;
 	config: string;
 	logs: string;
 	ca: string;
+	caKey: string;
 } {
 	const root = join(machine.home, "pitchfork");
 	const state = join(root, "state");
@@ -291,7 +300,17 @@ export function supervisorPaths(machine: Pick<Machine, "home">): {
 		config: join(root, "config"),
 		logs: join(root, "logs"),
 		ca: join(state, "proxy", "ca.pem"),
+		caKey: join(state, "proxy", "ca-key.pem"),
 	};
+}
+
+/** The certificate for `localhost` that apps with no domain serve HTTPS with, and its key. */
+export function localhostCertificate(machine: Pick<Machine, "home">): {
+	cert: string;
+	key: string;
+} {
+	const dir = join(machine.home, "tls");
+	return { cert: join(dir, "localhost.pem"), key: join(dir, "localhost-key.pem") };
 }
 
 /** FNV-1a: a stable spread of names over port blocks. */

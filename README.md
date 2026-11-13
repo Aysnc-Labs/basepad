@@ -113,7 +113,8 @@ export default defineConfig({
 		web: { run: "next dev" }, // https://web.shop.localhost
 		cms: { run: "npm run dev", cwd: "apps/cms" }, // https://cms.shop.localhost
 		backend: { run: "php artisan serve --port=$PORT", cwd: "backend" },
-		queue: { run: "php artisan queue:listen", cwd: "backend", port: false }, // no domain
+		queue: { run: "php artisan queue:listen", cwd: "backend", port: false }, // no port, no domain
+		vite: { run: "vite --port $PORT", cwd: "backend", domain: false }, // https://localhost:$PORT
 	},
 	env: ({ db, cms, backend }) => ({
 		".env.local": { DATABASE_URL: db.url, CMS_URL: cms.url },
@@ -131,7 +132,7 @@ export default defineConfig({
 | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`     | yes      | The project's one key: a lowercase DNS label (letters, digits, hyphens). Every database and domain is built from it.                      |
 | `services` | no       | The services basepad provides, by key. The one kind is Postgres: `postgres()`, or `postgres({ version: 17 })`. 18 is the default. |
-| `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config, and `port: false` for one that listens on nothing. |
+| `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config, `port: false` for one that listens on nothing, and `domain: false` for one served at `https://localhost:$PORT`. |
 | `env`      | no       | A function from every service's and app's outputs to the env files to write: each file's path, relative to the config, to its keys.       |
 | `worktrees` | no      | How [worktrees](#worktrees) are made: `prefix` (default `worktree`) names them `<prefix>-<n>`; `dir`, relative to the config, is where they are checked out (default `<repository>/../<name>.worktrees`); `clone` lists untracked paths copied from main, such as `node_modules`; `setup` lists shell commands run once in each new worktree. |
 
@@ -169,6 +170,7 @@ basepad sets exactly the keys `env` returns, in the files it names:
 - Each app runs from its `cwd` (the config's folder by default), through `sh`, with its own and the project's `node_modules/.bin` first on `PATH`, as `npm run` does. So `next dev` works without `npx`.
 - Each app is given a free port as `PORT`, and must listen on it.
 - Each app answers at `https://<key>.<name>.localhost`, through pitchfork's proxy. Hot reload and WebSockets work through it.
+- An app with `domain: false`, such as Vite serving another app's assets, gets `PORT` but no domain and no `url` in `env`. It serves HTTPS itself at `https://localhost:$PORT`, with a certificate for `localhost` from basepad's certificate authority, given as `BASEPAD_TLS_CERT` and `BASEPAD_TLS_KEY`. Safari keeps a page's requests to `localhost` on your Mac, where iCloud Private Relay sends requests to another app's domain away from it.
 - An app with `port: false`, such as a queue worker, gets no `PORT`, no domain and no `url` in `env`. It is running as soon as it starts, and starts whenever another of the environment's apps does, so a worktree's first request starts it too.
 - Processes basepad starts trust its certificate authority through `NODE_EXTRA_CA_CERTS`, so one Node app can fetch another by its URL. Other runtimes need their own setting, such as `SSL_CERT_FILE` or `REQUESTS_CA_BUNDLE`, pointed at `~/.basepad/pitchfork/state/proxy/ca.pem`.
 

@@ -19,15 +19,18 @@ import {
 	isRootOnLinux,
 	type Layout,
 	layout,
+	localhostCertificate,
 	type Machine,
 	machine,
 	namespaceOf,
 	placeOf,
 	servicesHome,
 	suffixOf,
+	supervisorPaths,
 } from "./layout.ts";
 import { setup, trustAsRoot } from "./setup.ts";
 import { type Daemon, type DaemonState, openSupervisor, type Supervisor } from "./supervisor.ts";
+import { ensureLocalhostCertificate } from "./tls.ts";
 import {
 	checkedOut,
 	checkOutWorktree,
@@ -228,9 +231,14 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 	}
 	const servers = Object.values(ports.services).map((place) => place.daemon);
 	const portless = Object.keys(project.apps).filter((key) => project.apps[key]?.port === false);
+	const tls = localhostCertificate(here);
 	for (const [key, app] of Object.entries(project.apps)) {
+		const run = withLocalBins(project, app.cwd, app.run);
 		daemons[key] = {
-			run: withLocalBins(project, app.cwd, app.run),
+			run:
+				app.domain === false
+					? `export BASEPAD_TLS_CERT=${shellQuote(tls.cert)} BASEPAD_TLS_KEY=${shellQuote(tls.key)} && ${run}`
+					: run,
 			dir: app.cwd,
 			port: ports.apps[key]?.port,
 			// So the proxy's start on a first request starts the servers first, wherever they run,
@@ -250,6 +258,11 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 	});
 	if (suffix === undefined && isRootOnLinux()) {
 		for (const line of await trustAsRoot(supervisor)) print(line);
+	}
+	// Made once the proxy, which makes the CA, runs.
+	if (Object.values(project.apps).some((app) => app.domain === false)) {
+		const { ca, caKey } = supervisorPaths(here);
+		await ensureLocalhostCertificate({ ca, caKey, ...tls });
 	}
 	const lay = layout(project, await machineWithPortFree(here, supervisor), suffix);
 	for (const line of await syncHosts(

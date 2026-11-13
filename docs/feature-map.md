@@ -35,7 +35,7 @@ flowchart LR
 
 ### The config file
 
-Purpose: one committed, typed `basepad.config.ts` that names the project, its services (with each one's `worktree` option: copy, empty or shared), apps (each served at a domain, or with `port: false` for one that listens on nothing), env files and `worktrees` (prefix, folder, clone, setup); `basepad.config.local.ts` adjusts it per machine.
+Purpose: one committed, typed `basepad.config.ts` that names the project, its services (with each one's `worktree` option: copy, empty or shared), apps (each served at a domain, or with `port: false` for one that listens on nothing, or `domain: false` for one served at `https://localhost:$PORT`), env files and `worktrees` (prefix, folder, clone, setup); `basepad.config.local.ts` adjusts it per machine.
 Entry: `import { defineConfig, postgres } from "@aysnc-labs/basepad"`
 Paths: src/index.ts, src/config.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md)
@@ -58,7 +58,7 @@ Paths: src/init.ts
 
 Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.localhost`, starts services, sets the env keys the config names; stops them; shows their state.
 Entry: `basepad up [-d] [--claim]`, `basepad down`, `basepad status`
-Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts
+Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts, src/tls.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### Mission control
