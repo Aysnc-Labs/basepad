@@ -1,12 +1,11 @@
-import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { z } from "zod";
 import { kindOf, type Place } from "./catalogue.ts";
-import { CONFIG_FILE, LOCAL_FILE, loadProject, type Project } from "./config.ts";
+import { CONFIG_FILE, loadProject, type Project } from "./config.ts";
 import { writeEnvFiles } from "./env-files.ts";
 import { syncHosts } from "./hosts.ts";
 import type { EnvFiles, Service, ServiceOutputs } from "./index.ts";
+import { init } from "./init.ts";
 import { BasepadError, shellQuote } from "./internal/exec.ts";
 import { table } from "./internal/table.ts";
 import { isRootOnLinux, type Layout, layout, type Machine, machine } from "./layout.ts";
@@ -70,90 +69,6 @@ export const COMMANDS: Record<string, Command> = {
 	},
 };
 
-const PACKAGE = "@aysnc-labs/basepad";
-
-async function init({ cwd, print }: Invocation): Promise<void> {
-	const file = join(cwd, CONFIG_FILE);
-	if (existsSync(file)) {
-		throw new BasepadError(`${file} already exists; \`basepad init\` leaves it as it is.`);
-	}
-	const name = labelOf(basename(cwd));
-	await writeFile(file, starter(name));
-	print(`Wrote ${CONFIG_FILE} with name "${name}".`);
-	if (await ignoreLocalFile(cwd)) print(`Added ${LOCAL_FILE} to .gitignore.`);
-	if (await addDevDependency(cwd)) {
-		print(
-			`Added ${PACKAGE} to devDependencies in package.json; install it with your package manager.`,
-		);
-	}
-}
-
-/** A folder's name as a lowercase DNS label. Never truncated: `status` says when it is too long. */
-function labelOf(folder: string): string {
-	const label = folder
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "");
-	return label || "project";
-}
-
-function starter(name: string): string {
-	return `import { defineConfig } from "${PACKAGE}";
-
-export default defineConfig({
-	name: ${JSON.stringify(name)},
-	// services: {
-	// 	db: postgres({ version: 18 }), // import postgres from "${PACKAGE}" too
-	// },
-	apps: {
-		// web: { run: "npm run dev" }, // https://web.${name}.localhost
-	},
-	// env: ({ db, web }) => ({
-	// 	".env.local": { DATABASE_URL: db.url, APP_URL: web.url },
-	// }),
-});
-`;
-}
-
-/** Adds the local file to `.gitignore`, creating it. Returns whether it changed anything. */
-async function ignoreLocalFile(cwd: string): Promise<boolean> {
-	const file = join(cwd, ".gitignore");
-	const text = await readFile(file, "utf8").catch(() => "");
-	const lines = text.split(/\r?\n/).map((line) => line.trim());
-	if (lines.includes(LOCAL_FILE) || lines.includes(`/${LOCAL_FILE}`)) return false;
-	const gap = text === "" || text.endsWith("\n") ? "" : "\n";
-	await writeFile(file, `${text}${gap}${LOCAL_FILE}\n`);
-	return true;
-}
-
-/** Adds basepad to `package.json`'s devDependencies when the file exists and lacks it. */
-async function addDevDependency(cwd: string): Promise<boolean> {
-	const file = join(cwd, "package.json");
-	const text = await readFile(file, "utf8").catch(() => undefined);
-	if (text === undefined) return false;
-	let pkg: Record<string, unknown>;
-	try {
-		pkg = JSON.parse(text) as Record<string, unknown>;
-	} catch (error) {
-		throw new BasepadError(`${file} is not valid JSON: ${(error as Error).message}`);
-	}
-	const has = (field: string) =>
-		typeof pkg[field] === "object" && pkg[field] !== null && PACKAGE in (pkg[field] as object);
-	if (has("dependencies") || has("devDependencies")) return false;
-	pkg.devDependencies = {
-		...(pkg.devDependencies as object | undefined),
-		[PACKAGE]: `^${await ownVersion()}`,
-	};
-	const indent = /^[ \t]+/m.exec(text)?.[0] ?? "\t";
-	await writeFile(file, `${JSON.stringify(pkg, null, indent)}\n`);
-	return true;
-}
-
-async function ownVersion(): Promise<string> {
-	const text = await readFile(new URL("../package.json", import.meta.url), "utf8");
-	return (JSON.parse(text) as { version: string }).version;
-}
-
 /** How long `up` waits for apps to listen or fail before it shows their state and returns. */
 const APP_WAIT_MS = 5000;
 /** How many of a failed app's last lines `up` shows. */
@@ -192,7 +107,7 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 		daemons,
 	});
 	if (isRootOnLinux()) for (const line of await trustAsRoot(supervisor)) print(line);
-	const lay = layout(project, await asked(here, supervisor));
+	const lay = layout(project, await machineWithPortFree(here, supervisor));
 	for (const line of await syncHosts(
 		project.name,
 		Object.values(lay.apps).map((a) => a.host),
@@ -221,8 +136,8 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	if (failed.length > 0) throw new BasepadError(await failures(supervisor, project, failed, since));
 }
 
-/** The machine with whether URLs are port-free asked from its port 443, once the supervisor runs. */
-async function asked(here: Machine, supervisor: Supervisor): Promise<Machine> {
+/** The machine with `portFree` asked from its port 443, once the supervisor runs. */
+async function machineWithPortFree(here: Machine, supervisor: Supervisor): Promise<Machine> {
 	return { ...here, portFree: (await supervisor.standardPort()) === "proxy" };
 }
 
@@ -329,7 +244,7 @@ async function status({ cwd, print }: Invocation): Promise<void> {
 	// With no supervisor running nothing answers on 443, so the URL form is the port's default.
 	const lay = layout(
 		project,
-		Object.keys(states).length > 0 ? await asked(here, supervisor) : here,
+		Object.keys(states).length > 0 ? await machineWithPortFree(here, supervisor) : here,
 	);
 	print(await stateTables(project, lay, here, states));
 }
