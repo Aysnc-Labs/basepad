@@ -16,9 +16,39 @@ Starts at: `loadProject` in `src/config.ts`.
 
 ## Layout
 
-Derives every name from the project's description: each app's domain `<app>.<name>.localhost` and each service's database `<name>_<service>`. Rejects a name past its limit (63-character domain label, 63-byte database name) with the reason, never truncating.
+Derives every name from the project's description and the machine: each app's domain `<app>.<name>.localhost` and URL (with the proxy's port unless it is 443: the one place the URL form is decided), each app's starting port (a block of 20 chosen by the name's hash, in [20000, 32000)), each service's database `<name>_<service>`, and the environment's definitions file in the home. Rejects a name past its limit (63-character domain label, 63-byte database name) with the reason, never truncating. The machine is `BASEPAD_HOME` (default `~/.basepad`) and `BASEPAD_PROXY_PORT` (default 7443).
 
-Starts at: `layout` in `src/layout.ts`.
+Starts at: `layout` and `machine` in `src/layout.ts`.
+
+## Env files
+
+Sets exactly the keys `env` names in the files it names, paths from the config's folder: in place where a key is assigned, appended where not, creating a missing file. Every other byte stays; a value that already reads as wanted is left as written, so a second `up` writes nothing. Values needing quotes get single quotes, else double quotes. A key removed from the config stays in the file.
+
+Starts at: `setKeys` (pure) and `writeEnvFiles` in `src/env-files.ts`.
+
+## Tools
+
+Installs a tool through mise when missing and locates its install folder and programs. Runs mise from the home, so no project's mise config is read.
+
+Starts at: `install` in `src/tools.ts`.
+
+## Supervisor
+
+basepad's own pitchfork, isolated in `<home>/pitchfork/{state,config,logs}` so a developer's pitchfork is untouched. Sets its settings through pitchfork (zero ready delay, worktree labels off, HTTPS proxy on the machine's port with DNS, hosts sync, auto-trust and proxy auto-start off) and restarts the supervisor when one changes. Registers an environment's generated definitions against its folder under the name's namespace; starts what is not running and waits a bounded time for each daemon to listen or fail; stops, reports state and reads logs. The CA is `<home>/pitchfork/state/proxy/ca.pem`.
+
+Starts at: `openSupervisor` in `src/supervisor.ts`.
+
+## `basepad up`
+
+Writes the env files with each app's URL, registers the apps with the supervisor (each runs from its folder with its own and the project's `node_modules/.bin` on PATH, and gets a free `PORT`), starts what is not running, waits up to 5 s, prints the APP/URL/STATE table and returns. An app that exits on start is shown with its last output and the command for its full log, and `up` exits 1. `-d` is accepted. Refuses a config with `services` until Postgres lands.
+
+Starts at: `up` in `src/commands.ts`.
+
+## `basepad down`
+
+Stops the project's running apps. Deletes nothing.
+
+Starts at: `down` in `src/commands.ts`.
 
 ## The `basepad` command
 
@@ -34,6 +64,6 @@ Starts at: `init` in `src/commands.ts`.
 
 ## `basepad status`
 
-Prints one row per app with its URL and state. Nothing is started yet, so every app shows `stopped`.
+Prints one row per app with its URL and live state (`running`, `starting`, `failed` or `stopped`). Starts no supervisor when none runs.
 
 Starts at: `status` in `src/commands.ts`.
