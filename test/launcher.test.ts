@@ -19,6 +19,6 @@ test("on a Node older than 24, basepad runs again on mise's Node 24", {
 		dir,
 		"status",
 	);
-	expect(out.stdout).toContain("web  https://web.shop.localhost  stopped");
+	expect(out.stdout).toContain(`web  https://web.shop.localhost:${box.proxyPort}  stopped`);
 	expect(out.code).toBe(0);
 });
