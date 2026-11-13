@@ -32,7 +32,7 @@ describe("loads under every module type, with no warnings", () => {
 		const dir = await scratch({ ...files, "basepad.config.ts": twoApps });
 		const out = await box.basepad(dir, "status");
 		expect(out.stderr).toBe("");
-		expect(out.stdout).toContain("cms  https://cms.shop.localhost  stopped");
+		expect(out.stdout).toContain(`cms  https://cms.shop.localhost:${box.proxyPort}  stopped`);
 		expect(out.code).toBe(0);
 	});
 });
