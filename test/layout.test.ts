@@ -162,6 +162,13 @@ test("a worktree's database is <name>_<service>_<suffix>, on main's server", () 
 	expect(tree?.data).toBe(main?.data);
 });
 
+test("a 63-byte database leaves no room for a snapshot, and still names its snapshots' prefix", () => {
+	const db = layout(project("shop", [], ["db"]), here, "w".repeat(55)).services.db;
+	expect(db?.database).toHaveLength(63);
+	expect(db?.snapshots).toBe(`shop_db_${"w".repeat(55)}@`);
+	expect(() => db?.snapshot("a")).toThrow(/Postgres allows 63, which leaves no room for a label/);
+});
+
 test("a shared service's worktree database is main's", () => {
 	const shared = { ...project("shop"), services: { db: postgres({ worktree: "shared" }) } };
 	expect(layout(shared, here, "worktree-1").services.db?.database).toBe("shop_db");

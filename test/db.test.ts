@@ -158,6 +158,34 @@ test("a load whose copy fails leaves the database as it was, the snapshot kept a
 	await sql(main, 'drop database "t26snap_db@broken"');
 }, 120_000);
 
+test("a save whose copy fails keeps the snapshot of that label as it was, and nothing beside", async () => {
+	await ok(main, "db", "save", "keep");
+	const saved = await rows(main);
+	await sql(main, "insert into items values ('newer')");
+	// The database marked invalid, as an interrupted drop leaves one, so no route can copy it; marked
+	// and restored from the server's maintenance database, as it takes no connections meanwhile.
+	const server = new URL(await url(main));
+	const maintenance = [`postgresql://postgres@${server.host}/postgres`];
+	const mark = async (limit: number) => {
+		const out = await box.psql(
+			maintenance,
+			`update pg_database set datconnlimit = ${limit} where datname = 't26snap_db'`,
+		);
+		expect(out.stderr).toBe("");
+	};
+	await mark(-2);
+	const result = await box.basepad(main, "db", "save", "keep");
+	await mark(-1);
+	expect(result.code).toBe(1);
+	expect(result.stderr).toContain(
+		"Could not save snapshot `keep`; any snapshot `keep` there was is kept.",
+	);
+	expect(await sql(main, "select count(*) from pg_database where datname like '%~%'")).toBe("0");
+	await ok(main, "db", "load", "keep");
+	expect(await rows(main)).toBe(saved);
+	await ok(main, "db", "rm", "keep");
+}, 120_000);
+
 test("a label that would make a name too long, or is no label, is rejected before anything is saved", async () => {
 	const long = "x".repeat(60);
 	const tooLong = await box.basepad(main, "db", "save", long);

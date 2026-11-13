@@ -70,6 +70,8 @@ export interface PostgresNames {
 	main: string;
 	/** The server's data folder, in the service's folder. */
 	data: string;
+	/** What every snapshot's database name starts with: `<database>@`. Unchecked: it names none. */
+	snapshots: string;
 	/**
 	 * Snapshot `label`'s database: `<database>@<label>`. No database basepad names has `@`, so a
 	 * snapshot is never taken for one, and main's (`<main>@…`) are never among its worktrees' data
@@ -130,6 +132,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			database,
 			main,
 			data: join(dir, "data"),
+			snapshots: `${database}@`,
 			snapshot: (label) => {
 				const room = IDENTIFIER_MAX - Buffer.byteLength(`${database}@`);
 				return named(
@@ -229,7 +232,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		if (open === "f") await sql(`alter database ${identifier(db)} allow_connections true`);
 		if (!exists && place.suffix !== undefined && service.worktree === "copy") {
 			const start = performance.now();
-			const route = await copyDatabase(pg, port, place.main, db);
+			const route = await copyDatabase(pg, port, place.main, db, place.owner);
 			const seconds = ((performance.now() - start) / 1000).toFixed(1);
 			print(`Copied main's \`${place.key}\` by ${route} in ${seconds} s.`);
 		} else if (!exists) {
@@ -305,19 +308,13 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			const name = place.snapshot(label);
 			const { pg, port, sql } = await own(service, place);
 			// A label names one snapshot: one there is replaced, and kept should the copy fail.
-			await replace(
-				sql,
-				{ target: name, staging: place.staging(), owner: place.owner },
-				async (staging) => {
-					try {
-						await copyDatabase(pg, port, place.database, staging);
-					} catch (error) {
-						if (!(error instanceof BasepadError)) throw error;
-						throw new BasepadError(
-							`Could not save snapshot \`${label}\`; any snapshot \`${label}\` there was is kept.\n${error.message}`,
-						);
-					}
-				},
+			const swap = {
+				target: name,
+				staging: place.staging(),
+				failed: `Could not save snapshot \`${label}\`; any snapshot \`${label}\` there was is kept.`,
+			};
+			await replace(sql, swap, (staging) =>
+				copyDatabase(pg, port, place.database, staging, place.owner),
 			);
 		},
 
@@ -328,17 +325,12 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			if (!found.some((snapshot) => snapshot.label === label)) {
 				throw new BasepadError(noSnapshot(place, label, found));
 			}
-			const swap = { target: place.database, staging: place.staging(), owner: place.owner };
-			await replace(sql, swap, async (staging) => {
-				try {
-					await copyDatabase(pg, port, name, staging);
-				} catch (error) {
-					if (!(error instanceof BasepadError)) throw error;
-					throw new BasepadError(
-						`Could not load snapshot \`${label}\`; \`${place.database}\` is as it was.\n${error.message}`,
-					);
-				}
-			});
+			const swap = {
+				target: place.database,
+				staging: place.staging(),
+				failed: `Could not load snapshot \`${label}\`; \`${place.database}\` is as it was.`,
+			};
+			await replace(sql, swap, (staging) => copyDatabase(pg, port, name, staging, place.owner));
 		},
 
 		async snapshots(service, place) {
@@ -360,18 +352,16 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			const { pg, port, sql } = await own(service, place);
 			const from = await sourceOf(source);
 			// Named before asking, so a name past the limit is refused first.
-			const swap = { target: place.database, staging: place.staging(), owner: place.owner };
+			const swap = {
+				target: place.database,
+				staging: place.staging(),
+				failed: `Could not import ${from.description}; \`${place.database}\` is as it was.`,
+			};
 			await confirm(place.database);
 			await replace(sql, swap, async (staging) => {
 				await sql(`create database ${identifier(staging)}`);
-				try {
-					await restore(pg, port, staging, from);
-				} catch (error) {
-					if (!(error instanceof BasepadError)) throw error;
-					throw new BasepadError(
-						`Could not import ${from.description}; \`${place.database}\` is as it was.\n${error.message}${from.format === "plain" ? "\nA plain SQL file must load as is: one with other roles' owners or grants needs `pg_dump --no-owner --no-privileges`, or use a custom-format dump." : ""}`,
-					);
-				}
+				await stamp(sql, staging, place.owner);
+				await restore(pg, port, staging, from);
 			});
 			return from.description;
 		},
@@ -471,9 +461,16 @@ async function restore(pg: Tool, port: number, to: string, from: Source): Promis
 		);
 		if (out.code !== 0) throw new BasepadError((out.stderr || out.stdout).trim());
 	} else if (from.format === "plain") {
-		await must(pg.bin("psql"), [...into, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", from.file], {
-			env: clientEnv(),
-		});
+		try {
+			await must(pg.bin("psql"), [...into, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", from.file], {
+				env: clientEnv(),
+			});
+		} catch (error) {
+			if (!(error instanceof BasepadError)) throw error;
+			throw new BasepadError(
+				`${error.message}\nA plain SQL file must load as is: one with other roles' owners or grants needs \`pg_dump --no-owner --no-privileges\`, or use a custom-format dump.`,
+			);
+		}
 	} else {
 		await must(pgRestore[0] as string, [...pgRestore.slice(1), ...into, from.file], {
 			env: clientEnv(),
@@ -527,8 +524,7 @@ async function snapshotsOf(
 	sql: (text: string) => Promise<string>,
 	place: Place<PostgresNames>,
 ): Promise<Snapshot[]> {
-	// What every snapshot's name starts with.
-	const prefix = place.snapshot("");
+	const prefix = place.snapshots;
 	const rows = await sql(
 		`select datname || '|' || pg_database_size(oid) from pg_database where datname like ${literal(`${likeEscaped(prefix)}%`)} order by datname`,
 	);
@@ -556,27 +552,31 @@ function noSnapshot(
 
 /**
  * Replaces database `target` with one `fill` makes at `staging`, beside it: the one way the `db`
- * commands replace a database. Only once `fill` has finished is `target` dropped, its sessions
- * ended (`with (force)` keeps new ones out until it is gone), and the new one renamed to it, open,
- * and stamped with `owner`. A `fill` that fails leaves `target` as it was, and nothing
- * beside it. Its clients connect again by themselves, to the new one.
+ * commands replace a database. `fill` stamps `staging` as the environment's as soon as it exists, so one an
+ * interrupted run leaves is the environment's, and goes with its worktree. Only once `fill` has
+ * finished is `target` dropped, its sessions ended (`with (force)` keeps new ones out until it is
+ * gone), and the new one renamed to it, open, its stamp with it. A `fill` that fails leaves
+ * `target` as it was, and nothing beside it, and throws `failed` with its reason. Clients connect
+ * again by themselves, to the new one.
  */
 async function replace(
 	sql: (text: string) => Promise<string>,
-	{ target, staging, owner }: { target: string; staging: string; owner: string },
-	fill: (staging: string) => Promise<void>,
+	{ target, staging, failed }: { target: string; staging: string; failed: string },
+	fill: (staging: string) => Promise<unknown>,
 ): Promise<void> {
+	const dropStaging = () => sql(`drop database if exists ${identifier(staging)} with (force)`);
 	// Left by a replacement that was interrupted.
-	await sql(`drop database if exists ${identifier(staging)} with (force)`);
+	await dropStaging();
 	try {
 		await fill(staging);
 	} catch (error) {
-		await sql(`drop database if exists ${identifier(staging)} with (force)`);
-		throw error;
+		// Its cause is what the developer needs; one left is dropped by the next replacement.
+		await dropStaging().catch(() => {});
+		if (!(error instanceof BasepadError)) throw error;
+		throw new BasepadError(`${failed}\n${error.message}`);
 	}
 	await sql(`drop database if exists ${identifier(target)} with (force)`);
 	await sql(`alter database ${identifier(staging)} rename to ${identifier(target)}`);
-	await stamp(sql, target, owner);
 }
 
 /** Marks database `name` as belonging to the checkout at `owner`, as `provision` does. */
@@ -631,8 +631,8 @@ type Route = "file clone" | "template copy" | "dump and restore";
 
 /**
  * Makes `to` a copy of `from`, rows, schema and extensions, while `from`'s clients stay connected,
- * and says how. A copy has no comment, so it carries no owner's stamp. The one way basepad copies a
- * database.
+ * and says how. `to` is stamped as belonging to the checkout at `owner` as soon as it exists, so a
+ * copy an interrupted run leaves is found as that checkout's. The one way basepad copies a database.
  *
  * A template copy needs `from` to have no other session, and only `allow_connections` keeps out a
  * superuser, so `from` is closed, its sessions ended, and opened again after: a pooled client
@@ -641,7 +641,13 @@ type Route = "file clone" | "template copy" | "dump and restore";
  * plain template copy; Postgres never falls back by itself, so basepad does. Dump and restore,
  * with `from` open again, only when a template copy fails.
  */
-async function copyDatabase(pg: Tool, port: number, from: string, to: string): Promise<Route> {
+async function copyDatabase(
+	pg: Tool,
+	port: number,
+	from: string,
+	to: string,
+	owner: string,
+): Promise<Route> {
 	const sql = (...statements: string[]) => query(pg, port, statements);
 	const offered = await sql(
 		"select coalesce(enumvals::text, '') from pg_settings where name = 'file_copy_method'",
@@ -662,16 +668,19 @@ async function copyDatabase(pg: Tool, port: number, from: string, to: string): P
 		for (const [route, statements] of routes) {
 			try {
 				await sql(...statements);
-				return route;
 			} catch (error) {
 				failures.push(`${route}: ${(error as Error).message.trim()}`);
 				await sql(`drop database if exists ${identifier(to)}`);
+				continue;
 			}
+			await stamp(sql, to, owner);
+			return route;
 		}
 	} finally {
 		await sql(`alter database ${identifier(from)} allow_connections true`);
 	}
 	await sql(`create database ${identifier(to)}`);
+	await stamp(sql, to, owner);
 	const conn = (db: string) =>
 		["-h", HOST, "-p", String(port), "-U", USER, "-d", db].map(shellQuote).join(" ");
 	try {
