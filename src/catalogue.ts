@@ -60,9 +60,9 @@ export interface Web {
 	port: number;
 }
 
-/** One piece of a worktree's data, such as its database on main's server. */
+/** One piece of data a service keeps for a worktree. */
 export interface WorktreeData {
-	/** Its name on the server. */
+	/** Its name, unique among the service's worktree data. */
 	name: string;
 	/** The folder stamped on it as its owner; empty when unstamped. */
 	owner: string;
@@ -96,11 +96,11 @@ export interface Kind<S extends ServiceBase, O, N> {
 	/**
 	 * Waits until the running service answers, provisions it for this environment and returns what
 	 * it gives to `env`. In a worktree it provisions from main's, as the service's `worktree` option
-	 * says (a copy of main's data, empty, or main's own), so main's must be provisioned first. Throws a `BasepadError` when another checkout owns it, unless `claim`, and
-	 * `Stopped` (`internal/ports.ts`) as soon as `stopped` says its daemon is no longer running.
-	 * `print` tells the developer what it did that they would want to know, such as how it copied.
-	 * Not `started` (a worktree's own server, until the worktree starts): waits for nothing and
-	 * returns what it will give once its prepared daemon runs.
+	 * says, so main's must be provisioned first. Throws a `BasepadError` when another checkout owns
+	 * what it provisions, unless `claim`, and `Stopped` (`internal/ports.ts`) as soon as `stopped`
+	 * says its daemon is no longer running. `print` tells the developer what it did that they would
+	 * want to know. Not `started` (a worktree's own server, until the worktree starts): waits for
+	 * nothing and returns what it will give once its prepared daemon runs.
 	 */
 	provision(
 		service: S,
@@ -112,19 +112,24 @@ export interface Kind<S extends ServiceBase, O, N> {
 			print(line: string): void;
 		},
 	): Promise<O>;
-	/**
-	 * The worktree data this service keeps, never main's own, such as a worktree's database on main's
-	 * server. In main's place, every worktree's; in a worktree's, that worktree's: stamped with its
-	 * folder (`owner`), or unstamped under its name. Needs no worktree config. Data only a running
-	 * server can list is not found while it is stopped.
-	 */
-	worktreeData(service: S, place: Place<N>): Promise<WorktreeData[]>;
-	/** Deletes worktree data by name. Throws on main's own, and deletes nothing. */
-	dropWorktreeData(service: S, place: Place<N>, names: string[]): Promise<void>;
+	/** The data this service keeps for worktrees; absent for a kind that keeps none. */
+	worktreeData?: WorktreeDataOf<S, N>;
 	/** Where a client reaches the service: where it runs, else where it would first be tried. */
 	address(service: S, place: Place<N>): Promise<string>;
 	/** The `db` commands, for a kind that is a database; absent for one that is not. */
 	database?: Database<S, N>;
+}
+
+/** What a kind that keeps data for worktrees does with it, for `worktree rm` and `prune`. */
+export interface WorktreeDataOf<S, N> {
+	/**
+	 * The data kept for worktrees, never main's own. In main's place, every worktree's; in a
+	 * worktree's, that worktree's: stamped with its folder (`owner`), or unstamped under its name.
+	 * Needs no worktree config. Data only a running server can list is not found while it is stopped.
+	 */
+	list(service: S, place: Place<N>): Promise<WorktreeData[]>;
+	/** Deletes worktree data by name. Throws on main's own, and deletes nothing. */
+	drop(service: S, place: Place<N>, names: string[]): Promise<void>;
 }
 
 /** One snapshot of an environment's database, found on the server by its name. */
@@ -144,11 +149,15 @@ export interface Snapshot {
  */
 export interface Database<S, N> {
 	/**
-	 * Saves the database as snapshot `label`, replacing one of that label. Throws a `BasepadError`
-	 * when the label makes a name past the kind's limit.
+	 * Saves the database as snapshot `label`, replacing one of that label only once the new one is
+	 * whole, so a save that fails keeps it. Throws a `BasepadError` when the label makes a name past
+	 * the kind's limit.
 	 */
 	save(service: S, place: Place<N>, label: string): Promise<void>;
-	/** Replaces the database with snapshot `label`, which stays. Throws when there is none. */
+	/**
+	 * Replaces the database with snapshot `label`, which stays, only once the copy is whole, so a
+	 * load that fails leaves the database as it was. Throws when there is none.
+	 */
 	load(service: S, place: Place<N>, label: string): Promise<void>;
 	/** The environment's snapshots, by label. */
 	snapshots(service: S, place: Place<N>): Promise<Snapshot[]>;
@@ -198,11 +207,6 @@ export type NamesOf<S extends Service> = ReturnType<Catalogue[S["kind"]]["names"
 /** The kind that provides `service`. */
 export function kindOf<S extends Service>(service: S): Kind<S, OutputsOf<S>, NamesOf<S>> {
 	return CATALOGUE[service.kind] as unknown as Kind<S, OutputsOf<S>, NamesOf<S>>;
-}
-
-/** The `db` commands of `service`'s kind; none when it is not a database. */
-export function databaseOf<S extends Service>(service: S): Database<S, NamesOf<S>> | undefined {
-	return kindOf(service).database;
 }
 
 /** Every kind's schema, for Config. */

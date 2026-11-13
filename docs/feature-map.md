@@ -61,7 +61,7 @@ Paths: src/init.ts
 
 Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.localhost`, starts services, sets the env keys the config names; stops them; shows their state.
 Entry: `basepad up [-d] [--claim]`, `basepad down`, `basepad status`
-Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts
+Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts, src/internal/processes.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### Mission control
@@ -90,7 +90,7 @@ Paths: src/claude-hooks.ts, src/commands.ts
 
 ### `basepad db save`, `load`, `snapshots`, `rm`, `import` and `export`
 
-Purpose: snapshots of the database of the environment the command runs in (a worktree's, never main's, from inside one): save one by label (`default` when none), load it back while the app runs, list them with their size, delete one. A snapshot is a database `<database>@<label>` on the same server, found by name with no list kept, made by the Worktrees copy routine; a worktree's go with it on `worktree rm` and `prune`. The verbs are the Catalogue's optional `database` capability on a kind, so commands pick the service (`--service`, implied with one database) and the kind does the rest. `import` replaces the database with a dump file (custom format or plain SQL, told by its first bytes) or a `postgres://` URL's database, after asking with its name (`--yes` answers); it loads into `<database>~import` and swaps that in only once it has loaded, so a failed import changes nothing. `export` writes a custom-format dump, plain SQL for a `.sql` name, or the dump to standard output with nothing else there.
+Purpose: snapshots of the database of the environment the command runs in (a worktree's, never main's, from inside one): save one by label (`default` when none), load it back while the app runs, list them with their size, delete one. A snapshot is a database `<database>@<label>` on the same server, found by name with no list kept, made by the Worktrees copy routine; a worktree's go with it on `worktree rm` and `prune`. The verbs are the Catalogue's optional `database` capability on a kind, so commands pick the service (`--service`, implied with one database) and the kind does the rest. `import` replaces the database with a dump file (custom format or plain SQL, told by its first bytes) or a `postgres://` URL's database, after asking with its name (`--yes` answers); Each of `load`, `save` over a label and `import` makes the new database at `<database>~new` and swaps it in only once it is whole, so one that fails changes nothing. `export` writes a custom-format dump, plain SQL for a `.sql` name, or the dump to standard output with nothing else there.
 Entry: `basepad db save [label]`, `basepad db load [label]`, `basepad db snapshots`, `basepad db rm <label>`, `basepad db import <file or url> [--yes]`, `basepad db export [file]`, each with `--service <key>`
 Paths: src/commands.ts, src/catalogue.ts, src/catalogue/postgres.ts
 

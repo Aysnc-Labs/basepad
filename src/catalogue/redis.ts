@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { Kind } from "../catalogue.ts";
 import { BasepadError, shellQuote } from "../internal/exec.ts";
 import { freePort, waitFor } from "../internal/ports.ts";
+import { recordRunning, runningPort } from "../internal/processes.ts";
 import { install } from "../tools.ts";
 import { REDIS_VERSION } from "../versions.ts";
 
@@ -80,7 +81,7 @@ export const redisKind: Kind<RedisService, RedisOutputs, RedisNames> = {
 		const redis = await install("redis", REDIS_VERSION, place.machine.home);
 		const { server } = place;
 		await mkdir(server, { recursive: true });
-		const port = (await runningPort(server)) ?? (await freePort(place.port));
+		const port = (await runningPort(pidFile(server))) ?? (await freePort(place.port));
 		const argv = [
 			redis.bin("redis-server"),
 			"--port",
@@ -94,12 +95,9 @@ export const redisKind: Kind<RedisService, RedisOutputs, RedisNames> = {
 			"no",
 			"--dir",
 			server,
-			"--pidfile",
-			join(server, "redis.pid"),
 		];
 		return {
-			// The port first, so the server's port is read back while it runs, as Postgres's pid file says its.
-			run: `printf %s ${port} > port && exec ${argv.map(shellQuote).join(" ")}`,
+			run: `${recordRunning(pidFile(server), port)} && exec ${argv.map(shellQuote).join(" ")}`,
 			dir: server,
 			listens: port,
 		};
@@ -108,10 +106,11 @@ export const redisKind: Kind<RedisService, RedisOutputs, RedisNames> = {
 	async provision(_service, place, { started, stopped }) {
 		const outputs = (port: number) => ({ url: `redis://${HOST}:${port}`, host: HOST, port });
 		// Not started: where it will listen, which is where `prepare` put it.
-		if (!started) return outputs((await runningPort(place.server)) ?? (await freePort(place.port)));
+		if (!started)
+			return outputs((await runningPort(pidFile(place.server))) ?? (await freePort(place.port)));
 		const port = await waitFor(
 			async () => {
-				const port = await runningPort(place.server);
+				const port = await runningPort(pidFile(place.server));
 				if (port === undefined) throw new Error("It has not started.");
 				await ping(port);
 				return port;
@@ -126,48 +125,38 @@ export const redisKind: Kind<RedisService, RedisOutputs, RedisNames> = {
 		return outputs(port);
 	},
 
-	async worktreeData(_service, place) {
-		if (!existsSync(place.worktrees)) return [];
-		const all = [];
-		for (const name of await readdir(place.worktrees)) {
-			const owner = await readFile(join(place.worktrees, name, OWNER), "utf8").catch(() => "");
-			all.push({ name, owner });
-		}
-		if (place.suffix === undefined) return all;
-		return all.filter(
-			(data) => data.owner === place.owner || (data.owner === "" && data.name === place.suffix),
-		);
-	},
-
-	async dropWorktreeData(_service, place, names) {
-		for (const name of names) {
-			if (name === "" || name.includes("/") || name === "." || name === "..") {
-				throw new BasepadError(`\`${name}\` is no worktree's Redis.`);
+	worktreeData: {
+		async list(_service, place) {
+			if (!existsSync(place.worktrees)) return [];
+			const all = [];
+			for (const name of await readdir(place.worktrees)) {
+				const owner = await readFile(join(place.worktrees, name, OWNER), "utf8").catch(() => "");
+				all.push({ name, owner });
 			}
-			await rm(join(place.worktrees, name), { recursive: true, force: true });
-		}
+			if (place.suffix === undefined) return all;
+			return all.filter(
+				(data) => data.owner === place.owner || (data.owner === "" && data.name === place.suffix),
+			);
+		},
+
+		async drop(_service, place, names) {
+			for (const name of names) {
+				if (name === "" || name.includes("/") || name === "." || name === "..") {
+					throw new BasepadError(`\`${name}\` is no worktree's Redis.`);
+				}
+				await rm(join(place.worktrees, name), { recursive: true, force: true });
+			}
+		},
 	},
 
 	async address(_service, place) {
-		return `redis://${HOST}:${(await runningPort(place.server)) ?? place.port}`;
+		return `redis://${HOST}:${(await runningPort(pidFile(place.server))) ?? place.port}`;
 	},
 };
 
-/** The port of the server running in `server`, from its pid file and the port its run wrote. */
-async function runningPort(server: string): Promise<number | undefined> {
-	const pid = await readFile(join(server, "redis.pid"), "utf8").catch(() => undefined);
-	const port = await readFile(join(server, "port"), "utf8").catch(() => undefined);
-	if (!pid || !port || !alive(Number(pid.trim()))) return undefined;
-	return Number(port);
-}
-
-function alive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "EPERM";
-	}
+/** The file in a server's folder with its process id and port while it runs. */
+function pidFile(server: string): string {
+	return join(server, "redis.pid");
 }
 
 /** Resolves once Redis on `port` answers PING with PONG. */

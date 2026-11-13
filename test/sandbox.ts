@@ -236,9 +236,9 @@ export async function readEnv(dir: string, file: string): Promise<Record<string,
 	);
 }
 
-/** A `basepad.config.ts` exporting `body` through `defineConfig`. */
+/** A `basepad.config.ts` exporting `body` through `defineConfig`, with every kind's factory. */
 export function configFile(body: string): string {
-	return `import { defineConfig, mailpit, postgres } from "@aysnc-labs/basepad";\n\nexport default defineConfig(${body});\n`;
+	return `import { defineConfig, mailpit, postgres, redis } from "@aysnc-labs/basepad";\n\nexport default defineConfig(${body});\n`;
 }
 
 /**
