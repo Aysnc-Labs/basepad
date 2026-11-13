@@ -10,7 +10,7 @@ import { BasepadError } from "./internal/exec.ts";
  * basepad added as a devDependency.
  */
 
-const PACKAGE = "@aysnc-labs/basepad";
+const PACKAGE = "basepad";
 
 export async function init({ cwd, print }: Invocation): Promise<void> {
 	const file = join(cwd, CONFIG_FILE);

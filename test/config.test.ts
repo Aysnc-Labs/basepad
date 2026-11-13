@@ -164,7 +164,7 @@ describe("basepad.config.local.ts", () => {
 	test("is applied over the project's config", async () => {
 		const dir = await scratch({
 			"basepad.config.ts": twoApps,
-			"basepad.config.local.ts": `import type { LocalConfig } from "@aysnc-labs/basepad";
+			"basepad.config.local.ts": `import type { LocalConfig } from "basepad";
 
 const local: LocalConfig = (config) => ({
 	...config,

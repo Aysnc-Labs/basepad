@@ -44,7 +44,7 @@ npx basepad init
 `init` writes a starter `basepad.config.ts`, named after the folder, and adds `basepad.config.local.ts` to `.gitignore`. Give the project a database and an app:
 
 ```ts
-import { defineConfig, postgres } from "@aysnc-labs/basepad";
+import { defineConfig, postgres } from "basepad";
 
 export default defineConfig({
 	name: "shop",
@@ -107,7 +107,7 @@ npx basepad down     # stop them; the database's data stays
 `basepad.config.ts`, at the project's root, is the only way a project talks to basepad. It is TypeScript, and it loads whatever `package.json` says about module type. basepad looks for it in the folder you run in, then each folder above, so one config at a repo's root covers every app in it, and commands work from any subfolder.
 
 ```ts
-import { defineConfig, postgres } from "@aysnc-labs/basepad";
+import { defineConfig, postgres } from "basepad";
 
 export default defineConfig({
 	name: "shop",
@@ -284,7 +284,7 @@ Claude Code makes worktrees for `claude --worktree`, background sessions and sub
 `basepad.config.local.ts`, beside the config, adjusts it for your machine only; `basepad init` adds it to `.gitignore`. When it exists, basepad loads it after the config. Its default export is a function that gets the project's config and returns the changed one:
 
 ```ts
-import type { LocalConfig } from "@aysnc-labs/basepad";
+import type { LocalConfig } from "basepad";
 
 const local: LocalConfig = (config) => ({
 	...config,
@@ -399,7 +399,7 @@ Postgres's standard extensions (`pg_trgm`, `citext`, `hstore` and the rest) and 
 basepad's Postgres is optional. Leave `services` out and write your own values into `env` as plain strings; you still get apps, domains and env files:
 
 ```ts
-import { defineConfig } from "@aysnc-labs/basepad";
+import { defineConfig } from "basepad";
 
 export default defineConfig({
 	name: "notes",

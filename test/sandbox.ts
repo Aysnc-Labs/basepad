@@ -131,8 +131,8 @@ export async function sandbox(): Promise<Sandbox> {
 				await mkdir(dirname(join(dir, path)), { recursive: true });
 				await writeFile(join(dir, path), content);
 			}
-			await mkdir(join(dir, "node_modules/@aysnc-labs"), { recursive: true });
-			await symlink(repo, join(dir, "node_modules/@aysnc-labs/basepad"));
+			await mkdir(join(dir, "node_modules"), { recursive: true });
+			await symlink(repo, join(dir, "node_modules/basepad"));
 			return dir;
 		},
 		basepad: (cwd, ...args) => exec(process.execPath, [cli, ...args], cwd),
@@ -238,7 +238,7 @@ export async function readEnv(dir: string, file: string): Promise<Record<string,
 
 /** A `basepad.config.ts` exporting `body` through `defineConfig`, with every kind's factory. */
 export function configFile(body: string): string {
-	return `import { defineConfig, mailpit, postgres, redis } from "@aysnc-labs/basepad";\n\nexport default defineConfig(${body});\n`;
+	return `import { defineConfig, mailpit, postgres, redis } from "basepad";\n\nexport default defineConfig(${body});\n`;
 }
 
 /**

@@ -99,7 +99,7 @@ function findConfig(cwd: string): string {
 }
 
 /** What a config imports basepad as. */
-const PACKAGE = "@aysnc-labs/basepad";
+const PACKAGE = "basepad";
 /** The running basepad's own entry: `index.ts` from source, `index.js` once built. */
 const OWN_INDEX = new URL(
 	import.meta.url.endsWith(".ts") ? "./index.ts" : "./index.js",

@@ -15,7 +15,7 @@ Tell basepad what your project runs:
 
 ```ts
 // basepad.config.ts
-import { defineConfig, mailpit, postgres, redis } from "@aysnc-labs/basepad";
+import { defineConfig, mailpit, postgres, redis } from "basepad";
 
 export default defineConfig({
 	name: "shop",
@@ -49,7 +49,7 @@ Mail it sends lands in a local inbox at `https://mail.shop.localhost`, and `base
 
 ```sh
 curl https://mise.run | sh                 # basepad installs everything else through mise
-npm install --save-dev @aysnc-labs/basepad
+npm install --save-dev basepad
 npx basepad init                           # writes a starter config
 npx basepad up
 ```

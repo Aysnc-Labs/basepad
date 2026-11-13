@@ -10,6 +10,9 @@ beforeAll(async () => {
 afterAll(() => box.dispose());
 
 const read = (dir: string, file: string) => readFile(join(dir, file), "utf8");
+const { version } = JSON.parse(
+	await readFile(new URL("../package.json", import.meta.url), "utf8"),
+) as { version: string };
 
 test("init writes a starter config named from the folder, which status loads", async () => {
 	const dir = await box.project("My_Shop");
@@ -42,13 +45,13 @@ test("init adds basepad as a devDependency when package.json lacks it", async ()
 	await box.basepad(dir, "init");
 	expect(JSON.parse(await read(dir, "package.json"))).toEqual({
 		name: "pkg",
-		devDependencies: { typescript: "^7.0.0", "@aysnc-labs/basepad": "^0.0.0" },
+		devDependencies: { typescript: "^7.0.0", basepad: `^${version}` },
 	});
 	expect(await read(dir, "package.json")).toMatch(/^\{\n {2}"name"/);
 });
 
 test("init leaves a package.json that already has basepad as it is", async () => {
-	const text = '{"dependencies":{"@aysnc-labs/basepad":"^0.0.0"}}';
+	const text = '{"dependencies":{"basepad":"^0.0.0"}}';
 	const dir = await box.project("has-it", { "package.json": text });
 	await box.basepad(dir, "init");
 	expect(await read(dir, "package.json")).toBe(text);
