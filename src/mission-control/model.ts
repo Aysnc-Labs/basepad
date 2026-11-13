@@ -4,6 +4,8 @@
  * function that turns a key press into the next view.
  */
 
+import { ofDaemon } from "../layout.ts";
+
 /** A part's state at a glance. `idle`: not running, and the proxy starts it on a first request. */
 export type PartState = "running" | "starting" | "failed" | "stopped" | "idle";
 
@@ -194,17 +196,6 @@ function indexOf(lines: readonly LogLine[], seq: number): number {
  * stream shows: a page up or down moves by that many.
  */
 export function reduce(previous: View, key: string, snapshot: Snapshot, page = 10): Step {
-	const step = react(previous, key, snapshot, page);
-	// Closing ends `up`, and a worktree's addition or removal with it, partway: it waits, unless
-	// the developer insists.
-	const [work] = snapshot.work ?? [];
-	if (!step.view.quit || work === undefined) return step;
-	const warning = `${work.title} is under way: closing now would stop it partway. q closes once it is done; ctrl-c again closes now.`;
-	if (key === "ctrl-c" && previous.notice === warning) return step;
-	return { view: { ...previous, notice: warning } };
-}
-
-function react(previous: View, key: string, snapshot: Snapshot, page: number): Step {
 	const { notice: _, ...view } = previous;
 	if (view.confirm !== undefined) return confirming(view, view.confirm, key, snapshot);
 	if (view.search?.typing) return { view: typing(view, view.search.query, key, snapshot) };
@@ -415,18 +406,17 @@ function actionOn(
 	kind: Action["kind"],
 ): Action | undefined {
 	if (part !== undefined) {
-		const slash = part.id.lastIndexOf("/");
 		const isApp = env.apps.includes(part);
 		return {
 			kind,
-			namespace: part.id.slice(0, slash),
+			namespace: ofDaemon(part.id).namespace,
 			apps: isApp ? [part.name] : [],
 			services: isApp ? [] : [part.name],
 			label: part.name,
 		};
 	}
 	// A worktree's services are main's: only main's own actions reach them.
-	const services = env.services.filter((s) => s.id.startsWith(`${env.namespace}/`));
+	const services = env.services.filter((s) => ofDaemon(s.id).namespace === env.namespace);
 	if (env.apps.length + services.length === 0) return undefined;
 	return {
 		kind,

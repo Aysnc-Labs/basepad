@@ -134,6 +134,15 @@ test("an errored app stands out: an alert line names it and its error wherever t
 	expect(onIt).toMatch(/✖ api +failed +exit code 1 +TypeError: Cannot read properties/);
 });
 
+test("an app that crashed without the word error still stands out with its last output", () => {
+	const api = app("shop", "api", { state: "failed", error: "exit code 1", note: undefined });
+	const crashed = { ...main, apps: [app("shop", "web"), api] };
+	const logs = [lines(api.id, "api listening", "connection refused: 127.0.0.1:6379", "  ")];
+	const out = draw(snap([crashed], logs));
+	expect(out).toMatch(/✖ main › api exited \(exit code 1\) +connection refused: 127\.0\.0\.1:6379/);
+	expect(out).toMatch(/✖ api +failed +exit code 1 +connection refused: 127\.0\.0\.1:6379/);
+});
+
 test("an idle worktree reads as idle, not failed: its apps start on their first request", () => {
 	const ns = "shop.worktree-2";
 	const idle = worktree(2, {
@@ -265,6 +274,18 @@ test("side by side: a column for each app with its own lines, and services left 
 	expect(out).toMatch(/10:00:00 GET \/cart 200 +│/);
 	expect(out).not.toContain("checkpoint");
 	expect(out).toMatch(/v +side by side/);
+});
+
+test("side by side, an app's long name wraps in its column and is never cut", () => {
+	const long = "storefront-checkout-worker-service";
+	const apps = [app("shop", "web"), app("shop", long), app("shop", "api")];
+	const out = draw(snap([{ ...main, apps }], [lines(`shop/${long}`, "ready")]), {
+		...initialView("shop"),
+		sideBySide: true,
+	});
+	expect(out).not.toContain("…");
+	expect(out).toMatch(/│ ■ storefront-checkout-worker- +│[^\n]*\n[^\n]*│ {3}service +│/);
+	expect(out).toMatch(/10:00:00 ready/);
 });
 
 test("a removal waiting for its word names the worktree, what goes and what stays, and the one key that goes on", () => {
@@ -456,6 +477,35 @@ test("256 colours and true colour: the palette, which chalk fits to the terminal
 	expect(truecolor).toContain("\u001b[38;2;158;206;106m● ");
 	chalk.level = 2;
 	expect(draw(colourful(), initialView("shop"), 140, 40, "rgb")).toContain("\u001b[38;5;150m● ");
+});
+
+test("256 colours: running, starting, failed and idle each keep a colour, and each app one of its own", () => {
+	chalk.level = 2;
+	const states: Record<string, Partial<Part>> = {
+		api: { state: "failed" },
+		worker: { state: "starting" },
+		mail: { state: "idle" },
+	};
+	const names = ["web", "api", "worker", "admin", "mail", "search"];
+	const apps = names.map((name) => app("shop", name, states[name]));
+	const out = draw(snap([{ ...main, apps }]), initialView("shop"), 160, 40, "rgb");
+	/** In the parts panel, the 256-colour codes of an app's state glyph and of its name. */
+	const colours = (glyph: string, name: string) => {
+		const found = new RegExp(
+			`\u001b\\[38;5;(\\d+)m${glyph} \u001b\\[1m\u001b\\[38;5;(\\d+)m${name} `,
+		).exec(out);
+		expect(found, name).not.toBeNull();
+		return { state: found?.[1], own: found?.[2] };
+	};
+	const running = colours("●", "web").state;
+	const looks = [running, colours("◐", "worker").state, colours("✖", "api").state];
+	const idle = colours("○", "mail").state;
+	expect(new Set([...looks, idle]).size).toBe(4);
+	const glyphs: Record<string, string> = { api: "✖", worker: "◐", mail: "○" };
+	const own = names.map((name) => colours(glyphs[name] ?? "●", name).own);
+	expect(new Set(own).size).toBe(names.length);
+	// An app's own colour is never a state's, so a name never reads as running or failed.
+	for (const code of own) expect(looks).not.toContain(code);
 });
 
 test("which colours: NO_COLOR set to anything turns them off; else as many as the terminal has", () => {

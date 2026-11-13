@@ -1,10 +1,11 @@
 import { kindOf, type Service } from "../catalogue.ts";
 import { loadProject, type Project } from "../config.ts";
 import { BasepadError } from "../internal/exec.ts";
-import { daemonId, layout, type Machine, placeOf } from "../layout.ts";
-import type { DaemonInfo, LogEntry, Supervisor } from "../supervisor.ts";
+import { daemonId, layout, type Machine, namespaceOf, placeOf } from "../layout.ts";
+import type { DaemonInfo, Supervisor } from "../supervisor.ts";
 import { hasChanges, listWorktrees, mainBranch } from "../worktrees.ts";
 import type { EnvironmentView, LogLine, Part, Snapshot } from "./model.ts";
+import { type Running, takeWork } from "./work.ts";
 
 /**
  * Mission control's feed: the one adapter between the view and what runs. It reads environments
@@ -16,11 +17,8 @@ export interface Feed {
 	snapshot(): Snapshot;
 	/** Reads states again now, as after an action, rather than on the next tick. */
 	refresh(): void;
-	/**
-	 * Says a worktree is being added: until the returned function is called, a worktree that
-	 * appears is not shown, as its databases, env files and setup are not done yet.
-	 */
-	adding(): () => void;
+	/** What finished work (a worktree added or removed) has to say since last asked, oldest first. */
+	notices(): string[];
 	close(): void;
 }
 
@@ -35,47 +33,29 @@ const KEEP = 2000;
 
 /**
  * Opens the feed on `main`'s project and its worktrees, as served on `machine` (whose `portFree`
- * is known). Resolves once the first read is done. `changed` is called when there is something new.
+ * is known), with the worktree work in `work` (`startWork`'s folder). Resolves once the first read
+ * is done. `changed` is called when there is something new.
  */
 export async function openFeed(options: {
 	main: Project;
 	machine: Machine;
 	supervisor: Supervisor;
+	work: string;
 	changed(): void;
 }): Promise<Feed> {
 	const { main, machine, supervisor, changed } = options;
-	const logs = new Map<string, LogLine[]>();
 	const arrivals: number[] = [];
 	/** Each worktree's config by folder, read once: a config that does not load, as its reason. */
 	const configs = new Map<string, Project | string>();
 	let environments: EnvironmentView[] = [];
-	let seq = 0;
 	let dirty = false;
-	let following = "";
-	let unfollow = () => {};
 	let closed = false;
-	/** While worktrees are being added, the suffixes of those there before: only they show. */
-	let before: Set<string> | undefined;
-	let additions = 0;
-
-	const take = (entry: LogEntry) => {
-		const lines = logs.get(entry.id) ?? [];
-		lines.push({ seq: seq++, id: entry.id, time: entry.time, text: entry.text });
-		if (lines.length > KEEP * 1.5) lines.splice(0, lines.length - KEEP);
-		logs.set(entry.id, lines);
+	const book = logBook(supervisor.follow, HISTORY, () => {
 		arrivals.push(Date.now());
 		dirty = true;
-	};
-
-	/** Follows every part shown, again from its history whenever the set of parts changes. */
-	const follow = (ids: string[]) => {
-		const key = ids.join(" ");
-		if (key === following || closed) return;
-		following = key;
-		unfollow();
-		logs.clear();
-		unfollow = supervisor.follow(ids, HISTORY, take);
-	};
+	});
+	let running: Running[] = [];
+	const notices: string[] = [];
 
 	const configOf = async (root: string): Promise<Project | string> => {
 		let config = configs.get(root);
@@ -89,6 +69,10 @@ export async function openFeed(options: {
 	};
 
 	const refresh = async () => {
+		// First and alone: what finished is told once, whatever fails after.
+		const work = await takeWork(options.work);
+		running = work.running;
+		notices.push(...work.finished);
 		const [trees, daemons, branch] = await Promise.all([
 			listWorktrees(main),
 			supervisor.daemons(),
@@ -96,7 +80,9 @@ export async function openFeed(options: {
 		]);
 		const byId = new Map(daemons.map((daemon) => [daemon.id, daemon]));
 		const next = [await environmentOf(main, undefined, branch, main.root, byId, machine)];
-		const shown = trees.filter((t) => t.present && (before?.has(t.suffix) ?? true));
+		// A worktree being added shows once it is ready: until then, only those there before it began.
+		const adding = running.flatMap((w) => (w.before === undefined ? [] : [w.before]));
+		const shown = trees.filter((t) => t.present && adding.every((was) => was.includes(t.suffix)));
 		// A worktree removed and made again under its suffix reads its config again.
 		for (const root of configs.keys()) {
 			if (!shown.some((t) => t.root === root)) configs.delete(root);
@@ -105,28 +91,17 @@ export async function openFeed(options: {
 		for (const [i, tree] of shown.entries()) {
 			const changed = changes[i] === undefined ? {} : { changes: changes[i] };
 			const config = await configOf(tree.root);
-			next.push(
-				typeof config === "string"
-					? {
-							namespace: `${main.name}.${tree.suffix}`,
-							label: tree.suffix,
-							...(tree.branch === undefined ? {} : { branch: tree.branch }),
-							dir: tree.root,
-							apps: [],
-							services: [],
-							problem: config,
-							...changed,
-						}
-					: {
-							...(await environmentOf(config, tree.suffix, tree.branch, tree.root, byId, machine)),
-							...changed,
-						},
-			);
+			next.push({
+				...(typeof config === "string"
+					? troubled(main.name, tree.suffix, tree.branch, tree.root, config)
+					: await environmentOf(config, tree.suffix, tree.branch, tree.root, byId, machine)),
+				...changed,
+			});
 		}
 		environments = next;
 		dirty = true;
 		const ids = new Set(next.flatMap((env) => [...env.apps, ...env.services].map((p) => p.id)));
-		follow([...ids].sort());
+		if (!closed) book.follow([...ids].sort());
 	};
 
 	let reading = false;
@@ -151,27 +126,80 @@ export async function openFeed(options: {
 		snapshot() {
 			const since = Date.now() - 1000;
 			while (arrivals.length > 0 && (arrivals[0] as number) < since) arrivals.shift();
-			return { project: main.name, environments, logs, rate: arrivals.length };
+			return {
+				project: main.name,
+				environments,
+				logs: book.logs,
+				rate: arrivals.length,
+				work: running,
+			};
 		},
 		refresh() {
 			void tick();
 		},
-		adding() {
-			if (additions++ === 0) {
-				before = new Set(environments.slice(1).map((env) => env.label));
-			}
-			let released = false;
-			return () => {
-				if (released) return;
-				released = true;
-				if (--additions === 0) before = undefined;
-				void tick();
-			};
+		notices() {
+			return notices.splice(0);
 		},
 		close() {
 			closed = true;
 			for (const timer of timers) clearInterval(timer);
-			unfollow();
+			book.close();
+		},
+	};
+}
+
+/**
+ * Every shown part's output, followed live: the scrollback, by daemon id. `follow` sets the parts
+ * shown. A part shown for the first time is followed from its last `history` lines; a part already
+ * followed keeps its lines and their arrival numbers, so a paused stream stays where it is. A part
+ * no longer shown loses its lines. `read` is told of each line.
+ */
+export function logBook(
+	follow: Supervisor["follow"],
+	history: number,
+	read: () => void,
+): {
+	logs: ReadonlyMap<string, readonly LogLine[]>;
+	follow(ids: readonly string[]): void;
+	close(): void;
+} {
+	const logs = new Map<string, LogLine[]>();
+	/** One supervisor follower: the ids it was started for that are still its own. */
+	interface Follower {
+		ids: Set<string>;
+		stop(): void;
+	}
+	/** Which follower each shown id's lines are taken from. */
+	const owner = new Map<string, Follower>();
+	let seq = 0;
+	return {
+		logs,
+		follow(ids) {
+			const shown = new Set(ids);
+			for (const [id, follower] of owner) {
+				if (shown.has(id)) continue;
+				owner.delete(id);
+				logs.delete(id);
+				follower.ids.delete(id);
+				if (follower.ids.size === 0) follower.stop();
+			}
+			const added = ids.filter((id) => !owner.has(id));
+			if (added.length === 0) return;
+			const follower: Follower = { ids: new Set(added), stop: () => {} };
+			for (const id of added) owner.set(id, follower);
+			follower.stop = follow(added, history, (entry) => {
+				// A part shown again has a follower of its own; an old one's copy is not taken.
+				if (owner.get(entry.id) !== follower) return;
+				const lines = logs.get(entry.id) ?? [];
+				lines.push({ seq: seq++, id: entry.id, time: entry.time, text: entry.text });
+				if (lines.length > KEEP * 1.5) lines.splice(0, lines.length - KEEP);
+				logs.set(entry.id, lines);
+				read();
+			});
+		},
+		close() {
+			for (const follower of new Set(owner.values())) follower.stop();
+			owner.clear();
 		},
 	};
 }
@@ -185,19 +213,18 @@ async function environmentOf(
 	daemons: Map<string, DaemonInfo>,
 	machine: Machine,
 ): Promise<EnvironmentView> {
-	const base = {
-		label: suffix ?? "main",
-		...(branch === undefined ? {} : { branch }),
-		dir,
-	};
 	let lay: ReturnType<typeof layout>;
 	try {
 		lay = layout(project, machine, suffix);
 	} catch (error) {
 		if (!(error instanceof BasepadError)) throw error;
-		const namespace = suffix === undefined ? project.name : `${project.name}.${suffix}`;
-		return { namespace, ...base, apps: [], services: [], problem: error.message };
+		return troubled(project.name, suffix, branch, dir, error.message);
 	}
+	const base = {
+		label: suffix ?? "main",
+		...(branch === undefined ? {} : { branch }),
+		dir,
+	};
 	const apps = Object.entries(lay.apps).map(([key, app]): Part => {
 		const id = daemonId(lay.namespace, key);
 		const daemon = daemons.get(id);
@@ -228,4 +255,23 @@ async function environmentOf(
 		});
 	}
 	return { namespace: lay.namespace, ...base, apps, services };
+}
+
+/** An environment whose parts cannot be shown, with why: a config that does not load, or names past their limits. */
+function troubled(
+	name: string,
+	suffix: string | undefined,
+	branch: string | undefined,
+	dir: string,
+	problem: string,
+): EnvironmentView {
+	return {
+		namespace: namespaceOf(name, suffix),
+		label: suffix ?? "main",
+		...(branch === undefined ? {} : { branch }),
+		dir,
+		apps: [],
+		services: [],
+		problem,
+	};
 }

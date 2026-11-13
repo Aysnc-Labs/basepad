@@ -216,6 +216,12 @@ export function daemonId(namespace: string, name: string): string {
 	return `${namespace}/${name}`;
 }
 
+/** `daemonId` undone: a daemon's namespace and name from its id. */
+export function ofDaemon(id: string): { namespace: string; name: string } {
+	const slash = id.lastIndexOf("/");
+	return { namespace: id.slice(0, slash), name: id.slice(slash + 1) };
+}
+
 /** The suffix of `namespace` when it is a worktree's of the project `name`; else none. */
 export function suffixOf(name: string, namespace: string): string | undefined {
 	return namespace.startsWith(`${name}.`) ? namespace.slice(name.length + 1) : undefined;
@@ -245,6 +251,14 @@ export function nextSuffix(prefix: string, taken: Iterable<string>): string {
 /** The folder in basepad's home holding a project's services, one folder per service key. */
 export function servicesHome(machine: Pick<Machine, "home">, name: string): string {
 	return join(machine.home, "services", name);
+}
+
+/**
+ * The folder in basepad's home holding a project's worktree additions and removals started from
+ * mission control, while they run and until a view reads how they ended.
+ */
+export function workHome(machine: Pick<Machine, "home">, name: string): string {
+	return join(machine.home, "work", name);
 }
 
 /** basepad's own pitchfork's folders in the home, and the CA its proxy signs with. */

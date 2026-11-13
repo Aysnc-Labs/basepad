@@ -2,17 +2,19 @@ import chalk from "chalk";
 import { type Key, render, useApp, useInput, useWindowSize } from "ink";
 import { createElement as h, useEffect, useRef, useState } from "react";
 import type { Project } from "../config.ts";
-import type { Machine } from "../layout.ts";
+import { type Machine, workHome } from "../layout.ts";
 import type { Supervisor } from "../supervisor.ts";
 import { desktopHands, type Hands, perform } from "./act.ts";
 import { type Feed, openFeed } from "./feed.ts";
 import { type Colors, colorsFor, frame, pageOf } from "./frame.ts";
-import { type Intent, initialView, reduce, type Work } from "./model.ts";
+import { type Intent, initialView, reduce } from "./model.ts";
+import { startWork } from "./work.ts";
 
 /**
  * Mission control on the developer's terminal: full screen, redrawn as the feed changes, keys
  * through the reducer. The one adapter to terminal input and output. Resolves once the developer
- * closes it, with the terminal restored; it only ever read, so everything keeps running.
+ * closes it, with the terminal restored; it only ever read, so everything keeps running, a
+ * worktree being added or removed too.
  */
 export async function missionControl(options: {
 	main: Project;
@@ -20,20 +22,39 @@ export async function missionControl(options: {
 	supervisor: Supervisor;
 	/** The namespace of the environment to open on: the one `up` ran in. */
 	selected: string;
-	/** `basepad worktree add` and `rm`, run from main. */
-	worktrees: Hands["worktrees"];
+	/** The `basepad` command, as argv: what adds and removes a worktree, in a process of its own. */
+	basepad: string[];
 }): Promise<void> {
+	const { main, machine, basepad } = options;
 	const listeners = new Set<() => void>();
+	const work = workHome(machine, main.name);
 	const feed = await openFeed({
 		...options,
+		work,
 		changed: () => {
 			for (const listener of listeners) listener();
 		},
 	});
+	// From main, as `basepad worktree add` and `rm` there.
+	const worktrees: Hands["worktrees"] = (order) =>
+		startWork({
+			dir: work,
+			command: basepad,
+			cwd: main.root,
+			order,
+			...(order.kind === "add"
+				? {
+						before: feed
+							.snapshot()
+							.environments.slice(1)
+							.map((env) => env.label),
+					}
+				: {}),
+		});
 	const app = render(
 		h(App, {
 			feed,
-			hands: desktopHands(options.supervisor, options.worktrees, process.stdout),
+			hands: desktopHands(options.supervisor, worktrees, process.stdout),
 			listeners,
 			selected: options.selected,
 			color: colorsFor(process.env.NO_COLOR, chalk.level),
@@ -70,7 +91,12 @@ function App(props: {
 	latest.current = view;
 	const [, setTick] = useState(0);
 	useEffect(() => {
-		const repaint = () => setTick((n) => n + 1);
+		const repaint = () => {
+			// How a worktree's addition or removal ended, even one started before the view opened.
+			const told = feed.notices();
+			if (told.length > 0) setView((then) => ({ ...then, notice: told.join("  ") }));
+			setTick((n) => n + 1);
+		};
 		listeners.add(repaint);
 		// The clock.
 		const timer = setInterval(repaint, 1000);
@@ -78,36 +104,11 @@ function App(props: {
 			listeners.delete(repaint);
 			clearInterval(timer);
 		};
-	}, [listeners]);
-	// Worktrees being added or removed, by a number of their own: each with its command's last line.
-	const jobs = useRef(new Map<number, Work>());
-	const jobCount = useRef(0);
-	const work = [...jobs.current.values()];
-	const snapshot = { ...feed.snapshot(), work };
+	}, [listeners, feed]);
+	const snapshot = feed.snapshot();
 	/** Does an intent in the background, so the view stays live; its outcome shows when known. */
 	const act = (intent: Intent) => {
-		if (intent.kind !== "add" && intent.kind !== "remove") {
-			perform(intent, hands).then((notice) => {
-				feed.refresh();
-				setView((then) => ({ ...then, notice }));
-			});
-			return;
-		}
-		const item: Work =
-			intent.kind === "add"
-				? { kind: "add", title: "Adding a worktree" }
-				: { kind: "remove", title: `Removing ${intent.suffix}`, namespace: intent.namespace };
-		// A worktree being added shows once it is made, not while its databases and setup are.
-		const release = intent.kind === "add" ? feed.adding() : () => {};
-		const id = jobCount.current++;
-		jobs.current.set(id, item);
-		setTick((n) => n + 1);
-		perform(intent, hands, (line) => {
-			jobs.current.set(id, { ...item, line });
-			setTick((n) => n + 1);
-		}).then((notice) => {
-			release();
-			jobs.current.delete(id);
+		perform(intent, hands).then((notice) => {
 			feed.refresh();
 			setView((then) => ({ ...then, notice }));
 		});

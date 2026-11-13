@@ -160,18 +160,11 @@ test("d on a worktree being removed says so and asks nothing", () => {
 	expect(step.view.notice).toBe("shop-1 is being removed.");
 });
 
-test("while a worktree is added or removed, q waits for it; ctrl-c twice closes anyway", () => {
+test("while a worktree is added or removed, q and ctrl-c close at once: the work goes on without the view", () => {
 	const busy: Snapshot = {
 		...snapshot,
 		work: [{ kind: "remove", title: "Removing shop-1", namespace: "shop.shop-1" }],
 	};
-	const q = press(["q"], initialView("shop"), busy);
-	expect(q.view.quit).toBe(false);
-	expect(q.view.notice).toBe(
-		"Removing shop-1 is under way: closing now would stop it partway. q closes once it is done; ctrl-c again closes now.",
-	);
-	expect(press(["ctrl-c"], initialView("shop"), busy).view.quit).toBe(false);
-	expect(press(["ctrl-c", "ctrl-c"], initialView("shop"), busy).view.quit).toBe(true);
-	expect(press(["q", "ctrl-c"], initialView("shop"), busy).view.quit).toBe(true);
-	expect(press(["ctrl-c", "j", "ctrl-c"], initialView("shop"), busy).view.quit).toBe(false);
+	expect(press(["q"], initialView("shop"), busy).view.quit).toBe(true);
+	expect(press(["ctrl-c"], initialView("shop"), busy).view.quit).toBe(true);
 });

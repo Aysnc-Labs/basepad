@@ -175,7 +175,7 @@ const COLORS: Palette = {
 	bad: "#f7768e",
 	accent: "#7aa2f7",
 	keyBg: "#283457",
-	parts: ["#7aa2f7", "#bb9af7", "#7dcfff", "#ff9e64", "#c3a6ff", "#73daca"],
+	parts: ["#7aa2f7", "#bb9af7", "#7dcfff", "#ff9e64", "#9d7cd8", "#73daca"],
 };
 
 /**
@@ -391,13 +391,19 @@ function tone(text: string, c: Palette): string | undefined {
 const clean = (text: string) =>
 	text.replace(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)? \w+ (\[\d+\] )?/, "");
 
-/** A failed part's last line that names its error. */
+/** How far back a failed part's output is searched for the line that names its error. */
+const LAST_OUTPUT = 20;
+
+/**
+ * A failed part's last output: of its last lines, the newest that names an error, else its last
+ * line that is not blank, whatever it says. Empty only when it printed nothing.
+ */
 function lastError(lines: readonly LogLine[] = []): string {
-	for (let i = lines.length - 1; i >= 0; i--) {
-		const text = (lines[i] as LogLine).text;
-		if (/Error\b|ERROR|FATAL/.test(text)) return text.trim();
-	}
-	return "";
+	const recent = lines
+		.slice(-LAST_OUTPUT)
+		.map((l) => l.text.trim())
+		.filter((text) => text !== "");
+	return recent.findLast((text) => /Error\b|ERROR|FATAL/.test(text)) ?? recent.at(-1) ?? "";
 }
 
 /** The newest `n` lines of the given parts, merged in arrival order. */
@@ -805,7 +811,7 @@ function marked(text: string, query: string, color: string | undefined): Run[] {
 const MIN_COLUMN = 28;
 
 /**
- * The environment's apps' logs in columns, a row at a time: each app's name, then its newest lines
+ * The environment's apps' logs in columns, a row at a time: each app's name, wrapped, then its newest lines
  * up to `last` (the newest shown, when paused). A search's match is marked in its column.
  */
 function columns(
@@ -825,11 +831,15 @@ function columns(
 	const bound = last ?? Number.POSITIVE_INFINITY;
 	const cells = apps.map((app) => {
 		const color = partColor(env, app.id, c);
+		// The name wraps in its column rather than be cut.
+		const title = wrap(app.name, Math.max(1, each - 2)).map((piece, i) =>
+			cut([run(i === 0 ? "■ " : "  ", color), run(piece, color, { bold: true })], each),
+		);
 		const lines = (snapshot.logs.get(app.id) ?? [])
 			.filter((l) => l.seq <= bound)
-			.slice(-(height - 1));
+			.slice(-Math.max(0, height - title.length));
 		return [
-			cut([run("■ ", color), run(app.name, color, { bold: true })], each),
+			...title,
 			...lines.map((l) =>
 				cut(
 					[

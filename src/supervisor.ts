@@ -8,7 +8,7 @@ import { connect } from "node:tls";
 import { z } from "zod";
 import { interactive, must, shellQuote } from "./internal/exec.ts";
 import { answers } from "./internal/ports.ts";
-import { daemonId, type Machine, supervisorPaths } from "./layout.ts";
+import { daemonId, type Machine, ofDaemon, supervisorPaths } from "./layout.ts";
 import { install } from "./tools.ts";
 import { PITCHFORK_VERSION } from "./versions.ts";
 
@@ -393,7 +393,7 @@ export async function openSupervisor(
 					const port = daemon.active_port ?? daemon.port?.[0];
 					return {
 						id: daemon.id,
-						namespace: daemon.namespace ?? daemon.id.slice(0, daemon.id.lastIndexOf("/")),
+						namespace: daemon.namespace ?? ofDaemon(daemon.id).namespace,
 						name: daemon.name,
 						state: state === "stopped" && !daemon.disabled ? "idle" : state,
 						...(daemon.pid == null ? {} : { pid: daemon.pid }),
@@ -547,21 +547,21 @@ async function probeStandardPort(ca: string): Promise<StandardPort> {
  * the `[<id>]`. `stamp` sorts lines by time.
  */
 function parseLogLine(text: string, ids: string[]): (LogEntry & { stamp: string }) | undefined {
-	const tagged = /^(\d\d-\d\d) (\d\d:\d\d:\d\d) \[([^\]]+)\] ?(.*)$/.exec(text);
-	if (tagged !== null && ids.includes(tagged[3] as string)) {
-		const [, day, time, id, message] = tagged as unknown as string[];
-		return {
-			id: id as string,
-			time: time as string,
-			text: message as string,
-			stamp: `${day} ${time}`,
-		};
-	}
+	const tagged =
+		/^(?<day>\d\d-\d\d) (?<time>\d\d:\d\d:\d\d) \[(?<id>[^\]]+)\] ?(?<message>.*)$/.exec(
+			text,
+		)?.groups;
+	const plain = /^(?<day>\d\d-\d\d) (?<time>\d\d:\d\d:\d\d) ?(?<message>.*)$/.exec(text)?.groups;
 	const [only] = ids;
-	const plain = /^(\d\d-\d\d) (\d\d:\d\d:\d\d) ?(.*)$/.exec(text);
-	if (plain === null || only === undefined || ids.length > 1) return undefined;
-	const [, day, time, message] = plain as unknown as string[];
-	return { id: only, time: time as string, text: message as string, stamp: `${day} ${time}` };
+	const [groups, id] =
+		tagged?.id !== undefined && ids.includes(tagged.id)
+			? [tagged, tagged.id]
+			: ids.length === 1
+				? [plain, only]
+				: [];
+	if (groups === undefined || id === undefined) return undefined;
+	const { day = "", time = "", message = "" } = groups;
+	return { id, time, text: message, stamp: `${day} ${time}` };
 }
 
 /** One entry of `pitchfork list --json`; only what basepad reads. */
