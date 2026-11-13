@@ -18,7 +18,8 @@ A lane is a git worktree of its own on its own branch. Its tests must never touc
 
 - `test/sandbox.ts` gives every test file its own `BASEPAD_HOME`, `MISE_STATE_DIR`, `MISE_CONFIG_DIR` and `PITCHFORK_{STATE,CONFIG,LOGS}_DIR` under a fresh temp dir. Make new CLI tests through `sandbox()` and `box.project()`.
 - Tool installs go to `MISE_DATA_DIR`, which the sandbox leaves alone. Export `MISE_DATA_DIR` and `MISE_CACHE_DIR` to a lane temp dir before `npm test` to keep installs (Node 18 and 24 for the launcher test) out of the user's mise.
-- Ports: a sandbox picks free ports itself (`BASEPAD_PROXY_PORT` included); hard-coded ports collide between lanes.
+- `test/postgres-17.test.ts` uninstalls and reinstalls `postgres@17`; it runs only when `CI` or `MISE_DATA_DIR` is set, so a developer's own install is left alone.
+- Ports: a sandbox picks free ports itself (`BASEPAD_PROXY_PORT` included); hard-coded ports collide between lanes. A service's port comes from the project's name, so give each test file's project its own name.
 - Processes: a sandbox's `dispose()` stops basepad's supervisor and its apps. A test that runs `up` must create its sandbox through `sandbox()` and dispose it, or apps outlive the run.
 - Running basepad by hand: `node dist/launcher.js <command>` with `BASEPAD_HOME` set to a temp dir and `BASEPAD_PROXY_PORT` to a free port. Stop its supervisor afterwards with `PITCHFORK_STATE_DIR=$BASEPAD_HOME/pitchfork/state mise exec pitchfork@<version> -- pitchfork supervisor stop`.
 
