@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, type Result, type Sandbox, sandbox } from "./sandbox.ts";
@@ -74,4 +75,100 @@ test("a client connects with the split values, and the server needs no password"
 	);
 	expect(out.stderr).toBe("");
 	expect(out.stdout.trim()).toBe("postgres|pg_shop_db");
+});
+
+test("pgvector and Postgres's standard extensions can be created; basepad enables none", async () => {
+	expect(await sql(shop, "select count(*) from pg_extension where extname <> 'plpgsql'")).toBe("0");
+	await sql(shop, "create extension vector; create extension pg_trgm; create extension citext");
+	expect(await sql(shop, "select '[1,2]'::vector <-> '[1,5]'::vector")).toBe("3");
+});
+
+test("status lists the service with its state and address", async () => {
+	const out = await box.basepad(shop, "status");
+	const { DB_PORT } = await env(shop, "backend/.env");
+	expect(out.code).toBe(0);
+	expect(out.stdout).toMatch(
+		new RegExp(`^db +postgresql://postgres@127\\.0\\.0\\.1:${DB_PORT}/pg_shop_db +running$`, "m"),
+	);
+});
+
+test("rows written before down are there after up, and down stops the server", async () => {
+	await sql(shop, "create table notes (body text); insert into notes values ('kept')");
+	const down = await box.basepad(shop, "down");
+	expect(down.code).toBe(0);
+	const url = (await env(shop, ".env.local")).DATABASE_URL as string;
+	expect((await box.psql([url], "select 1")).code).not.toBe(0);
+	expect((await box.basepad(shop, "status")).stdout).toMatch(/^db +\S+ +stopped$/m);
+	const up = await box.basepad(shop, "up");
+	expect(up.stderr).toBe("");
+	expect(await sql(shop, "select body from notes")).toBe("kept");
+});
+
+test("a second checkout under the same name is refused, naming the owner and --claim", async () => {
+	const copy = await box.project("copy", { "basepad.config.ts": config });
+	const out = await box.basepad(copy, "up");
+	expect(out.code).not.toBe(0);
+	expect(out.stderr).toContain(shop);
+	expect(out.stderr).toContain("basepad up --claim");
+	expect(await sql(shop, "select body from notes")).toBe("kept");
+});
+
+test("the database carries its owner checkout's path", async () => {
+	expect(
+		await sql(
+			shop,
+			"select shobj_description(oid, 'pg_database') from pg_database where datname = current_database()",
+		),
+	).toBe(shop);
+});
+
+const OWNER =
+	"select shobj_description(oid, 'pg_database') from pg_database where datname = current_database()";
+
+test("a database stamped by another folder is refused; --claim re-stamps it", async () => {
+	await sql(shop, "comment on database pg_shop_db is '/elsewhere/shop'");
+	const out = await box.basepad(shop, "up");
+	expect(out.code).not.toBe(0);
+	expect(out.stderr).toContain("/elsewhere/shop");
+	expect(out.stderr).toContain("basepad up --claim");
+	expect((await box.basepad(shop, "up", "--claim")).code).toBe(0);
+	expect(await sql(shop, OWNER)).toBe(shop);
+});
+
+test("an unstamped database is stamped by up", async () => {
+	await sql(shop, "comment on database pg_shop_db is null");
+	const out = await box.basepad(shop, "up");
+	expect(out.stderr).toBe("");
+	expect(await sql(shop, OWNER)).toBe(shop);
+});
+
+test("up --claim makes the second checkout the owner, and the first is then refused", async () => {
+	const copy = await box.project("claimer", { "basepad.config.ts": config });
+	const claimed = await box.basepad(copy, "up", "--claim");
+	expect(claimed.stderr).toBe("");
+	expect(claimed.code).toBe(0);
+	expect(await sql(copy, "select body from notes")).toBe("kept");
+	const again = await box.basepad(copy, "up");
+	expect(again.code).toBe(0);
+	const first = await box.basepad(shop, "up");
+	expect(first.code).not.toBe(0);
+	expect(first.stderr).toContain(copy);
+	expect((await box.basepad(shop, "up", "--claim")).code).toBe(0);
+});
+
+test("when the port is taken, the next free one is used and the env files follow", async () => {
+	const before = Number((await env(shop, "backend/.env")).DB_PORT);
+	await box.basepad(shop, "down");
+	const squatter: Server = createServer();
+	await new Promise<void>((resolve) => squatter.listen(before, "127.0.0.1", resolve));
+	try {
+		const up = await box.basepad(shop, "up");
+		expect(up.stderr).toBe("");
+		const after = Number((await env(shop, "backend/.env")).DB_PORT);
+		expect(after).not.toBe(before);
+		expect((await env(shop, ".env.local")).DATABASE_URL).toContain(`:${after}/`);
+		expect(await sql(shop, "select body from notes")).toBe("kept");
+	} finally {
+		await new Promise((resolve) => squatter.close(resolve));
+	}
 });

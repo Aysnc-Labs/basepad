@@ -40,9 +40,12 @@ export interface Environment {
 export interface Supervisor {
 	/**
 	 * Applies basepad's supervisor settings, writes the environment's definitions and registers them
-	 * against its folder. Idempotent.
+	 * against its folder. Idempotent. A namespace registered from another folder is taken over: its
+	 * running daemons stop first.
 	 */
 	register(environment: Environment): Promise<void>;
+	/** The folder a namespace is registered against, if it is. */
+	owner(namespace: string): Promise<string | undefined>;
 	/**
 	 * Starts the named daemons that are not running, then waits up to `waitMs` for each to listen
 	 * (when it has a port) or fail, and returns every daemon's state in the namespace.
@@ -120,6 +123,18 @@ export async function openSupervisor(machine: Machine): Promise<Supervisor> {
 		return out;
 	};
 
+	const stopAll = async (namespace: string) => {
+		const running = (await list(namespace)).filter((d) => LIVE.has(d.status));
+		if (running.length > 0) await run("stop", ...running.map((d) => d.id));
+	};
+
+	const registeredDir = async (namespace: string): Promise<string | undefined> => {
+		const entries = z
+			.array(z.looseObject({ namespace: z.string(), dir: z.string() }))
+			.parse(JSON.parse(await run("config", "list", "--json")));
+		return entries.find((entry) => entry.namespace === namespace)?.dir;
+	};
+
 	return {
 		async register({ namespace, dir, definitions, daemons }) {
 			await applySettings();
@@ -127,6 +142,15 @@ export async function openSupervisor(machine: Machine): Promise<Supervisor> {
 			if ((await readFile(definitions, "utf8").catch(() => "")) !== text) {
 				await mkdir(dirname(definitions), { recursive: true });
 				await writeFile(definitions, text);
+			}
+			const owner = await registeredDir(namespace);
+			if (owner !== undefined && owner !== dir) {
+				// pitchfork keeps a namespace's folder even after its file is detached, and refuses
+				// another, so the namespace's entry is dropped from its registry by hand.
+				await stopAll(namespace);
+				await run("config", "remove", definitions);
+				const file = join(dirs.PITCHFORK_CONFIG_DIR, "config.toml");
+				await writeFile(file, withoutNamespace(await readFile(file, "utf8"), namespace));
 			}
 			await run(
 				"config",
@@ -140,6 +164,8 @@ export async function openSupervisor(machine: Machine): Promise<Supervisor> {
 				namespace,
 			);
 		},
+
+		owner: registeredDir,
 
 		async start(namespace, names, waitMs) {
 			const listed = await list(namespace);
@@ -156,10 +182,7 @@ export async function openSupervisor(machine: Machine): Promise<Supervisor> {
 			}
 		},
 
-		async stop(namespace) {
-			const running = (await list(namespace)).filter((d) => LIVE.has(d.status));
-			if (running.length > 0) await run("stop", ...running.map((d) => d.id));
-		},
+		stop: stopAll,
 
 		status: states,
 
@@ -195,6 +218,19 @@ function supervisorEnv(dirs: Record<string, string>): NodeJS.ProcessEnv {
 	if (env.BASEPAD_PATH) env.PATH = env.BASEPAD_PATH;
 	delete env.BASEPAD_PATH;
 	return { ...env, ...dirs };
+}
+
+/** pitchfork's user config without the `[namespaces.<namespace>]` table. */
+function withoutNamespace(text: string, namespace: string): string {
+	const headers = new Set([`[namespaces.${namespace}]`, `[namespaces."${namespace}"]`]);
+	const out: string[] = [];
+	let skipping = false;
+	for (const line of text.split("\n")) {
+		const trimmed = line.trim();
+		if (trimmed.startsWith("[")) skipping = headers.has(trimmed);
+		if (!skipping) out.push(line);
+	}
+	return out.join("\n");
 }
 
 /** One entry of `pitchfork list --json`; only what basepad reads. */
