@@ -38,6 +38,8 @@ export interface Sandbox {
 	project(name: string, files?: Record<string, string>): Promise<string>;
 	/** Runs the built `basepad` bin in `cwd`, as a developer would. */
 	basepad(cwd: string, ...args: string[]): Promise<Result>;
+	/** Runs a program in the sandbox's root with its environment. */
+	run(file: string, args: string[]): Promise<Result>;
 	/** Runs `psql` from mise's Postgres 18 with `args` (a URL, or `-h`, `-p` and the rest). */
 	psql(args: string[], sql: string): Promise<Result>;
 	/** `basepad` with extra environment variables, or under another program (an older Node). */
@@ -104,6 +106,7 @@ export async function sandbox(): Promise<Sandbox> {
 			return dir;
 		},
 		basepad: (cwd, ...args) => exec(process.execPath, [cli, ...args], cwd),
+		run: (file, args) => exec(file, args, root),
 		psql: (args, sql) =>
 			exec("mise", ["exec", "postgres@18", "--", "psql", ...args, "-tAX", "-c", sql], root, {
 				PGCONNECT_TIMEOUT: "5",
