@@ -69,6 +69,8 @@ export interface Layout {
 	 * service runs in main's, on one server per service for all of a project's environments.
 	 */
 	namespace: string;
+	/** A worktree's suffix; absent in main. */
+	suffix?: string;
 }
 
 /** One service's place in the environment, with the names its kind derives. */
@@ -164,6 +166,7 @@ export function layout(
 		services,
 		definitions: join(machine.home, "environments", `${namespace}.toml`),
 		namespace,
+		...(suffix === undefined ? {} : { suffix }),
 	};
 }
 

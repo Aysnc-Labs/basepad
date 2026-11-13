@@ -25,15 +25,21 @@ async function main(argv: string[]): Promise<number> {
 		process.stdout.write(topHelp());
 		return 0;
 	}
-	const command = COMMANDS[first];
+	// A command is one word, or two for a group's (`worktree add`).
+	const pair = rest[0] === undefined ? undefined : `${first} ${rest[0]}`;
+	const name = pair !== undefined && pair in COMMANDS ? pair : first;
+	const command = COMMANDS[name];
 	if (!command) {
+		const group = Object.keys(COMMANDS).some((key) => key.startsWith(`${first} `));
+		const typed = group ? (pair ?? first) : first;
 		throw new BasepadError(
-			`Unknown command \`${first}\`. The nearest is \`${nearest(first, Object.keys(COMMANDS))}\`; run \`basepad --help\` for every command.`,
+			`Unknown command \`${typed}\`. The nearest is \`${nearest(typed, Object.keys(COMMANDS))}\`; run \`basepad --help\` for every command.`,
 		);
 	}
-	const flags = parseFlags(rest, { ...command.flags, ...HELP }, `basepad ${first}`);
+	const args = name === pair ? rest.slice(1) : rest;
+	const flags = parseFlags(args, { ...command.flags, ...HELP }, `basepad ${name}`);
 	if (flags.help) {
-		process.stdout.write(commandHelp(first, command));
+		process.stdout.write(commandHelp(name, command));
 		return 0;
 	}
 	await command.run({ cwd: process.cwd(), flags, print: (line) => console.log(line) });

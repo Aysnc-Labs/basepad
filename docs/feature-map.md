@@ -11,7 +11,9 @@ A feature is anything a user starts from: an import, a config key, a command or 
 
 ```mermaid
 flowchart LR
-  CLI["basepad (launcher, cli)"] --> Commands["commands: init, up, down, status, setup"]
+  CLI["basepad (launcher, cli)"] --> Commands["commands: init, up, down, status, setup, worktree add"]
+  Commands --> Worktrees["worktrees"]
+  Worktrees -- "git" --> Git["git"]
   Commands --> Config["config: basepad.config.ts"]
   Commands --> Layout["layout (pure)"]
   Layout --> Catalogue
@@ -54,6 +56,12 @@ Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.lo
 Entry: `basepad up [-d] [--claim]`, `basepad down`, `basepad status`
 Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md)
+
+### `basepad worktree add`
+
+Purpose: makes a worktree of main: a git worktree named `<prefix>-<n>` beside the project, its own databases (copied from main's, empty or shared), domains `<app>.<suffix>.<name>.localhost` and env files from main's. `up`, `down` and `status` in its folder act on it. Worktrees are found from git; nothing is listed.
+Entry: `basepad worktree add [--json]`, `worktrees` in the config, `postgres({ worktree })`
+Paths: src/worktrees.ts, src/commands.ts, src/layout.ts, src/catalogue/postgres.ts
 
 ### `basepad setup`
 

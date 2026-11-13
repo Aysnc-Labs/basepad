@@ -132,8 +132,9 @@ export default defineConfig({
 | `services` | no       | The services basepad provides, by key. The one kind is Postgres: `postgres()`, or `postgres({ version: 17 })`. 18 is the default. |
 | `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config.              |
 | `env`      | no       | A function from every service's and app's outputs to the env files to write: each file's path, relative to the config, to its keys.       |
+| `worktrees` | no      | How [worktrees](#worktrees) are made: `prefix` (default `worktree`) names them `<prefix>-<n>`; `dir`, relative to the config, is where they are checked out (default `<repository>/../<name>.worktrees`). |
 
-Keys of `services` and `apps` are lowercase DNS labels, and one key can't be both. A name that would make a domain label or a database name longer than 63 characters is rejected with the reason; basepad never shortens one.
+Keys of `services` and `apps` are lowercase DNS labels, and one key can't be both. A name that would make a domain label or a database name longer than 63 characters is rejected with the reason, counting a worktree's names (up to `<prefix>-999`); basepad never shortens one.
 
 `defineConfig` types the file, so your editor completes keys, and `env` sees only the outputs the config declares. An invalid config fails with the file and the key at fault.
 
@@ -177,6 +178,24 @@ basepad sets exactly the keys `env` returns, in the files it names:
 - Postgres's standard extensions and pgvector are there for `CREATE EXTENSION`. basepad enables none; see [Extensions](#extensions).
 - Data from another Postgres major version is refused, never converted. To change `version`, dump the database first.
 
+### Worktrees
+
+A worktree is a second environment of the project, for working on another branch beside main. In main, run:
+
+```sh
+npx basepad worktree add          # prints the table and where it is
+npx basepad worktree add --json   # {"name":"worktree-1","path":"/…/shop.worktrees/worktree-1"}
+```
+
+- It is a git worktree, named `worktree-1`, `worktree-2` and so on: the lowest number no git worktree, branch or folder already has. It is checked out on a new branch of the same name from main's `HEAD`, beside the repository in `../<name>.worktrees`, so main's watchers never see it.
+- Each Postgres service gets a database `<name>_<key>_<suffix>` (`shop_db_worktree_1`) on main's server, holding a copy of main's data. `postgres({ worktree: "empty" })` gives an empty one instead, and `postgres({ worktree: "shared" })` uses main's own database.
+- Its apps answer at `https://<app>.<suffix>.<name>.localhost`, beside main's.
+- Each env file `env` names starts as a copy of main's, secrets included, then basepad sets its keys for the worktree. A file the worktree already has is kept.
+- `worktree add` starts no app. `basepad up`, `down` and `status` in the worktree's folder act on it, with the config in that folder. A worktree's services are main's servers, so `up` there starts main's services too, and `down` there stops only the worktree's apps.
+- The copy needs no client connected to main's database.
+
+basepad keeps no list of worktrees: it asks git which exist.
+
 ### The local file
 
 `basepad.config.local.ts`, beside the config, adjusts it for your machine only; `basepad init` adds it to `.gitignore`. When it exists, basepad loads it after the config. Its default export is a function that gets the project's config and returns the changed one:
@@ -202,6 +221,7 @@ Run them anywhere in the project, as `npx basepad <command>`. `basepad --help` l
 | `basepad up`     | Installs what it needs through mise, starts the services, creates their databases, sets the env files' keys, starts the apps and prints the tables above.                              | Any other file in the project, any other line of an env file, your own pitchfork. |
 | `basepad down`   | Stops the project's apps and services.                                                                                                                                                 | Data and env files: it deletes nothing.                                           |
 | `basepad status` | Nothing. Prints each app with its URL and each service with its address, and their state: `running`, `starting`, `failed` or `stopped`.                                                | Anything: it starts nothing.                                                      |
+| `basepad worktree add` | Checks out a git worktree beside the project, creates its databases from main's and writes its env files from main's. Starts main's services. | Main's data and env files, apart from what `up` in main would set. It starts no app. |
 | `basepad setup`  | The machine, once: trusts basepad's certificate authority and makes URLs port-free. See [below](#port-free-urls-basepad-setup).                                                        | Any project. A pitchfork setup of your own: it refuses rather than overwrite it.  |
 
 More on `up`:

@@ -168,8 +168,22 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		);
 		const sql = (text: string) => query(pg, port, text);
 		const db = place.database;
+		const outputs = {
+			url: `postgresql://${USER}:${PASSWORD}@${HOST}:${port}/${db}`,
+			host: HOST,
+			port,
+			user: USER,
+			password: PASSWORD,
+			database: db,
+		};
+		// A shared worktree database is main's, which main provisions and stamps.
+		if (place.suffix !== undefined && service.worktree === "shared") return outputs;
 		const exists = (await sql(`select 1 from pg_database where datname = ${literal(db)}`)) === "1";
-		if (!exists) await sql(`create database ${identifier(db)}`);
+		if (!exists && place.suffix !== undefined && service.worktree === "copy") {
+			await copyDatabase(sql, place.main, db);
+		} else if (!exists) {
+			await sql(`create database ${identifier(db)}`);
+		}
 		// Creating and stamping are not atomic: an unstamped database is stamped by whoever comes next.
 		const stamp = () =>
 			sql(
@@ -188,14 +202,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 				throw new BasepadError(`Could not mark \`${db}\` as belonging to ${place.owner}.`);
 			}
 		}
-		return {
-			url: `postgresql://${USER}:${PASSWORD}@${HOST}:${port}/${db}`,
-			host: HOST,
-			port,
-			user: USER,
-			password: PASSWORD,
-			database: db,
-		};
+		return outputs;
 	},
 
 	async address(_service, place) {
@@ -240,6 +247,19 @@ async function installPostgres(version: PostgresVersion, home: string): Promise<
 	}
 	await writeFile(marker, "");
 	return pg;
+}
+
+/**
+ * Makes `to` a copy of `from`, rows, schema and extensions. A copy has no comment, so it carries no
+ * owner's stamp. The one way basepad copies a database: a template copy, which needs `from` to have
+ * no other session.
+ */
+async function copyDatabase(
+	sql: (text: string) => Promise<string>,
+	from: string,
+	to: string,
+): Promise<void> {
+	await sql(`create database ${identifier(to)} template ${identifier(from)}`);
 }
 
 /** The port of the server running on `data`, read from Postgres's own pid file. */
