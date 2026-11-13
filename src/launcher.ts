@@ -57,7 +57,8 @@ if (major >= NODE_MAJOR) {
 	const child = spawnSync(
 		"mise",
 		["exec", `node@${NODE_MAJOR}`, "--", "node", cli].concat(process.argv.slice(2)),
-		{ stdio: "inherit" },
+		// The PATH before mise puts its Node first, for the apps basepad's supervisor starts.
+		{ stdio: "inherit", env: Object.assign({}, process.env, { BASEPAD_PATH: process.env.PATH }) },
 	);
 	if (child.error)
 		fail(`could not run basepad on Node ${NODE_MAJOR} through mise: ${child.error.message}`);
