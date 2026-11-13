@@ -29,7 +29,7 @@
 		"build": "tsc -p tsconfig.build.json",
 		"check": "biome check . && tsc --noEmit && npm test",
 		"lint": "biome check .",
-		"prepack": "npm run build",
+		"prepare": "npm run build",
 		"test": "vitest run"
 	},
 	"dependencies": {
