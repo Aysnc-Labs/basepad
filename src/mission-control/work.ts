@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { checkedOutIn } from "../worktrees.ts";
 import type { Removal, Work } from "./model.ts";
 
 /**
@@ -88,13 +89,9 @@ export async function startWork(options: {
 /**
  * The work in `dir`: what runs, oldest first, with the last line each printed; and what has
  * finished, as what to tell the developer. Each finished one is told once: its files go as it is read.
- * Files a view left without a record are swept untold once a minute old. `worktrees`, the names of
- * the worktrees there now, names the one an addition stopped partway left.
+ * Files a view left without a record are swept untold once a minute old.
  */
-export async function takeWork(
-	dir: string,
-	worktrees?: () => Promise<string[]>,
-): Promise<{ running: Running[]; finished: string[] }> {
+export async function takeWork(dir: string): Promise<{ running: Running[]; finished: string[] }> {
 	const names = await readdir(dir).catch(() => [] as string[]);
 	const running: Running[] = [];
 	const finished: string[] = [];
@@ -132,8 +129,7 @@ export async function takeWork(
 		if (!taken) continue;
 		const output = lines(await readFile(`${base}.log`, "utf8").catch(() => ""));
 		const ended = await exitOf(base);
-		const left = ended === "" ? await leftBy(record, worktrees) : undefined;
-		finished.push(outcome(record, ended, output, left));
+		finished.push(outcome(record, ended, output));
 		await Promise.all(
 			[".taken", ".log", ".exit", ".pid"].map((ext) => rm(`${base}${ext}`, { force: true })),
 		);
@@ -186,27 +182,18 @@ function alive(pid: number): boolean {
 	}
 }
 
-/** The worktree an addition stopped partway left: the one new since it began, if just one is. */
-async function leftBy(
-	record: Record,
-	worktrees: (() => Promise<string[]>) | undefined,
-): Promise<string | undefined> {
-	const { before } = record;
-	if (record.kind !== "add" || before === undefined || worktrees === undefined) return undefined;
-	const made = (await worktrees().catch(() => [])).filter((name) => !before.includes(name));
-	return made.length === 1 ? made[0] : undefined;
-}
-
 /**
  * How finished work ended, from its exit code (none when killed) and its output. One stopped
- * partway says how to clear what it left: a removal's own command, or an addition's worktree `left`.
+ * partway says how to clear what it left: a removal's own command, or the worktree an addition's
+ * output says it checked out. With no such line, it made none, or none it can name.
  */
-function outcome(record: Record, code: string, output: string[], left?: string): string {
+function outcome(record: Record, code: string, output: string[]): string {
 	const what =
 		record.kind === "add" ? "add a worktree" : `remove ${record.title.slice("Removing ".length)}`;
 	const last = output.at(-1) ?? "";
 	if (code === "0") return last;
 	if (code === "") {
+		const left = record.kind === "add" ? checkedOutIn(output) : undefined;
 		const next =
 			left !== undefined
 				? `, leaving ${left}; run \`basepad worktree rm ${left}\` to remove it`

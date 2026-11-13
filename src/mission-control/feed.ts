@@ -70,9 +70,7 @@ export async function openFeed(options: {
 
 	const refresh = async () => {
 		// First and alone: what finished is told once, whatever fails after.
-		const work = await takeWork(options.work, async () =>
-			(await listWorktrees(main)).filter((t) => t.present).map((t) => t.suffix),
-		);
+		const work = await takeWork(options.work);
 		running = work.running;
 		notices.push(...work.finished);
 		const [trees, daemons, branch] = await Promise.all([

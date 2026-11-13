@@ -28,6 +28,7 @@ import {
 import { setup, trustAsRoot } from "./setup.ts";
 import { type Daemon, type DaemonState, openSupervisor, type Supervisor } from "./supervisor.ts";
 import {
+	checkedOut,
 	checkOutWorktree,
 	checkoutOf,
 	clonePaths,
@@ -361,7 +362,8 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	// Main's config is read before checking out, so a name too long fails before anything is made.
 	const requested = input?.name ?? (typeof flags.branch === "string" ? flags.branch : undefined);
 	const { suffix, branch, root } = await checkOutWorktree(main, requested);
-	const kept = `Worktree ${suffix} is checked out at ${root}`;
+	const kept = checkedOut(suffix, root);
+	say(`${kept}.`);
 	let environment: Environment;
 	let lay: Layout;
 	try {

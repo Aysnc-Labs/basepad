@@ -37,13 +37,9 @@ function basepad(body: string): { command: string[]; dir: string; go: string } {
 }
 
 /** `takeWork` again until `done` says what it read is what the test waits for. */
-async function until(
-	dir: string,
-	done: (work: Awaited<ReturnType<typeof takeWork>>) => boolean,
-	worktrees?: () => Promise<string[]>,
-) {
+async function until(dir: string, done: (work: Awaited<ReturnType<typeof takeWork>>) => boolean) {
 	for (let i = 0; i < 250; i++) {
-		const work = await takeWork(dir, worktrees);
+		const work = await takeWork(dir);
 		if (done(work)) return work;
 		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
@@ -156,11 +152,14 @@ test("one whose process was killed partway says so, with its last line", async (
 });
 
 test("an addition killed after it made its worktree names it and how to remove it", async () => {
-	const { command, dir } = basepad(`process.kill(process.ppid, "SIGKILL");`);
+	// As `worktree add` prints once its git worktree is there, before its setup runs.
+	const { command, dir } = basepad(`
+		console.log("Worktree shop-2 is checked out at /code/shop-2.");
+		console.log("Running \`npm install\`");
+		process.kill(process.ppid, "SIGKILL");`);
 	await startWork({ dir, command, cwd: tmpdir(), order: { kind: "add" }, before: ["shop-1"] });
-	const worktrees = async () => ["shop-1", "shop-2"];
-	expect((await until(dir, (w) => w.finished.length > 0, worktrees)).finished).toEqual([
-		"Could not add a worktree: it stopped partway, leaving shop-2; run `basepad worktree rm shop-2` to remove it. Its last line: ran worktree add",
+	expect((await until(dir, (w) => w.finished.length > 0)).finished).toEqual([
+		"Could not add a worktree: it stopped partway, leaving shop-2; run `basepad worktree rm shop-2` to remove it. Its last line: Running `npm install`",
 	]);
 });
 
@@ -267,4 +266,14 @@ test("two views reading finished work at once: only one tells it, whole", async 
 	const [a, b] = await Promise.all([takeWork(dir), takeWork(dir)]);
 	expect([...(a?.finished ?? []), ...(b?.finished ?? [])]).toEqual(["Made worktree shop-1."]);
 	expect(readdirSync(dir)).toEqual([]);
+});
+
+test("an addition killed before it made anything names no worktree another made meanwhile", async () => {
+	// Killed at once: it printed nothing of a worktree. shop-2 is the developer's own, made by
+	// `basepad worktree add` in a shell before the view read the record: it must not be named.
+	const { command, dir } = basepad(`process.kill(process.ppid, "SIGKILL");`);
+	await startWork({ dir, command, cwd: tmpdir(), order: { kind: "add" }, before: ["shop-1"] });
+	const [told] = (await until(dir, (w) => w.finished.length > 0)).finished;
+	expect(told).toMatch(/^Could not add a worktree: it stopped partway/);
+	expect(told).not.toContain("shop-2");
 });
