@@ -8,7 +8,7 @@ import { connect } from "node:tls";
 import { z } from "zod";
 import { interactive, must, shellQuote } from "./internal/exec.ts";
 import { answers } from "./internal/ports.ts";
-import { daemonId, type Machine, supervisorPaths } from "./layout.ts";
+import { daemonId, type Machine, ofDaemon, supervisorPaths } from "./layout.ts";
 import { install } from "./tools.ts";
 import { PITCHFORK_VERSION } from "./versions.ts";
 
@@ -393,7 +393,7 @@ export async function openSupervisor(
 					const port = daemon.active_port ?? daemon.port?.[0];
 					return {
 						id: daemon.id,
-						namespace: daemon.namespace ?? daemon.id.slice(0, daemon.id.lastIndexOf("/")),
+						namespace: daemon.namespace ?? ofDaemon(daemon.id).namespace,
 						name: daemon.name,
 						state: state === "stopped" && !daemon.disabled ? "idle" : state,
 						...(daemon.pid == null ? {} : { pid: daemon.pid }),

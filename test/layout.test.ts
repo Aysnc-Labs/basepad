@@ -1,6 +1,14 @@
 import { expect, test } from "vitest";
 import { postgres } from "../src/index.ts";
-import { layout, machine, nextSuffix, suffixOf, worktreeFolder } from "../src/layout.ts";
+import {
+	daemonId,
+	layout,
+	machine,
+	nextSuffix,
+	ofDaemon,
+	suffixOf,
+	worktreeFolder,
+} from "../src/layout.ts";
 
 const app = { run: "next dev", cwd: "/p" };
 const here = { home: "/h", proxyPort: 7443, portFree: false };
@@ -174,6 +182,15 @@ test("a namespace of the project's worktree gives its suffix; any other gives no
 	expect(suffixOf("shop", "shop")).toBeUndefined();
 	expect(suffixOf("shop", "shopping.worktree-1")).toBeUndefined();
 	expect(suffixOf("shop", "blog.worktree-1")).toBeUndefined();
+});
+
+test("a daemon's id gives back its namespace and name, a worktree's too", () => {
+	expect(ofDaemon("shop/web")).toEqual({ namespace: "shop", name: "web" });
+	expect(ofDaemon("shop.worktree-1/web")).toEqual({ namespace: "shop.worktree-1", name: "web" });
+	expect(ofDaemon(daemonId("shop.worktree-1", "db"))).toEqual({
+		namespace: "shop.worktree-1",
+		name: "db",
+	});
 });
 
 test("a worktree's folder is <suffix> in <name>.worktrees beside the repository, or in worktrees.dir", () => {

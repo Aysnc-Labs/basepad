@@ -1,7 +1,7 @@
 import { kindOf, type Service } from "../catalogue.ts";
 import { loadProject, type Project } from "../config.ts";
 import { BasepadError } from "../internal/exec.ts";
-import { daemonId, layout, type Machine, placeOf } from "../layout.ts";
+import { daemonId, layout, type Machine, namespaceOf, placeOf } from "../layout.ts";
 import type { DaemonInfo, LogEntry, Supervisor } from "../supervisor.ts";
 import { hasChanges, listWorktrees, mainBranch } from "../worktrees.ts";
 import type { EnvironmentView, LogLine, Part, Snapshot } from "./model.ts";
@@ -105,23 +105,12 @@ export async function openFeed(options: {
 		for (const [i, tree] of shown.entries()) {
 			const changed = changes[i] === undefined ? {} : { changes: changes[i] };
 			const config = await configOf(tree.root);
-			next.push(
-				typeof config === "string"
-					? {
-							namespace: `${main.name}.${tree.suffix}`,
-							label: tree.suffix,
-							...(tree.branch === undefined ? {} : { branch: tree.branch }),
-							dir: tree.root,
-							apps: [],
-							services: [],
-							problem: config,
-							...changed,
-						}
-					: {
-							...(await environmentOf(config, tree.suffix, tree.branch, tree.root, byId, machine)),
-							...changed,
-						},
-			);
+			next.push({
+				...(typeof config === "string"
+					? troubled(main.name, tree.suffix, tree.branch, tree.root, config)
+					: await environmentOf(config, tree.suffix, tree.branch, tree.root, byId, machine)),
+				...changed,
+			});
 		}
 		environments = next;
 		dirty = true;
@@ -185,19 +174,18 @@ async function environmentOf(
 	daemons: Map<string, DaemonInfo>,
 	machine: Machine,
 ): Promise<EnvironmentView> {
-	const base = {
-		label: suffix ?? "main",
-		...(branch === undefined ? {} : { branch }),
-		dir,
-	};
 	let lay: ReturnType<typeof layout>;
 	try {
 		lay = layout(project, machine, suffix);
 	} catch (error) {
 		if (!(error instanceof BasepadError)) throw error;
-		const namespace = suffix === undefined ? project.name : `${project.name}.${suffix}`;
-		return { namespace, ...base, apps: [], services: [], problem: error.message };
+		return troubled(project.name, suffix, branch, dir, error.message);
 	}
+	const base = {
+		label: suffix ?? "main",
+		...(branch === undefined ? {} : { branch }),
+		dir,
+	};
 	const apps = Object.entries(lay.apps).map(([key, app]): Part => {
 		const id = daemonId(lay.namespace, key);
 		const daemon = daemons.get(id);
@@ -228,4 +216,23 @@ async function environmentOf(
 		});
 	}
 	return { namespace: lay.namespace, ...base, apps, services };
+}
+
+/** An environment whose parts cannot be shown, with why: a config that does not load, or names past their limits. */
+function troubled(
+	name: string,
+	suffix: string | undefined,
+	branch: string | undefined,
+	dir: string,
+	problem: string,
+): EnvironmentView {
+	return {
+		namespace: namespaceOf(name, suffix),
+		label: suffix ?? "main",
+		...(branch === undefined ? {} : { branch }),
+		dir,
+		apps: [],
+		services: [],
+		problem,
+	};
 }

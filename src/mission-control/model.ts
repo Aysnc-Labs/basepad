@@ -4,6 +4,8 @@
  * function that turns a key press into the next view.
  */
 
+import { ofDaemon } from "../layout.ts";
+
 /** A part's state at a glance. `idle`: not running, and the proxy starts it on a first request. */
 export type PartState = "running" | "starting" | "failed" | "stopped" | "idle";
 
@@ -415,18 +417,17 @@ function actionOn(
 	kind: Action["kind"],
 ): Action | undefined {
 	if (part !== undefined) {
-		const slash = part.id.lastIndexOf("/");
 		const isApp = env.apps.includes(part);
 		return {
 			kind,
-			namespace: part.id.slice(0, slash),
+			namespace: ofDaemon(part.id).namespace,
 			apps: isApp ? [part.name] : [],
 			services: isApp ? [] : [part.name],
 			label: part.name,
 		};
 	}
 	// A worktree's services are main's: only main's own actions reach them.
-	const services = env.services.filter((s) => s.id.startsWith(`${env.namespace}/`));
+	const services = env.services.filter((s) => ofDaemon(s.id).namespace === env.namespace);
 	if (env.apps.length + services.length === 0) return undefined;
 	return {
 		kind,
