@@ -5,7 +5,7 @@
 <h1 align="center">basepad</h1>
 
 <p align="center">
-  A local environment for coding agents.<br>
+  A development environment for coding agents.<br>
   On your machine, or in a cloud sandbox.
 </p>
 

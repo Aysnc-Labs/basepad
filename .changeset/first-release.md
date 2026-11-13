@@ -2,4 +2,4 @@
 "basepad": minor
 ---
 
-First release: local environments for a project, described in one committed config and run natively through mise.
+First release: a development environment for coding agents.
