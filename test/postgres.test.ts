@@ -48,10 +48,12 @@ async function sql(dir: string, query: string): Promise<string> {
 	return out.stdout.trim();
 }
 
-test("up runs the project's Postgres, and a client connects with the written URL", async () => {
+test("up runs the project's Postgres (18 by default, on loopback), and a client connects with the written URL", async () => {
 	expect(firstUp.stderr).toBe("");
 	expect(firstUp.code).toBe(0);
 	expect(await sql(shop, "select current_database()")).toBe("pg_shop_db");
+	expect(await sql(shop, "show server_version_num")).toMatch(/^18\d{4}$/);
+	expect(await sql(shop, "show listen_addresses")).toBe("127.0.0.1");
 });
 
 test("a client connects with the split values, and the server needs no password", async () => {
