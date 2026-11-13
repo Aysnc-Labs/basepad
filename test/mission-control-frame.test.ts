@@ -134,6 +134,15 @@ test("an errored app stands out: an alert line names it and its error wherever t
 	expect(onIt).toMatch(/✖ api +failed +exit code 1 +TypeError: Cannot read properties/);
 });
 
+test("an app that crashed without the word error still stands out with its last output", () => {
+	const api = app("shop", "api", { state: "failed", error: "exit code 1", note: undefined });
+	const crashed = { ...main, apps: [app("shop", "web"), api] };
+	const logs = [lines(api.id, "api listening", "connection refused: 127.0.0.1:6379", "  ")];
+	const out = draw(snap([crashed], logs));
+	expect(out).toMatch(/✖ main › api exited \(exit code 1\) +connection refused: 127\.0\.0\.1:6379/);
+	expect(out).toMatch(/✖ api +failed +exit code 1 +connection refused: 127\.0\.0\.1:6379/);
+});
+
 test("an idle worktree reads as idle, not failed: its apps start on their first request", () => {
 	const ns = "shop.worktree-2";
 	const idle = worktree(2, {

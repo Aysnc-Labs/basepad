@@ -391,13 +391,19 @@ function tone(text: string, c: Palette): string | undefined {
 const clean = (text: string) =>
 	text.replace(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)? \w+ (\[\d+\] )?/, "");
 
-/** A failed part's last line that names its error. */
+/** How far back a failed part's output is searched for the line that names its error. */
+const LAST_OUTPUT = 20;
+
+/**
+ * A failed part's last output: of its last lines, the newest that names an error, else its last
+ * line that is not blank, whatever it says. Empty only when it printed nothing.
+ */
 function lastError(lines: readonly LogLine[] = []): string {
-	for (let i = lines.length - 1; i >= 0; i--) {
-		const text = (lines[i] as LogLine).text;
-		if (/Error\b|ERROR|FATAL/.test(text)) return text.trim();
-	}
-	return "";
+	const recent = lines
+		.slice(-LAST_OUTPUT)
+		.map((l) => l.text.trim())
+		.filter((text) => text !== "");
+	return recent.findLast((text) => /Error\b|ERROR|FATAL/.test(text)) ?? recent.at(-1) ?? "";
 }
 
 /** The newest `n` lines of the given parts, merged in arrival order. */
