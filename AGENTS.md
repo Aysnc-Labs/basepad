@@ -18,4 +18,5 @@
 - Issue tracker: GitHub `Aysnc-Labs/basepad`, via `gh`; see `docs/agents/issue-tracker.md`. Labels: `docs/agents/triage-labels.md`.
 - Domain: `GLOSSARY.md` and `docs/adr/`, read as `docs/agents/domain.md` says.
 - Review rules: `CODING_STANDARDS.md`.
+- Logging in or verifying the app: `docs/agents/verification.md`.
 - Code changes: load `aysnc-skills:tdd` and `aysnc-skills:codebase-design`. Glossary or ADR: `aysnc-skills:domain-modeling`. Docs agents read: `aysnc-skills:writing-for-agents`.
