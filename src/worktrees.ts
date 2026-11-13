@@ -33,6 +33,23 @@ export async function checkoutOf(root: string): Promise<Checkout> {
 }
 
 /**
+ * What `worktree add` prints as soon as its git worktree is there, before its setup runs; its errors
+ * after that end with it too. An addition killed partway is known to have made `suffix` by it.
+ */
+export function checkedOut(suffix: string, root: string): string {
+	return `Worktree ${suffix} is checked out at ${root}`;
+}
+
+/** The suffix `lines` (`worktree add`'s output) say was checked out, if any. */
+export function checkedOutIn(lines: readonly string[]): string | undefined {
+	for (const line of lines) {
+		const suffix = /^Worktree (\S+) is checked out at /.exec(line)?.[1];
+		if (suffix !== undefined) return suffix;
+	}
+	return undefined;
+}
+
+/**
  * Checks out a new worktree of `main` (a project in git's main checkout), named `<prefix>-<n>` with
  * the lowest number no worktree, branch or folder has. It is on `branch` when that exists, here or
  * on a remote; else on a new branch of that name, or of the suffix, from main's `HEAD`. Returns the

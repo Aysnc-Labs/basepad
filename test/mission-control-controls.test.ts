@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import {
 	initialView,
 	type Part,
+	type Press,
 	reduce,
 	type Snapshot,
 	type View,
@@ -127,7 +128,7 @@ function chatty(): Snapshot {
 	};
 }
 
-const scroll = (keys: string[], from: View = initialView("shop"), logs = chatty()) =>
+const scroll = (keys: Press[], from: View = initialView("shop"), logs = chatty()) =>
 	keys.reduce((view, key) => reduce(view, key, logs, 10).view, from);
 
 test("page up pauses the stream a page back from the newest line; page down and end go back to live", () => {
@@ -169,6 +170,17 @@ test("while typing, keys are text: q does not close, backspace deletes, escape c
 	expect(typing.search).toEqual({ query: "aq", typing: true });
 	expect(scroll([...type("aq"), "escape"]).search).toBeUndefined();
 	expect(scroll([...type("aq"), "ctrl-c"]).quit).toBe(true);
+});
+
+test("text pasted into a search is its query; elsewhere a paste presses no key", () => {
+	expect(scroll(["/", { paste: "line 4" }]).search).toEqual({ query: "line 4", typing: true });
+	// Control characters (a newline, a tab, an escape, delete) are left out: a query is one line.
+	expect(scroll(["/", { paste: "line\n4\r\t\u001b\u007f" }]).search).toEqual({
+		query: "line4",
+		typing: true,
+	});
+	const idle = scroll(["right", { paste: "qdvx/" }]);
+	expect(idle).toEqual(scroll(["right"]));
 });
 
 test("a search with no match says so and leaves the stream live", () => {

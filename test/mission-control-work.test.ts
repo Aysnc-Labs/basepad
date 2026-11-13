@@ -151,6 +151,32 @@ test("one whose process was killed partway says so, with its last line", async (
 	expect(existsSync(dir) && readdirSync(dir)).toEqual([]);
 });
 
+test("an addition killed after it made its worktree names it and how to remove it", async () => {
+	// As `worktree add` prints once its git worktree is there, before its setup runs.
+	const { command, dir } = basepad(`
+		console.log("Worktree shop-2 is checked out at /code/shop-2.");
+		console.log("Running \`npm install\`");
+		process.kill(process.ppid, "SIGKILL");`);
+	await startWork({ dir, command, cwd: tmpdir(), order: { kind: "add" }, before: ["shop-1"] });
+	expect((await until(dir, (w) => w.finished.length > 0)).finished).toEqual([
+		"Could not add a worktree: it stopped partway, leaving shop-2; run `basepad worktree rm shop-2` to remove it. Its last line: Running `npm install`",
+	]);
+});
+
+test("a removal killed partway names how to finish it", async () => {
+	const { command, dir } = basepad(`process.kill(process.ppid, "SIGKILL");`);
+	const order = {
+		kind: "remove",
+		suffix: "shop-2",
+		namespace: "shop.shop-2",
+		force: true,
+	} as const;
+	await startWork({ dir, command, cwd: tmpdir(), order });
+	expect((await until(dir, (w) => w.finished.length > 0)).finished).toEqual([
+		"Could not remove shop-2: it stopped partway; run `basepad worktree rm shop-2 --force` to finish it. Its last line: ran worktree rm shop-2 --force",
+	]);
+});
+
 /**
  * A record left on disk as if by an earlier view: `pid`, its process (`{ pid, start }`), or none
  * when the view crashed before its command ran. `age` in ms.
@@ -240,4 +266,34 @@ test("two views reading finished work at once: only one tells it, whole", async 
 	const [a, b] = await Promise.all([takeWork(dir), takeWork(dir)]);
 	expect([...(a?.finished ?? []), ...(b?.finished ?? [])]).toEqual(["Made worktree shop-1."]);
 	expect(readdirSync(dir)).toEqual([]);
+});
+
+test("an addition killed before it made anything names no worktree another made meanwhile", async () => {
+	// Killed at once: it printed nothing of a worktree. shop-2 is the developer's own, made by
+	// `basepad worktree add` in a shell before the view read the record: it must not be named.
+	const { command, dir } = basepad(`process.kill(process.ppid, "SIGKILL");`);
+	await startWork({ dir, command, cwd: tmpdir(), order: { kind: "add" }, before: ["shop-1"] });
+	const [told] = (await until(dir, (w) => w.finished.length > 0)).finished;
+	expect(told).toMatch(/^Could not add a worktree: it stopped partway/);
+	expect(told).not.toContain("shop-2");
+});
+
+test("work killed before it printed anything says no last line", async () => {
+	const { dir } = basepad("");
+	// Not the stand-in, which prints what it was asked first.
+	const silent = [process.execPath, "-e", `process.kill(process.ppid, "SIGKILL");`];
+	await startWork({ dir, command: silent, cwd: tmpdir(), order: { kind: "add" } });
+	expect((await until(dir, (w) => w.finished.length > 0)).finished).toEqual([
+		"Could not add a worktree: it stopped partway.",
+	]);
+	const order = {
+		kind: "remove",
+		suffix: "shop-2",
+		namespace: "shop.shop-2",
+		force: false,
+	} as const;
+	await startWork({ dir, command: silent, cwd: tmpdir(), order });
+	expect((await until(dir, (w) => w.finished.length > 0)).finished).toEqual([
+		"Could not remove shop-2: it stopped partway; run `basepad worktree rm shop-2` to finish it.",
+	]);
 });

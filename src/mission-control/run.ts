@@ -7,7 +7,7 @@ import type { Supervisor } from "../supervisor.ts";
 import { desktopHands, type Hands, perform } from "./act.ts";
 import { type Feed, openFeed } from "./feed.ts";
 import { type Colors, colorsFor, frame, pageOf } from "./frame.ts";
-import { type Intent, initialView, reduce } from "./model.ts";
+import { type Intent, initialView, type Press, reduce } from "./model.ts";
 import { startWork } from "./work.ts";
 
 /**
@@ -86,7 +86,7 @@ function App(props: {
 	const { exit } = useApp();
 	const { columns, rows } = useWindowSize();
 	const [view, setView] = useState(() => initialView(props.selected));
-	// The latest view, so keys that arrive before a repaint (a paste into search) each build on it.
+	// The latest view, so keys that arrive before a repaint each build on it.
 	const latest = useRef(view);
 	latest.current = view;
 	const [, setTick] = useState(0);
@@ -114,29 +114,22 @@ function App(props: {
 		});
 	};
 	useInput((input, key) => {
-		const name = keyName(input, key);
-		// Text pasted into a search arrives at once: each character is a key. Elsewhere a paste is
-		// no key, so it never starts or stops anything.
-		const typing = latest.current.search?.typing === true;
-		const pasted = name === input && [...input].length > 1;
-		for (const one of pasted && typing ? [...input] : [name]) {
-			const now = latest.current;
-			const page = pageOf(snapshot, now, columns, rows);
-			const { view: next, intent } = reduce(now, one, snapshot, page);
-			if (next.quit) {
-				exit();
-				return;
-			}
-			latest.current = next;
-			setView(next);
-			if (intent !== undefined) act(intent);
+		const now = latest.current;
+		const page = pageOf(snapshot, now, columns, rows);
+		const { view: next, intent } = reduce(now, pressOf(input, key), snapshot, page);
+		if (next.quit) {
+			exit();
+			return;
 		}
+		latest.current = next;
+		setView(next);
+		if (intent !== undefined) act(intent);
 	});
 	return frame({ snapshot, view, cols: columns, rows, now: clock(), color });
 }
 
-/** A key press as the reducer names it. */
-function keyName(input: string, key: Key): string {
+/** A key press as the reducer names it; text that arrives at once is a paste. */
+export function pressOf(input: string, key: Key): Press {
 	if (key.ctrl && input === "c") return "ctrl-c";
 	if (key.upArrow) return "up";
 	if (key.downArrow) return "down";
@@ -149,7 +142,7 @@ function keyName(input: string, key: Key): string {
 	if (key.end) return "end";
 	if (key.return) return "return";
 	if (key.backspace || key.delete) return "backspace";
-	return input;
+	return [...input].length > 1 ? { paste: input } : input;
 }
 
 /** The time, `HH:MM:SS`. */

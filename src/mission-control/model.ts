@@ -191,14 +191,34 @@ function indexOf(lines: readonly LogLine[], seq: number): number {
 }
 
 /**
- * What a key press does. `key` is a name (`up`, `down`, `left`, `right`, `escape`, `ctrl-c`,
- * `pageup`, `pagedown`, `home`, `end`) or the character typed. `page` is how many log lines the
- * stream shows: a page up or down moves by that many.
+ * A key: its name (`up`, `down`, `left`, `right`, `escape`, `ctrl-c`, `pageup`, `pagedown`,
+ * `home`, `end`, `return`, `backspace`) or the character typed; or text pasted, which arrives at
+ * once.
  */
-export function reduce(previous: View, key: string, snapshot: Snapshot, page = 10): Step {
+export type Press = string | { paste: string };
+
+/**
+ * The text a press types into a field: a character, or a paste without its control characters (a
+ * newline it was copied with, a tab), since a field is one line and a paste never acts; a named
+ * key types none.
+ */
+const textOf = (key: Press): string | undefined =>
+	typeof key !== "string"
+		? [...key.paste].filter((c) => c >= " " && c !== "\u007f").join("")
+		: [...key].length === 1
+			? key
+			: undefined;
+
+/**
+ * What a key press does. `page` is how many log lines the stream shows: a page up or down moves
+ * by that many. A paste is text in a text field (the search, a worktree's suffix) and no key
+ * anywhere else, so it never starts or stops anything.
+ */
+export function reduce(previous: View, key: Press, snapshot: Snapshot, page = 10): Step {
 	const { notice: _, ...view } = previous;
 	if (view.confirm !== undefined) return confirming(view, view.confirm, key, snapshot);
 	if (view.search?.typing) return { view: typing(view, view.search.query, key, snapshot) };
+	if (typeof key !== "string") return { view: previous };
 	const envs = snapshot.environments;
 	const env = selectedOf(snapshot, view);
 	const at = env === undefined ? 0 : envs.indexOf(env);
@@ -323,7 +343,7 @@ export function reduce(previous: View, key: string, snapshot: Snapshot, page = 1
 function confirming(
 	view: View,
 	confirm: NonNullable<View["confirm"]>,
-	key: string,
+	key: Press,
 	snapshot: Snapshot,
 ): Step {
 	const { confirm: _, ...rest } = view;
@@ -337,6 +357,7 @@ function confirming(
 	});
 	const kept = (why = "") => ({ view: { ...rest, notice: `Kept ${suffix}${why}.` } });
 	if (confirm.step === "remove") {
+		if (typeof key !== "string") return { view };
 		if (key !== "y") return kept();
 		if (!env.changes) return removal(false);
 		return { view: { ...rest, confirm: { ...confirm, step: "discard", typed: "" } } };
@@ -351,16 +372,18 @@ function confirming(
 			return {
 				view: { ...view, confirm: { ...confirm, typed: [...typed].slice(0, -1).join("") } },
 			};
-		default:
+		default: {
 			// A named key (an arrow, page up) is not text.
-			return [...key].length === 1
-				? { view: { ...view, confirm: { ...confirm, typed: typed + key } } }
-				: { view };
+			const text = textOf(key);
+			return text === undefined
+				? { view }
+				: { view: { ...view, confirm: { ...confirm, typed: typed + text } } };
+		}
 	}
 }
 
 /** A key while a search is typed: text, or `return` to search, or `escape` to cancel. */
-function typing(view: View, query: string, key: string, snapshot: Snapshot): View {
+function typing(view: View, query: string, key: Press, snapshot: Snapshot): View {
 	const { search: _, ...rest } = view;
 	switch (key) {
 		case "ctrl-c":
@@ -375,11 +398,11 @@ function typing(view: View, query: string, key: string, snapshot: Snapshot): Vie
 			const found = find({ ...live, search: { query, typing: false } }, -1, snapshot);
 			return found.until === undefined ? { ...live, notice: `No line matches “${query}”.` } : found;
 		}
-		default:
+		default: {
 			// A named key (an arrow, page up) is not text.
-			return [...key].length === 1
-				? { ...view, search: { query: query + key, typing: true } }
-				: view;
+			const text = textOf(key);
+			return text === undefined ? view : { ...view, search: { query: query + text, typing: true } };
+		}
 	}
 }
 

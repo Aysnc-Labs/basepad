@@ -1,5 +1,7 @@
+import type { Key } from "ink";
 import { expect, test } from "vitest";
 import { initialView, reduce, type Snapshot } from "../src/mission-control/model.ts";
+import { pressOf } from "../src/mission-control/run.ts";
 
 const part = (id: string) => ({
 	id,
@@ -55,4 +57,13 @@ test("q and ctrl-c quit", () => {
 
 test("a selected environment that is gone moves from the first", () => {
 	expect(press(["down"], initialView("shop.worktree-9")).selected).toBe("shop.worktree-1");
+});
+
+test("text that arrives at once is a paste, a newline in it too; a character or a named key is a press", () => {
+	// Ink names a key by its flags; a paste is all its text in one input, with no flag set.
+	const key = (flags: Partial<Key> = {}) => flags as Key;
+	expect(pressOf("worktree-2\r", key())).toEqual({ paste: "worktree-2\r" });
+	expect(pressOf("d", key())).toBe("d");
+	expect(pressOf("\r", key({ return: true }))).toBe("return");
+	expect(pressOf("c", key({ ctrl: true }))).toBe("ctrl-c");
 });

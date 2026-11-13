@@ -85,6 +85,13 @@ test("`worktrees.setup` runs in order in the worktree, after its env files are w
 	expect(marker).toMatch(/^DATABASE_URL=\S+\/t17shop_db_worktree_1\nsecond\n$/);
 });
 
+test("worktree add names the worktree it checked out before its setup runs, so one killed partway can be named", () => {
+	const lines = added.stdout.split("\n");
+	const checkedOut = lines.indexOf(`Worktree worktree-1 is checked out at ${tree}.`);
+	expect(checkedOut).not.toBe(-1);
+	expect(checkedOut).toBeLessThan(lines.indexOf("Running `echo second >> marker`"));
+});
+
 test("worktree add starts no app, and the first request starts it even with main's database server stopped", async () => {
 	expect(added.stdout).toMatch(/web +https:\/\/web\.worktree-1\.t17shop\.localhost:\d+ +stopped/);
 	// `down` in main stops its database server, which the worktree's database lives on.

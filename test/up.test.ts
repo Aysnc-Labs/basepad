@@ -196,6 +196,25 @@ test("an app that exits on start is reported with its output, and up fails", asy
 	await box.basepad(dir, "down");
 });
 
+test("an app that exits at once is reported the same way, by every up", async () => {
+	const dir = await box.project("sudden", {
+		"basepad.config.ts": configFile(`{
+			name: "sudden",
+			apps: { ok: { run: ${JSON.stringify(node(echo))} }, boom: { run: "echo gone; exit 3" } },
+		}`),
+	});
+	// The second finds it failed already: pitchfork refuses its start, which is no error of basepad's.
+	for (const args of [["up"], ["up"], ["up", "-d"]]) {
+		const out = await box.basepad(dir, ...args);
+		expect(out.code, out.stderr).toBe(1);
+		expect(out.stdout, out.stderr).toMatch(/boom +https:\/\/boom\.sudden\.localhost:\d+ +failed/);
+		expect(out.stdout).toMatch(/ok +https:\/\/ok\.sudden\.localhost:\d+ +running/);
+		expect(out.stderr).toContain("basepad: `boom` exited on start. Its last output:");
+		expect(out.stderr).toContain("gone");
+	}
+	await box.basepad(dir, "down");
+});
+
 test("up returns promptly while an app is slow to listen, and shows it starting", async () => {
 	const dir = await box.project("slow", {
 		"basepad.config.ts": configFile(`{

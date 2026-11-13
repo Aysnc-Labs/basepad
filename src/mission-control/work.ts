@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { checkedOutIn } from "../worktrees.ts";
 import type { Removal, Work } from "./model.ts";
 
 /**
@@ -17,12 +18,15 @@ export type WorkOrder = { kind: "add" } | Removal;
 export type Running = Work & { before?: string[] };
 
 /** A record of work started, in `<id>.json`. */
-interface Record {
-	kind: Work["kind"];
-	title: string;
-	namespace?: string;
-	before?: string[];
-}
+type Record =
+	| { kind: "add"; title: string; before?: string[] }
+	| {
+			kind: "remove";
+			title: string;
+			namespace: string;
+			/** Its `basepad worktree rm` arguments, so one stopped partway can say how to finish. */
+			args: string[];
+	  };
 
 /**
  * The shell that runs the command and writes its exit code, in `<id>.pid` once it has started:
@@ -60,7 +64,7 @@ export async function startWork(options: {
 	const record: Record =
 		order.kind === "add"
 			? { kind: "add", title: "Adding a worktree", ...(before ? { before } : {}) }
-			: { kind: "remove", title: `Removing ${order.suffix}`, namespace: order.namespace };
+			: { kind: "remove", title: `Removing ${order.suffix}`, namespace: order.namespace, args };
 	// The record first, and never written again: a fast job taken meanwhile is not made again.
 	await writeFile(`${base}.json`, JSON.stringify(record));
 	// The shell outlives the view with the command, and writes the exit code once it ends.
@@ -114,7 +118,11 @@ export async function takeWork(dir: string): Promise<{ running: Running[]; finis
 		const code = await exitOf(base);
 		if (code === "" && (await underWay(base))) {
 			const last = lines(await readFile(`${base}.log`, "utf8").catch(() => "")).at(-1);
-			running.push({ ...record, ...(last === undefined ? {} : { line: last }) });
+			const work: Running =
+				record.kind === "add"
+					? record
+					: { kind: "remove", title: record.title, namespace: record.namespace };
+			running.push({ ...work, ...(last === undefined ? {} : { line: last }) });
 			continue;
 		}
 		// Taken by renaming its record: of views reading at once, only the one that renames it tells it.
@@ -124,7 +132,8 @@ export async function takeWork(dir: string): Promise<{ running: Running[]; finis
 		);
 		if (!taken) continue;
 		const output = lines(await readFile(`${base}.log`, "utf8").catch(() => ""));
-		finished.push(outcome(record, await exitOf(base), output));
+		const ended = await exitOf(base);
+		finished.push(outcome(record, ended, output));
 		await Promise.all(
 			[".taken", ".log", ".exit", ".pid"].map((ext) => rm(`${base}${ext}`, { force: true })),
 		);
@@ -177,13 +186,20 @@ function alive(pid: number): boolean {
 	}
 }
 
-/** How finished work ended, from its exit code (none when killed) and its output. */
+/**
+ * How finished work ended, from its exit code (none when killed) and its output. One stopped
+ * partway says how to clear what it left: a removal's own command, or the worktree an addition's
+ * output says it checked out. With no such line, it made none, or none it can name.
+ */
 function outcome(record: Record, code: string, output: string[]): string {
 	const what =
 		record.kind === "add" ? "add a worktree" : `remove ${record.title.slice("Removing ".length)}`;
 	const last = output.at(-1) ?? "";
 	if (code === "0") return last;
-	if (code === "") return `Could not ${what}: it stopped partway. Its last line: ${last}`;
+	if (code === "") {
+		const said = last === "" ? "" : ` Its last line: ${last}`;
+		return `Could not ${what}: it stopped partway${clearing(record, output)}.${said}`;
+	}
 	// The command says why it failed last, after `basepad: `.
 	const from = output.findLastIndex((l) => l.startsWith("basepad: "));
 	const message =
@@ -191,6 +207,15 @@ function outcome(record: Record, code: string, output: string[]): string {
 			? [last]
 			: [output[from]?.slice("basepad: ".length) ?? "", ...output.slice(from + 1)];
 	return `Could not ${what}: ${firstAndLast(message)}`;
+}
+
+/** How to clear what work stopped partway left: finish a removal, or remove the worktree made. */
+function clearing(record: Record, output: string[]): string {
+	if (record.kind === "remove") return `; run \`basepad ${record.args.join(" ")}\` to finish it`;
+	const left = checkedOutIn(output);
+	return left === undefined
+		? ""
+		: `, leaving ${left}; run \`basepad worktree rm ${left}\` to remove it`;
 }
 
 /** Lines of a message as one: its first and last, which say what failed and what next. */
