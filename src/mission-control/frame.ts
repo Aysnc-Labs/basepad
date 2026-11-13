@@ -119,10 +119,16 @@ function arrange(
 	const body = rows - top.length - bottom.length;
 	const side = Math.min(34, Math.max(24, Math.floor(cols * 0.2)));
 	const right = cols - side - 1;
-	const wanted = partsHeight(env, right - 4, short);
 	// The stream keeps at least a third of the body, so a long parts list never hides the logs.
 	const keep = Math.max(short ? 4 : 6, Math.floor(body / 3));
-	const table = Math.min(wanted, Math.max(short ? 3 : 6, body - keep));
+	const most = Math.max(short ? 3 : 6, body - keep);
+	// As many rows as the parts that fit take, so none is left blank (see `partsShown`).
+	const table =
+		env.problem !== undefined
+			? Math.min(6, most)
+			: partsOf(env).length === 0
+				? 3
+				: Math.max(3, Math.min(most, 2 + partsShown(env, right - 4, most - 2, short, view).length));
 	return { top, bottom, body, side, right, table, short };
 }
 
@@ -260,14 +266,14 @@ const pad = (text: string, n: number) => text + " ".repeat(Math.max(0, n - [...t
 
 /**
  * `text` in pieces of at most `width` columns, so a long name wraps instead of being cut: after a
- * `/`, `-` or space where one is near the end of a piece, else at the width.
+ * `/`, `-`, `.` or space where one is near the end of a piece, else at the width.
  */
 function wrap(text: string, width: number): string[] {
 	const out: string[] = [];
 	let rest = [...text];
 	while (rest.length > width) {
 		const piece = rest.slice(0, width);
-		const soft = Math.max(piece.lastIndexOf("/"), piece.lastIndexOf("-"), piece.lastIndexOf(" "));
+		const soft = Math.max(...["/", "-", " ", "."].map((c) => piece.lastIndexOf(c)));
 		const cut = soft >= width / 2 ? soft + 1 : width;
 		out.push(rest.slice(0, cut).join(""));
 		rest = rest.slice(cut);
@@ -482,7 +488,8 @@ function status(
 			run(confirm.suffix, c.bad, { bold: true }),
 			run("? Its apps, databases and git worktree go; its branch stays.  ", c.text),
 			run("y", c.bad, { bold: true }),
-			run(" remove · any other key keeps it", c.mute),
+			// Kept together, so a row never starts with a lone "it".
+			run(" remove · any other key keeps\u00a0it", c.mute),
 		];
 	} else if (confirm?.step === "discard") {
 		said = [
@@ -492,7 +499,7 @@ function status(
 			run(confirm.suffix, c.text, { bold: true }),
 			run(" and enter to remove it anyway: ", c.text),
 			run(`${confirm.typed ?? ""}▏`, c.text, { bold: true }),
-			run("  esc keeps it", c.mute),
+			run("  esc\u00a0keeps\u00a0it", c.mute),
 		];
 	} else if (view.notice !== undefined) {
 		said = [run(view.notice, c.accent)];
@@ -587,7 +594,9 @@ function sidebar(
 		return rows;
 	});
 	const at = snapshot.environments.indexOf(selected);
-	const rows = windowed(blocks, at, height - 2, inner, c);
+	const rows = windowed(blocks, at, height - 2, (key, text) =>
+		line(key, inner, [run(text, c.mute)]),
+	);
 	return panel(
 		"sidebar",
 		width,
@@ -601,15 +610,14 @@ function sidebar(
 
 /**
  * Blocks of rows (an environment, a part) in `room` rows: all when they fit, else a window that
- * holds block `at`, and a row above and below saying how many more there are.
+ * holds block `at`, and a row above and below, made by `mark`, saying how many more there are.
  */
-function windowed(
-	blocks: ReactElement[][],
+function windowed<T>(
+	blocks: T[][],
 	at: number,
 	room: number,
-	width: number,
-	c: Palette,
-): ReactElement[] {
+	mark: (key: string, text: string) => T,
+): T[] {
 	const size = (from: number, to: number) =>
 		blocks.slice(from, to + 1).reduce((n, b) => n + b.length, 0);
 	const marks = (from: number, to: number) => (from > 0 ? 1 : 0) + (to < blocks.length - 1 ? 1 : 0);
@@ -618,19 +626,34 @@ function windowed(
 	while (from < at && size(from, at) + marks(from, at) > room) from++;
 	let to = Math.max(at, 0);
 	while (to + 1 < blocks.length && size(from, to + 1) + marks(from, to + 1) <= room) to++;
-	const more = (key: string, text: string) => line(key, width, [run(text, c.mute)]);
 	return [
-		...(from > 0 ? [more("above", `↑ ${from} more`)] : []),
+		...(from > 0 ? [mark("above", `↑ ${from} more`)] : []),
 		...blocks.slice(from, to + 1).flat(),
-		...(to < blocks.length - 1 ? [more("below", `↓ ${blocks.length - 1 - to} more`)] : []),
+		...(to < blocks.length - 1 ? [mark("below", `↓ ${blocks.length - 1 - to} more`)] : []),
 	];
 }
 
-/** The panel's height for an environment's parts: their rows, and its border. */
-function partsHeight(env: EnvironmentView, inner: number, short: boolean): number {
-	if (env.problem !== undefined) return 6;
-	const rows = partBlocks(env, inner, short).reduce((n, b) => n + b.length, 0);
-	return 2 + Math.max(1, rows);
+/**
+ * The rows of an environment's parts that show in `room` rows: all of them; else without their
+ * headings; else a window that holds the focused part.
+ */
+function partsShown(
+	env: EnvironmentView,
+	inner: number,
+	room: number,
+	short: boolean,
+	view: View,
+	snapshot?: Snapshot,
+	c: Palette = palette("none"),
+): Row[] {
+	const all = partBlocks(env, inner, short, view, snapshot, c);
+	const fits = all.reduce((n, b) => n + b.length, 0) <= room;
+	const blocks = fits ? all : partBlocks(env, inner, true, view, snapshot, c);
+	const at = partsOf(env).findIndex((part) => part.id === view.focus);
+	return windowed(blocks, Math.max(0, at), room, (key, text) => ({
+		key,
+		runs: [run(text, c.mute)],
+	}));
 }
 
 /** One row of the parts panel: its runs, none for a blank row. */
@@ -714,6 +737,7 @@ function partsPanel(
 	c: Palette,
 ): ReactElement {
 	const inner = width - 4;
+	const branch = env.branch ?? "(detached)";
 	let rows: ReactElement[] = [];
 	if (env.problem !== undefined) {
 		for (const [i, piece] of wrap(env.problem, inner)
@@ -724,18 +748,22 @@ function partsPanel(
 	} else if (partsOf(env).length === 0) {
 		rows.push(line("none", inner, [run("No apps or services in its config.", c.mute)]));
 	} else {
-		const blocks = partBlocks(env, inner, short, view, snapshot, c).map((b) =>
-			b.map(({ key, runs }) => (runs.length === 0 ? gap(key) : line(key, inner, runs))),
+		rows = partsShown(env, inner, height - 2, short, view, snapshot, c).map(({ key, runs }) =>
+			runs.length === 0 ? gap(key) : line(key, inner, runs),
 		);
-		const at = partsOf(env).findIndex((part) => part.id === view.focus);
-		rows = windowed(blocks, Math.max(0, at), height - 2, inner, c);
 	}
 	return panel(
 		"parts",
 		width,
 		height,
 		c.frame,
-		[run(env.label, c.text, { bold: true }), run(`  · ${env.branch ?? "(detached)"}`, c.soft)],
+		// The branch, a name, shows whole or not at all: the sidebar has it whole.
+		[
+			run(env.label, c.text, { bold: true }),
+			...(widthOf([run(`${env.label}  · ${branch}`)]) <= width - 6
+				? [run(`  · ${branch}`, c.soft)]
+				: []),
+		],
 		[run(env.dir, c.dim)],
 		rows,
 	);

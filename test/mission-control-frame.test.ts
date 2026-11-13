@@ -273,7 +273,7 @@ test("a removal waiting for its word names the worktree, what goes and what stay
 		confirm: { namespace: "shop.worktree-1", suffix: "worktree-1", step: "remove" },
 	});
 	expect(out).toMatch(
-		/Remove worktree worktree-1\? Its apps, databases and git worktree go; its branch stays\. +y remove · any other key keeps it/,
+		/Remove worktree worktree-1\? Its apps, databases and git worktree go; its branch stays\. +y remove · any other key keeps.it/,
 	);
 });
 
@@ -283,7 +283,7 @@ test("uncommitted changes: the second word says they are lost and shows the name
 		confirm: { namespace: "shop.worktree-1", suffix: "worktree-1", step: "discard", typed: "work" },
 	});
 	expect(out).toMatch(
-		/worktree-1 has uncommitted changes, which removing it loses\. Type worktree-1 and enter to remove it anyway: work▏ +esc keeps it/,
+		/worktree-1 has uncommitted changes, which removing it loses\. Type worktree-1 and enter to remove it anyway: work▏ +esc.keeps.it/,
 	);
 });
 
@@ -465,4 +465,22 @@ test("which colours: NO_COLOR set to anything turns them off; else as many as th
 	expect(colorsFor(undefined, 2)).toBe("rgb");
 	expect(colorsFor(undefined, 1)).toBe("16");
 	expect(colorsFor(undefined, 0)).toBe("none");
+});
+
+test("short of room, the parts' headings give way before a part does, and a long branch leaves the title whole", () => {
+	const ns = "shop.worktree-1";
+	const branch = "feature/JIRA-1234-guest-checkout-flow";
+	const long = worktree(1, {
+		branch,
+		apps: [
+			app(ns, "web", { address: "https://web.worktree-1.shop.localhost:36859" }),
+			app(ns, "api", { address: "https://api.worktree-1.shop.localhost:36859" }),
+		],
+	});
+	const out = draw(snap([main, long]), initialView(ns), 80, 24);
+	expect(out).not.toContain("more");
+	expect(out).not.toContain("SERVICES");
+	expect(out).toMatch(/● db /);
+	expect(out).toMatch(/╭─ worktree-1 ─/);
+	expect(out).not.toMatch(/feature\/JIRA-1234-guest-checkout-flow?…/);
 });
