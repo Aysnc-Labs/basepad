@@ -14,6 +14,7 @@ import { BasepadError, shellQuote } from "./internal/exec.ts";
 import { Stopped } from "./internal/ports.ts";
 import { table } from "./internal/table.ts";
 import {
+	daemonId,
 	definitionsFile,
 	isRootOnLinux,
 	type Layout,
@@ -225,13 +226,19 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 			daemons[key] = await kindOf(service).prepare(service, placeOf(project, ports, here, key));
 		}
 	}
+	const servers = Object.values(ports.services).map((place) => place.daemon);
+	const portless = Object.keys(project.apps).filter((key) => project.apps[key]?.port === false);
 	for (const [key, app] of Object.entries(project.apps)) {
 		daemons[key] = {
 			run: withLocalBins(project, app.cwd, app.run),
 			dir: app.cwd,
 			port: ports.apps[key]?.port,
-			// So the proxy's start on a first request starts the servers first, wherever they run.
-			depends: Object.values(ports.services).map((place) => place.daemon),
+			// So the proxy's start on a first request starts the servers first, wherever they run,
+			// and the apps with no port, which no request reaches.
+			depends:
+				app.port === false
+					? servers
+					: [...servers, ...portless.map((name) => daemonId(ports.namespace, name))],
 		};
 	}
 	await supervisor.register({
@@ -247,7 +254,7 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 	const lay = layout(project, await machineWithPortFree(here, supervisor), suffix);
 	for (const line of await syncHosts(
 		lay.namespace,
-		Object.values(lay.apps).map((a) => a.host),
+		Object.values(lay.apps).flatMap((a) => a.host ?? []),
 	)) {
 		print(line);
 	}
@@ -275,7 +282,9 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 			}
 		}
 	}
-	for (const [key, app] of Object.entries(lay.apps)) outputs[key] = { url: app.url };
+	for (const [key, app] of Object.entries(lay.apps)) {
+		if (app.url !== undefined) outputs[key] = { url: app.url };
+	}
 	const files = envFiles(project, outputs);
 	if (main !== undefined) await copyEnvFiles(main.root, project.root, Object.keys(files));
 	await writeEnvFiles(project.root, files);
@@ -333,7 +342,11 @@ async function startApps(
 ): Promise<{ states: Record<string, DaemonState>; failure?: string }> {
 	const since = new Date(Date.now() - 1000);
 	const apps = Object.keys(project.apps);
-	const hosts = Object.fromEntries(Object.entries(lay.apps).map(([key, app]) => [key, app.host]));
+	const hosts = Object.fromEntries(
+		Object.entries(lay.apps).flatMap(([key, app]) =>
+			app.host === undefined ? [] : [[key, app.host]],
+		),
+	);
 	const states = await supervisor.start(lay.namespace, apps, APP_WAIT_MS, hosts);
 	const failed = apps.filter((key) => states[key] === "failed");
 	if (failed.length === 0) return { states };
@@ -463,7 +476,7 @@ async function stateTables(
 	if (Object.keys(lay.apps).length > 0) {
 		const rows = Object.entries(lay.apps).map(([key, app]) => [
 			key,
-			app.url,
+			app.url ?? "",
 			states[key] ?? "stopped",
 		]);
 		tables.push(table([["APP", "URL", "STATE"], ...rows]));

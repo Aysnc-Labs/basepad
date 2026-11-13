@@ -16,8 +16,8 @@ export interface Part {
 	/** Its key in the config. */
 	name: string;
 	state: PartState;
-	/** Where it is reached: an app's URL, a service's address. */
-	address: string;
+	/** Where it is reached: an app's URL, a service's address. None for an app with no port. */
+	address?: string;
 	/** A detail after the address: an app's port and pid, a service's kind. */
 	note?: string;
 	/** Why it failed, as the supervisor says (`exit code 1`). */
@@ -257,8 +257,9 @@ export function reduce(previous: View, key: Press, snapshot: Snapshot, page = 10
 			return { view: { ...view, notice: `Nothing here to ${action.kind}.` } };
 		return { view: { ...view, notice: `${action.doing} ${intent.label}…` }, intent };
 	}
-	// Open and copy take the selected part, else the environment's first app.
-	const target = focused ?? env?.apps[0];
+	// Open and copy take the selected part, else the environment's first app with an address.
+	const target = focused ?? env?.apps.find((app) => app.address !== undefined);
+	const noAddress = `${target?.name} listens on nothing, so it has no address.`;
 	switch (key) {
 		case "o":
 			if (target === undefined) return { view: { ...view, notice: "Nothing here to open." } };
@@ -266,9 +267,11 @@ export function reduce(previous: View, key: Press, snapshot: Snapshot, page = 10
 				const notice = `${target.name} is a service, with no page to open; c copies its address.`;
 				return { view: { ...view, notice } };
 			}
+			if (target.address === undefined) return { view: { ...view, notice: noAddress } };
 			return { view, intent: { kind: "open", url: target.address } };
 		case "c":
 			if (target === undefined) return { view: { ...view, notice: "Nothing here to copy." } };
+			if (target.address === undefined) return { view: { ...view, notice: noAddress } };
 			return { view, intent: { kind: "copy", text: target.address } };
 		case "q":
 		case "ctrl-c":

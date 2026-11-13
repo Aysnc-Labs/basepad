@@ -61,14 +61,15 @@ export function isRootOnLinux(): boolean {
  * never truncates.
  */
 export interface Layout {
+	/** Each app, with its domain and port; empty for an app whose `port` is `false`. */
 	apps: Record<
 		string,
 		{
-			host: string;
+			host?: string;
 			/** What `env` sees. The one place the URL form is decided. */
-			url: string;
+			url?: string;
 			/** The port the app is first offered as `PORT`; the supervisor moves past a taken one. */
-			port: number;
+			port?: number;
 		}
 	>;
 	/** Each service's port and folder, with the names its kind derives. */
@@ -137,7 +138,11 @@ export function layout(
 	}
 	const apps: Layout["apps"] = {};
 	const block = APP_PORT_BASE + (hash(name) % APP_PORT_BLOCKS) * APP_PORT_BLOCK;
-	for (const [i, key] of Object.keys(project.apps).entries()) {
+	for (const [i, [key, app]] of Object.entries(project.apps).entries()) {
+		if (app.port === false) {
+			apps[key] = {};
+			continue;
+		}
 		if (key.length > LABEL_MAX) {
 			fail(`app \`${key}\` is ${key.length} characters; a domain label allows ${LABEL_MAX}.`);
 		}

@@ -626,12 +626,15 @@ const LIVE = new Set(["running", "waiting", "restarting"]);
 
 /**
  * A daemon with a port is running once something listens there; until then it is starting.
- * pitchfork finds `active_port` some time after the daemon is ready, so until then the port it
- * gave the daemon stands in: else an app that just answered its first request reads as starting.
+ * pitchfork's `active_port` says it saw the daemon listen, so it is running with no connection of
+ * basepad's: a dev server logs each one, and mission control asks every second. pitchfork finds it
+ * some time after the daemon is ready, so until then basepad asks the port it gave the daemon:
+ * else an app that just answered its first request reads as starting.
  */
 async function stateOf(daemon: Listed): Promise<DaemonState> {
 	if (daemon.status === "running") {
-		const port = daemon.active_port ?? daemon.port?.[0];
+		if (daemon.active_port != null) return "running";
+		const port = daemon.port?.[0];
 		return port === undefined || (await listening(port)) ? "running" : "starting";
 	}
 	if (LIVE.has(daemon.status)) return "starting";

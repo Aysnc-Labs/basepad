@@ -170,6 +170,20 @@ test("status shows each app running with its URL", async () => {
 	expect(out.stdout).toContain(`cms  ${url("cms")}  running`);
 });
 
+test("status leaves an app alone once it listens: no connection of its own", async () => {
+	const connections = async () => (await box.get<{ connections: number }>(url("web"))).connections;
+	// Each GET is at most one connection of its own, through the proxy.
+	const statusConnects = async () => {
+		const before = await connections();
+		for (let i = 0; i < 3; i++) await box.basepad(shop, "status");
+		return (await connections()) - before > 1;
+	};
+	// Until the supervisor has seen it listen, status may still ask the port itself.
+	const until = Date.now() + 10_000;
+	while ((await statusConnects()) && Date.now() < until);
+	expect(await statusConnects()).toBe(false);
+});
+
 test("an app that exits on start is reported with its output, and up fails", async () => {
 	const dir = await box.project("broken", {
 		"basepad.config.ts": configFile(`{

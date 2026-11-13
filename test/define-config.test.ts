@@ -24,6 +24,14 @@ test("defineConfig types env's outputs from the config's services and apps", () 
 		// @ts-expect-error: no service or app is named `db`
 		env: ({ db }) => ({ ".env": { DATABASE_URL: db.url } }),
 	});
+	defineConfig({
+		name: "shop",
+		apps: { web: { run: "next dev" }, queue: { run: "php artisan queue:work", port: false } },
+		// @ts-expect-error: an app with no port has no URL
+		env: ({ web, queue }) => ({ ".env": { APP_URL: web.url, QUEUE_URL: queue.url } }),
+	});
+	// @ts-expect-error: `port` can only be `false`
+	defineConfig({ name: "shop", apps: { web: { run: "next dev", port: 3000 } } });
 	// @ts-expect-error: Postgres 16 is not offered
 	postgres({ version: 16 });
 	expect(config.name).toBe("shop");

@@ -249,7 +249,7 @@ async function environmentOf(
 			id,
 			name: key,
 			state: daemon?.state ?? "stopped",
-			address: app.url,
+			...(app.url === undefined ? {} : { address: app.url }),
 			...(running && daemon.port !== undefined
 				? { note: `:${daemon.port}${daemon.pid === undefined ? "" : `  pid ${daemon.pid}`}` }
 				: {}),
