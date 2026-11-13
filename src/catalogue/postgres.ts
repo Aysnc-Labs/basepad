@@ -1,16 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import {
-	copyFile,
-	type FileHandle,
-	mkdir,
-	open,
-	readdir,
-	readFile,
-	rename,
-	rm,
-	writeFile,
-} from "node:fs/promises";
+import { copyFile, mkdir, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Kind, Place, Snapshot } from "../catalogue.ts";
@@ -379,6 +369,11 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 				await sql(`create database ${identifier(staging)}`);
 				await stamp(sql, staging, owner);
 				await restore(pg, port, staging, from);
+				// A source with no statement in it (a BOM, comments, an empty dump) runs cleanly, and
+				// would swap in an empty database.
+				if (!(await createdAnything(pg, port, staging))) {
+					throw new BasepadError("It created nothing in the database.");
+				}
 			});
 			return from.description;
 		},
@@ -454,26 +449,39 @@ async function sourceOf(source: string): Promise<Source> {
 		if (start[0] === 0x1f && start[1] === 0x8b) {
 			throw new BasepadError(`${source} is gzipped. Unzip it, then import that.`);
 		}
-		if (!(await hasContent(file))) {
-			throw new BasepadError(
-				`${source} is empty, so nothing changed. Import a dump file or a postgres:// URL.`,
-			);
-		}
 		return { format: "plain", file: source, description: `the SQL file ${source}` };
 	} finally {
 		await file.close();
 	}
 }
 
-/** Whether `file` holds anything but whitespace, read only as far as its first other byte. */
-async function hasContent(file: FileHandle): Promise<boolean> {
-	const chunk = Buffer.alloc(64 * 1024);
-	for (let at = 0; ; ) {
-		const { bytesRead } = await file.read(chunk, 0, chunk.length, at);
-		if (bytesRead === 0) return false;
-		if (/\S/.test(chunk.toString("latin1", 0, bytesRead))) return true;
-		at += bytesRead;
-	}
+/**
+ * Whether database `name` holds anything a fresh one lacks: a relation, function, type or schema
+ * outside the system's, or an extension. An untouched `public` schema counts as nothing.
+ */
+async function createdAnything(pg: Tool, port: number, name: string): Promise<boolean> {
+	const user = (namespace: string) =>
+		`${namespace} not in (select oid from pg_namespace where nspname in ('pg_catalog', 'information_schema', 'pg_toast') or nspname like 'pg\\_%temp\\_%')`;
+	const anything = [
+		`select 1 from pg_class where ${user("relnamespace")}`,
+		`select 1 from pg_proc where ${user("pronamespace")}`,
+		`select 1 from pg_type where ${user("typnamespace")}`,
+		`select 1 from pg_namespace where ${user("oid")} and nspname <> 'public'`,
+		"select 1 from pg_extension where extname <> 'plpgsql'",
+	];
+	const out = await must(
+		pg.bin("psql"),
+		[
+			...connection(port, name),
+			"-tAX",
+			"-v",
+			"ON_ERROR_STOP=1",
+			"-c",
+			`select exists (${anything.join(" union all ")})`,
+		],
+		{ env: clientEnv() },
+	);
+	return out.trim() === "t";
 }
 
 /** Loads `from` into the empty database `to`, stopping at the first error. */

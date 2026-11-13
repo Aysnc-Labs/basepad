@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
 
-/** A source with nothing in it (an empty file, a failed download) never replaces the database. */
+/** A source that creates nothing (an empty file, a failed download) never replaces the database. */
 
 let box: Sandbox;
 let main: string;
@@ -28,20 +28,23 @@ beforeAll(async () => {
 }, 300_000);
 afterAll(() => box?.dispose());
 
-test("db import of an empty file is refused, and the data stays", async () => {
-	const empty = join(box.root, "empty.sql");
-	await writeFile(empty, "");
-	const result = await box.basepad(main, "db", "import", empty, "--yes");
-	expect(result.code).toBe(1);
-	expect(result.stderr).toMatch(/empty/i);
-	expect(await items()).toBe("keep");
-});
-
-test("db import of a file with only whitespace is refused, and the data stays", async () => {
-	const blank = join(box.root, "blank.sql");
-	await writeFile(blank, "\n  \t\n");
-	const result = await box.basepad(main, "db", "import", blank, "--yes");
-	expect(result.code).toBe(1);
-	expect(result.stderr).toMatch(/empty/i);
-	expect(await items()).toBe("keep");
-});
+// Each one has no statement in it: empty, blank, a BOM, comments, bare `;`, NUL bytes.
+for (const [name, body] of [
+	["empty.sql", ""],
+	["blank.sql", "\n  \t\n"],
+	["bom.sql", Buffer.from([0xef, 0xbb, 0xbf])], // an "empty" file saved as UTF-8 with BOM
+	["bom-newline.sql", Buffer.from([0xef, 0xbb, 0xbf, 0x0a])],
+	["comments.sql", "-- nothing here\n/* nor here */\n"],
+	["semicolons.sql", ";\n;\n"],
+	["nul.sql", Buffer.alloc(16)],
+] as const) {
+	test(`db import of ${name}, with no statement in it, is refused, and the data stays`, async () => {
+		const file = join(box.root, name);
+		await writeFile(file, body);
+		const result = await box.basepad(main, "db", "import", file, "--yes");
+		expect(result.code).toBe(1);
+		expect(result.stderr).toContain(`Could not import the SQL file ${file}`);
+		expect(result.stderr).toContain("It created nothing in the database.");
+		expect(await items()).toBe("keep");
+	});
+}
