@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	rmSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -141,4 +149,50 @@ test("one whose process was killed partway says so, with its last line", async (
 		"Could not add a worktree: it stopped partway. Its last line: ran worktree add",
 	]);
 	expect(existsSync(dir) && readdirSync(dir)).toEqual([]);
+});
+
+/**
+ * A record left on disk as if by an earlier view: `extra` sets its pid and start, or leaves them
+ * out as a view that crashed before its command ran does.
+ */
+function leftover(dir: string, extra: object, age = 0): void {
+	mkdirSync(dir, { recursive: true });
+	const base = join(dir, "1-1-left");
+	const record = { kind: "add", title: "Adding a worktree", before: [], ...extra };
+	writeFileSync(`${base}.json`, JSON.stringify(record));
+	writeFileSync(`${base}.log`, "Running `npm install`\n");
+	const then = (Date.now() - age) / 1000;
+	utimesSync(`${base}.json`, then, then);
+}
+
+test("a record whose pid is now another process's (reused, after a reboot) is not taken for running work", async () => {
+	const { dir } = basepad("");
+	// This test's own process, alive, but not the one the record started.
+	leftover(dir, { pid: process.pid, start: "not its start" });
+	expect(await takeWork(dir)).toEqual({
+		running: [],
+		finished: [
+			"Could not add a worktree: it stopped partway. Its last line: Running `npm install`",
+		],
+	});
+	expect(readdirSync(dir)).toEqual([]);
+});
+
+test("a record whose command never started is under way briefly, then given up, never hiding worktrees for good", async () => {
+	const { dir } = basepad("");
+	leftover(dir, {});
+	expect((await takeWork(dir)).running).toHaveLength(1);
+	leftover(dir, {}, 60_000);
+	expect((await takeWork(dir)).finished).toHaveLength(1);
+	expect(readdirSync(dir)).toEqual([]);
+});
+
+test("two views reading finished work at once: only one tells it, whole", async () => {
+	const { command, dir } = basepad(`console.log("Made worktree shop-1.");`);
+	await startWork({ dir, command, cwd: tmpdir(), order: { kind: "add" } });
+	for (let i = 0; i < 250 && !readdirSync(dir).some((n) => n.endsWith(".exit")); i++)
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	const [a, b] = await Promise.all([takeWork(dir), takeWork(dir)]);
+	expect([...(a?.finished ?? []), ...(b?.finished ?? [])]).toEqual(["Made worktree shop-1."]);
+	expect(readdirSync(dir)).toEqual([]);
 });

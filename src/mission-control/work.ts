@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Removal, Work } from "./model.ts";
 
@@ -22,9 +22,14 @@ interface Record {
 	title: string;
 	namespace?: string;
 	before?: string[];
-	/** The shell that runs the command and writes its exit code. */
-	pid: number;
+	/** The shell that runs the command and writes its exit code; none until it has started. */
+	pid?: number;
+	/** When that process started, as the system says (`startOf`): a pid alone may be reused. */
+	start?: string;
 }
+
+/** How long a record waits for its command to start before it is given up as never started. */
+const STARTING_MS = 30_000;
 
 /**
  * Starts `command` (the `basepad` command, as argv) with `worktree add` or `worktree rm`, in `cwd`,
@@ -45,6 +50,12 @@ export async function startWork(options: {
 		order.kind === "add"
 			? ["worktree", "add"]
 			: ["worktree", "rm", order.suffix, ...(order.force ? ["--force"] : [])];
+	const record: Record =
+		order.kind === "add"
+			? { kind: "add", title: "Adding a worktree", ...(before ? { before } : {}) }
+			: { kind: "remove", title: `Removing ${order.suffix}`, namespace: order.namespace };
+	// The record first, so whatever happens next leaves no output without one.
+	await writeFile(`${base}.json`, JSON.stringify(record));
 	// The shell outlives the view with the command, and writes the exit code once it ends.
 	const child = spawn(
 		"sh",
@@ -55,22 +66,16 @@ export async function startWork(options: {
 	await new Promise<void>((resolve, reject) => {
 		child.once("spawn", resolve);
 		child.once("error", reject);
+	}).catch(async (error: unknown) => {
+		await rm(`${base}.json`, { force: true });
+		throw error;
 	});
-	const record: Record =
-		order.kind === "add"
-			? {
-					kind: "add",
-					title: "Adding a worktree",
-					...(before ? { before } : {}),
-					pid: child.pid ?? 0,
-				}
-			: {
-					kind: "remove",
-					title: `Removing ${order.suffix}`,
-					namespace: order.namespace,
-					pid: child.pid ?? 0,
-				};
-	await writeFile(`${base}.json`, JSON.stringify(record));
+	const pid = child.pid as number;
+	const start = await startOf(pid);
+	await writeFile(
+		`${base}.json`,
+		JSON.stringify({ ...record, pid, ...(start === undefined ? {} : { start }) }),
+	);
 }
 
 /**
@@ -88,22 +93,56 @@ export async function takeWork(dir: string): Promise<{ running: Running[]; finis
 			() => undefined,
 		);
 		if (record === undefined) continue;
-		const output = (await readFile(`${base}.log`, "utf8").catch(() => ""))
-			.split("\n")
-			.filter((l) => l.trim() !== "");
-		const code = (await readFile(`${base}.exit`, "utf8").catch(() => "")).trim();
-		const { pid, ...work } = record;
-		if (code === "" && alive(pid)) {
-			const last = output.at(-1);
+		// The exit code before the output: once it is written, the output is whole.
+		const code = await exitOf(base);
+		if (code === "" && (await underWay(`${base}.json`, record))) {
+			const last = lines(await readFile(`${base}.log`, "utf8").catch(() => "")).at(-1);
+			const { pid: _, start: __, ...work } = record;
 			running.push({ ...work, ...(last === undefined ? {} : { line: last }) });
 			continue;
 		}
-		finished.push(outcome(record, code, output));
+		// Taken by renaming its record: of views reading at once, only the one that renames it tells it.
+		const taken = await rename(`${base}.json`, `${base}.taken`).then(
+			() => true,
+			() => false,
+		);
+		if (!taken) continue;
+		const output = lines(await readFile(`${base}.log`, "utf8").catch(() => ""));
+		finished.push(outcome(record, await exitOf(base), output));
 		await Promise.all(
-			[".json", ".log", ".exit"].map((ext) => rm(`${base}${ext}`, { force: true })),
+			[".taken", ".log", ".exit"].map((ext) => rm(`${base}${ext}`, { force: true })),
 		);
 	}
 	return { running, finished };
+}
+
+/** A job's exit code; empty while it runs, or when it was killed. */
+function exitOf(base: string): Promise<string> {
+	return readFile(`${base}.exit`, "utf8").then(
+		(text) => text.trim(),
+		() => "",
+	);
+}
+
+function lines(text: string): string[] {
+	return text.split("\n").filter((l) => l.trim() !== "");
+}
+
+/**
+ * Whether a record's command still runs: its process is there and started when the record says,
+ * so a pid reused by another process is not taken for it. A record whose command has not started
+ * yet is under way for a short while, then given up.
+ */
+async function underWay(file: string, record: Record): Promise<boolean> {
+	if (record.pid === undefined) {
+		const written = await stat(file).then(
+			(s) => s.mtimeMs,
+			() => 0,
+		);
+		return Date.now() - written < STARTING_MS;
+	}
+	const start = await startOf(record.pid);
+	return start !== undefined && start === record.start;
 }
 
 /** How finished work ended, from its exit code (none when killed) and its output. */
@@ -127,12 +166,21 @@ function firstAndLast(lines: string[]): string {
 	return lines.length <= 2 ? lines.join(" ") : `${lines[0]} … ${lines.at(-1)}`;
 }
 
-/** Whether a process is still there. */
-function alive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "EPERM";
+/**
+ * When process `pid` started, as a string to compare; none when it is gone. Linux's
+ * `/proc/<pid>/stat` gives it in clock ticks since boot; elsewhere (macOS), `ps`.
+ */
+async function startOf(pid: number): Promise<string | undefined> {
+	const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => undefined);
+	if (stat !== undefined) {
+		// The fields after the command's name, which is in parentheses and may hold spaces.
+		return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
 	}
+	if (process.platform === "linux") return undefined;
+	return new Promise((resolve) => {
+		execFile("ps", ["-o", "lstart=", "-p", String(pid)], (error, stdout) => {
+			const start = stdout.trim();
+			resolve(error || start === "" ? undefined : start);
+		});
+	});
 }
