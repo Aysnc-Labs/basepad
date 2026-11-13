@@ -5,6 +5,8 @@
 
 import type { OutputsOf, Service } from "./catalogue.ts";
 
+export type { MailpitOutputs, MailpitService } from "./catalogue/mailpit.ts";
+export { mailpit } from "./catalogue/mailpit.ts";
 // Each service kind's factory and types, from its module in the catalogue.
 export type {
 	PostgresOutputs,
@@ -13,6 +15,8 @@ export type {
 	PostgresWorktree,
 } from "./catalogue/postgres.ts";
 export { postgres } from "./catalogue/postgres.ts";
+export type { RedisOutputs, RedisService, RedisWorktree } from "./catalogue/redis.ts";
+export { redis } from "./catalogue/redis.ts";
 export type { Service };
 
 /** A process of the project's own that basepad runs and gives a domain. */

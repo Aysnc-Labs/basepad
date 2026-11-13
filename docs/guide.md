@@ -136,7 +136,7 @@ export default defineConfig({
 | Key        | Required | What it is                                                                                                                                |
 | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`     | yes      | The project's one key: a lowercase DNS label (letters, digits, hyphens). Every database and domain is built from it.                      |
-| `services` | no       | The services basepad provides, by key. The one kind is Postgres: `postgres()`, or `postgres({ version: 17 })`. 18 is the default. |
+| `services` | no       | The services basepad provides, by key: Postgres, `postgres()` or `postgres({ version: 17 })` (18 is the default), Redis, `redis()` or `redis({ worktree: "shared" })`, and [Mailpit](#mailpit), `mailpit()`. |
 | `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config, `port: false` for one that listens on nothing, and `domain: false` for one served at `https://localhost:$PORT`. |
 | `env`      | no       | A function from every service's and app's outputs to the env files to write: each file's path, relative to the config, to its keys.       |
 | `worktrees` | no      | How [worktrees](#worktrees) are made: `prefix` (default `worktree`) names them `<prefix>-<n>`; `dir`, relative to the config, is where they are checked out (default `<repository>/../<name>.worktrees`); `clone` lists untracked paths copied from main, such as `node_modules`; `setup` lists shell commands run once in each new worktree. |
@@ -157,6 +157,10 @@ A service gives:
 | `user`     | `postgres`                                                  |
 | `password` | `basepad`, a placeholder: local connections need none       |
 | `database` | `<name>_<key>`, with hyphens made underscores: `shop_db`    |
+
+Redis gives `url` (`redis://127.0.0.1:<port>`, with no database index: clients pick their own), `host` and `port`.
+
+Mailpit gives `url` (`smtp://main:basepad@127.0.0.1:<port>`; a worktree's user is its suffix), `host`, `port`, `user`, `password` (`basepad`, a placeholder: any is accepted) and `inbox` (`https://<key>.<name>.localhost`).
 
 An app gives `url`: `https://<key>.<name>.localhost`, with the proxy's port (`:7443`) while port 443 doesn't reach the proxy (Linux as a user, until `basepad setup`). An app's port isn't given: it changes from run to run.
 
@@ -187,6 +191,37 @@ basepad sets exactly the keys `env` returns, in the files it names:
 - Postgres's standard extensions and pgvector are there for `CREATE EXTENSION`. basepad enables none; see [Extensions](#extensions).
 - Data from another Postgres major version is refused, never converted. To change `version`, dump the database first.
 
+### Database commands: `basepad db`
+
+```sh
+npx basepad db save before-migration   # snapshot this environment's database
+npx basepad db load before-migration   # put it back; the snapshot stays
+npx basepad db snapshots               # label, service, database and size of each
+npx basepad db rm before-migration     # delete one
+npx basepad db import ./staging.dump   # replace it with a dump, after asking
+npx basepad db import postgres://me@staging.example.com/shop   # or another server's database
+npx basepad db export ./shop.dump      # a dump others can import; ./shop.sql for plain SQL
+```
+
+- They act on the database of the environment you run them in: inside a worktree, the worktree's, never main's. A `shared` service's database is main's, so a worktree refuses it; run the command in main.
+- With no label, `save` and `load` use `default`. Saving a label again replaces its snapshot. A label is lowercase letters, digits and inner hyphens; one that makes the database name past Postgres's 63 bytes is refused, with how much room is left.
+- With one database the service is implied; with several, name it: `--service db` (`-s db`).
+- A snapshot is a database on the same server, `<database>@<label>`, copied as a worktree's is: a file clone where the server offers one, else a template copy. They work while your app runs: its sessions on the database are ended, and it reconnects by itself (see the `Pool` note under Worktrees).
+- `load`, `save` over a label and `import` make the new database beside the old one, at `<database>~new`, and swap it in only once it is whole: one that fails leaves the database, and any snapshot of that label, as it was.
+- A snapshot an interrupted copy or drop leaves invalid shows `invalid` in `snapshots`, and `load` refuses it; `basepad db rm <label>` removes it.
+- `worktree rm` and `prune` delete a worktree's snapshots with it.
+- `import` reads a custom-format dump (`pg_dump -Fc`; it starts `PGDMP`) or a plain SQL file, telling them apart by their first bytes; or copies the database at a `postgres://` URL. A source that creates nothing (an empty file, one of only comments, an empty database) is refused, and the database stays as it was. It replaces the database: it asks first, naming it, and `--yes` (`-y`) answers; with no terminal and no `--yes` it changes nothing. Owners and grants are dropped: everything belongs to basepad's `postgres` user. A plain SQL file stops at its first error, so one naming roles needs `pg_dump --no-owner --no-privileges`, and it runs as written: one that connects to other databases (`pg_dump --create`, `pg_dumpall`) reaches them too.
+- `export` writes a custom-format dump, or plain SQL, without owners or grants, for a name ending `.sql`. With no file it writes the dump to standard output, for a pipe or `>`, and refuses a terminal. Your app stays connected while it runs.
+- The URL's server is read with this service's Postgres version's `pg_dump`, which reads that version and older ones.
+
+### Mailpit
+
+- `mail: mailpit()` catches every message the project sends: nothing reaches a real inbox. Read them at `https://mail.<name>.localhost`, the service's key as its domain; a key that is also an app's is refused.
+- One Mailpit per project, from mise, its SMTP server on `127.0.0.1` only. No other project shares it; main and every worktree do.
+- Each environment sends as its own SMTP user, `main` or the worktree's suffix, and Mailpit tags each message with it. Use `url`, or set your mailer's username to `user`, or mail arrives untagged.
+- Its SMTP port comes from the project's name, as Postgres's does. Its messages are kept across `down` and `up` in `~/.basepad/services/<name>/<key>`.
+- After `down`, opening the inbox starts Mailpit again.
+
 ### Worktrees
 
 A worktree is a second environment of the project, for working on another branch beside main. In main, run:
@@ -200,11 +235,12 @@ npx basepad worktree add --start  # starts its apps now
 
 - It is a git worktree, named `worktree-1`, `worktree-2` and so on: the lowest number no git worktree, branch or folder already has. It is checked out on a new branch of the same name from main's `HEAD`, or on `--branch`'s, beside the repository in `../<name>.worktrees`, so main's watchers never see it.
 - Each Postgres service gets a database `<name>_<key>_<suffix>` (`shop_db_worktree_1`) on main's server, holding a copy of main's data. `postgres({ worktree: "empty" })` gives an empty one instead, and `postgres({ worktree: "shared" })` uses main's own database.
+- Each Redis service gets a Redis of its own, empty; `redis({ worktree: "shared" })` uses main's. Redis keeps its data in memory: it starts empty and keeps nothing after it stops.
 - Its apps answer at `https://<app>.<suffix>.<name>.localhost`, beside main's.
 - Each env file `env` names starts as a copy of main's, secrets included, then basepad sets its keys for the worktree. A file the worktree already has is kept.
 - Each path in `worktrees.clone` is copied from main, copy-on-write where the filesystem can (APFS, btrfs, XFS) and fully otherwise, so the worktree's writes never reach main's files. A path main lacks is skipped with a note. A full copy is slow: about 10 s for a `node_modules` of 34,000 files on Linux's ext4.
 - Then the commands in `worktrees.setup` run in order in the worktree, with its env files written. The first that fails is shown with its output, the rest don't run, `worktree add` exits 1 and the worktree is kept.
-- `worktree add` starts no app: an app starts when its domain is first opened, with main's services if they are stopped, or straight away with `--start`. After `down`, an app stays stopped until `up`. `basepad up`, `down` and `status` in the worktree's folder act on it, with the config in that folder. A worktree's services are main's servers, so `up` there starts main's services too, and `down` there stops only the worktree's apps.
+- `worktree add` starts no app: an app starts when its domain is first opened, with main's services if they are stopped, or straight away with `--start`. After `down`, an app stays stopped until `up`. `basepad up`, `down` and `status` in the worktree's folder act on it, with the config in that folder. A worktree's services are main's servers, apart from a Redis of its own, so `up` there starts main's services too, and `down` there stops only the worktree's apps.
 - The copy works while main's app is connected. basepad closes main's database to connections for the copy, ends its sessions and opens it again; main's app reconnects by itself. A node-postgres `Pool` needs an `error` listener (`pool.on("error", …)`), or an ended idle client crashes its process. If a copy is interrupted, the next `basepad up` opens main's database again.
 - The copy is a file clone where the server offers one (Postgres 18 on APFS, btrfs or XFS with reflink: copy-on-write), else a template copy (about 1 s per GB on Linux), else dump and restore. The output says which.
 
@@ -272,6 +308,10 @@ Run them anywhere in the project, as `npx basepad <command>`. `basepad --help` l
 | `basepad worktree ls` | Nothing. Lists main's worktrees with their branch and folder. | Anything. |
 | `basepad worktree rm <worktree>` | Stops the worktree's apps, drops its databases, removes its registration and its git worktree. | Its branch, main's data. Uncommitted work: it refuses unless `--force`. |
 | `basepad prune` | After asking: removes what worktrees whose folder is gone left, and the data of services no longer in the config. | Anything you did not say yes to. Main's databases of services still in the config. |
+| `basepad db save [label]`, `db load [label]` | `save` makes a snapshot of this environment's database, replacing one of the same label; `load` replaces the database with it. Ends the database's sessions. | Other environments' databases and snapshots. `load` keeps the snapshot. |
+| `basepad db snapshots`, `db rm <label>` | `snapshots` changes nothing and lists this environment's; `rm` deletes one. | Anything else. |
+| `basepad db import <file or url>` | After asking, or with `--yes`: replaces this environment's database with the dump or the URL's database. Ends the database's sessions. | Other environments' databases. The URL's database: it is only read. The database, when the source creates nothing or fails to load. |
+| `basepad db export [file]` | Writes `file`, or standard output. | The database. |
 | `basepad setup`  | The machine, once: trusts basepad's certificate authority and makes URLs port-free. See [below](#port-free-urls-basepad-setup).                                                        | Any project. A pitchfork setup of your own: it refuses rather than overwrite it.  |
 
 More on `up`:
@@ -279,7 +319,7 @@ More on `up`:
 - A second `up` starts only what isn't running, so it is fast and safe to repeat.
 - On a terminal, `up` opens mission control at once, while it starts things, so their logs show from the start: every environment (main and each worktree, numbered) with its state, the selected one's apps and services with state and address, and their logs live. Its foot lists the keys used most; `?` shows them all:
   - `↑` `↓` pick one of the environment's apps or services, and narrow the logs to it; above the first, all of them. `tab` and `shift-tab` (or `←` `→`) go to the next and previous environment; `1`–`9` go straight to one.
-  - `enter` opens the selected app in the browser; `c` copies the selected address (a database's URL, say). With none selected, both take the environment's first app.
+  - `enter` opens the selected app, or a service's page (Mailpit's inbox), in the browser; `c` copies the selected address (a database's URL, say). With none selected, both take the environment's first app.
   - `space` stops the selected app or service if it runs, else starts it; with none selected it asks you to select one, so one key never stops everything (`basepad down` does). `r` restarts the selected one, or with none selected the whole environment (main's apps and services, or a worktree's apps). A stopped app stays stopped: a request does not start it again until `space`.
   - `a` adds a worktree, as `basepad worktree add` does; it shows in the list once it is made, and its progress shows meanwhile. `d` removes the selected worktree, as `basepad worktree rm` does, after you press `y`. One with uncommitted changes asks again: type its name and press enter to lose them. Either runs in a process of its own: `q` closes the view at once and it goes on, and `up` again shows it still under way.
   - `PgUp` `PgDn` scroll back, which pauses the logs; `End` goes back to live. `/` searches them (ignoring case), `n` and `N` step to older and newer matches.

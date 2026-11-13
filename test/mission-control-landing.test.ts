@@ -49,10 +49,19 @@ test("once stopped, each is safe, and up relaunches", () => {
 	expect(out).toContain("`basepad up` relaunches");
 });
 
-test("a worktree's landing says its services are main's and keep running", () => {
-	const out = draw({ environment: "worktree-1", parts: ["web"], state: "stopped" });
+test("a worktree's landing names the services that run on main's and keep running", () => {
+	const out = draw({
+		environment: "worktree-1",
+		parts: ["web", "cache"],
+		kept: ["db"],
+		state: "stopped",
+	});
 	expect(out).toContain("ALIF  ·  WORKTREE-1");
-	expect(out).toContain("Its services are main's and keep running.");
+	expect(out).toContain("`db` runs on main's and keeps running.");
+	expect(draw({ kept: ["db", "mail"], state: "stopped" })).toContain(
+		"`db`, `mail` run on main's and keep running.",
+	);
+	expect(draw({ state: "stopped" })).not.toContain("main's");
 });
 
 test("a stop that fails is no-go", () => {

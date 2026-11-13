@@ -11,13 +11,14 @@ A feature is anything a user starts from: an import, a config key, a command or 
 
 ```mermaid
 flowchart LR
-  CLI["basepad (launcher, cli)"] --> Commands["commands: init, up, down, status, setup, worktree add, ls, rm, prune"]
+  CLI["basepad (launcher, cli)"] --> Commands["commands: init, up, down, status, setup, worktree add, ls, rm, prune, db save, load, snapshots, rm, import, export"]
   Commands --> Worktrees["worktrees"]
   Worktrees -- "git" --> Git["git"]
   Commands --> Config["config: basepad.config.ts"]
   Commands --> Layout["layout (pure)"]
   Layout --> Catalogue
-  Commands --> Catalogue["catalogue: postgres"]
+  Commands --> Catalogue["catalogue: postgres, redis, mailpit"]
+  Commands -- "db verbs, where a kind offers them" --> Catalogue
   Commands --> Supervisor
   Commands -- "up, on a terminal" --> MissionControl["mission control (Ink)"]
   MissionControl -- "reads states, follows logs; start, stop" --> Supervisor
@@ -29,6 +30,8 @@ flowchart LR
   Supervisor --> Tools
   Tools -- "exec" --> Mise["mise"]
   Catalogue -- "SQL" --> Postgres["Postgres server"]
+  Catalogue -- "PING" --> Redis["Redis server, per environment"]
+  Supervisor -- "proxy: the inbox's domain" --> Mailpit["Mailpit (one per project)"]
 ```
 
 ## Config
@@ -58,7 +61,7 @@ Paths: src/init.ts
 
 Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.localhost`, starts services, sets the env keys the config names; stops them (on a terminal, the landing in `src/mission-control/launch.ts` shows them coming down); shows their state.
 Entry: `basepad up [-d] [--claim]`, `basepad down`, `basepad status`
-Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts, src/mission-control/launch.ts, src/tls.ts
+Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts, src/internal/processes.ts, src/mission-control/launch.ts, src/tls.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### Mission control
@@ -85,11 +88,23 @@ Purpose: Claude Code's `WorktreeCreate` and `WorktreeRemove` hooks go through ba
 Entry: `basepad worktree add --claude`, `basepad worktree rm --claude`
 Paths: src/claude-hooks.ts, src/commands.ts
 
+### `basepad db save`, `load`, `snapshots`, `rm`, `import` and `export`
+
+Purpose: snapshots of the database of the environment the command runs in (a worktree's, never main's, from inside one): save one by label (`default` when none), load it back while the app runs, list them with their size, delete one. A snapshot is a database `<database>@<label>` on the same server, found by name with no list kept, made by the Worktrees copy routine; a worktree's go with it on `worktree rm` and `prune`. The verbs are the Catalogue's optional `database` capability on a kind, so commands pick the service (`--service`, implied with one database) and the kind does the rest. `import` replaces the database with a dump file (custom format or plain SQL, told by its first bytes) or a `postgres://` URL's database, after asking with its name (`--yes` answers); each of `load`, `save` over a label and `import` makes the new database at `<database>~new` and swaps it in only once it is whole, so one that fails changes nothing. `export` writes a custom-format dump, plain SQL for a `.sql` name, or the dump to standard output with nothing else there.
+Entry: `basepad db save [label]`, `basepad db load [label]`, `basepad db snapshots`, `basepad db rm <label>`, `basepad db import <file or url> [--yes]`, `basepad db export [file]`, each with `--service <key>`
+Paths: src/commands.ts, src/catalogue.ts, src/catalogue/postgres.ts
+
 ### `basepad setup`
 
 Purpose: one-time machine setup: trusts basepad's CA, and on Linux makes URLs port-free; adds domains to `/etc/hosts` where `*.localhost` doesn't resolve. On a terminal, its plan is a checklist beside a rocket on its pad (`launch.ts`), which lifts off once URLs are port-free.
 Entry: `basepad setup [--dry-run] [--yes]`
 Paths: src/setup.ts, src/hosts.ts, src/mission-control/launch.ts
+
+### Port 443 on macOS
+
+Purpose: port-free URLs on macOS with no privilege and no pf (pf turns off iCloud Private Relay): `serve` starts a forwarder on the wildcard address's port 443 that passes connections from this Mac to the proxy, refuses the network's, and stops with the supervisor. Off when `BASEPAD_PROXY_PORT` is set, or something else answers on 443.
+Entry: `basepad up` on macOS
+Paths: src/forward.ts, src/supervisor.ts, src/layout.ts
 
 ### Port 443 on macOS
 
@@ -104,3 +119,15 @@ Paths: src/forward.ts, src/supervisor.ts, src/layout.ts
 Purpose: a Postgres 17 or 18 server per project, with its database stamped to the owning checkout, pgvector available, and connection values for `env`.
 Entry: `services: { db: postgres({ version }) }` in the config
 Paths: src/catalogue.ts, src/catalogue/postgres.ts, src/internal/service-user.ts
+
+### Redis
+
+Purpose: a Redis per environment, in memory, on a port derived from the environment's name (the next free one when taken, and env files follow), with `url`, `host` and `port` for `env`. A worktree's is its own and empty, started only with the worktree (`up`, `--start` or the first request to its apps), stopped by its `down` and removed by `worktree rm`; `worktree: "shared"` gives it main's.
+Entry: `services: { cache: redis({ worktree }) }` in the config
+Paths: src/catalogue.ts, src/catalogue/redis.ts, src/layout.ts
+
+### Mailpit
+
+Purpose: one Mailpit per project that catches all its mail, shared by its worktrees: the inbox at `https://<key>.<name>.localhost` (the Catalogue's `web`: a service asking Layout for a domain, which the supervisor's proxy serves), SMTP `url`, `host`, `port` and `user` for `env`, each environment's mail tagged by its SMTP user (`main` or the suffix).
+Entry: `services: { mail: mailpit() }` in the config
+Paths: src/catalogue.ts, src/catalogue/mailpit.ts, src/layout.ts

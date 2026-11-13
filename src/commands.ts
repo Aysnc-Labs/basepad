@@ -1,9 +1,16 @@
 import { existsSync } from "node:fs";
 import { readdir, realpath, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { z } from "zod";
-import { kindOf, type Service, type WorktreeData } from "./catalogue.ts";
+import {
+	type Database,
+	kindOf,
+	type NamesOf,
+	type Place,
+	type Service,
+	type WorktreeData,
+} from "./catalogue.ts";
 import { readHookInput } from "./claude-hooks.ts";
 import { CONFIG_FILE, LABEL, loadProject, type Project } from "./config.ts";
 import { copyEnvFiles, writeEnvFiles } from "./env-files.ts";
@@ -23,6 +30,7 @@ import {
 	type Machine,
 	machine,
 	namespaceOf,
+	ownServers,
 	placeOf,
 	servicesHome,
 	suffixOf,
@@ -68,6 +76,12 @@ export interface Command {
 	flags: Record<string, Flag>;
 	run(invocation: Invocation): Promise<void>;
 }
+
+const SERVICE_FLAG: Flag = {
+	short: "s",
+	value: "key",
+	description: "The database service to act on; needed when there are several",
+};
 
 export const COMMANDS: Record<string, Command> = {
 	init: {
@@ -152,6 +166,45 @@ export const COMMANDS: Record<string, Command> = {
 		},
 		run: prune,
 	},
+	"db save": {
+		summary: "Save this environment's database as a snapshot, replacing one of the same label",
+		args: ["label?"],
+		flags: { service: SERVICE_FLAG },
+		run: dbSave,
+	},
+	"db load": {
+		summary: "Replace this environment's database with a snapshot, which is kept",
+		args: ["label?"],
+		flags: { service: SERVICE_FLAG },
+		run: dbLoad,
+	},
+	"db snapshots": {
+		summary: "List this environment's snapshots",
+		flags: {},
+		run: dbSnapshots,
+	},
+	"db rm": {
+		summary: "Delete one of this environment's snapshots",
+		args: ["label"],
+		flags: { service: SERVICE_FLAG },
+		run: dbRm,
+	},
+	"db import": {
+		summary:
+			"Replace this environment's database with a dump file or a postgres:// URL's, after asking",
+		args: ["file or url"],
+		flags: {
+			service: SERVICE_FLAG,
+			yes: { short: "y", description: "Replace the database without asking" },
+		},
+		run: dbImport,
+	},
+	"db export": {
+		summary: "Write a dump of this environment's database to a file, or to standard output",
+		args: ["file?"],
+		flags: { service: SERVICE_FLAG },
+		run: dbExport,
+	},
 };
 
 /** How long `up` waits for apps to listen or fail before it shows their state and returns. */
@@ -200,10 +253,16 @@ interface Context {
 
 /**
  * Makes an environment ready to start its apps: registers its definitions, starts its services
- * (main's, in a worktree) and provisions them, and writes its env files. Starts no app. A worktree
- * needs main ready first.
+ * (main's, in a worktree, and its own servers) and provisions them, and writes its env files.
+ * Starts no app. A worktree needs main ready first. Main's servers always start: every
+ * environment's services need them. Of a worktree's own servers, those `start` picks (all by
+ * default); the rest are left to its first start, and its env files say where they will listen.
  */
-async function ready(environment: Environment, context: Context): Promise<Layout> {
+async function ready(
+	environment: Environment,
+	context: Context,
+	{ start = () => true }: { start?: (key: string) => boolean } = {},
+): Promise<Layout> {
 	const { project, suffix, main } = environment;
 	const { here, supervisor, print } = context;
 	// Ports, folders and databases; the URL form waits for the supervisor, which answers on 443.
@@ -222,12 +281,10 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 		);
 	}
 	const daemons: Record<string, Daemon> = {};
-	// Each service has one server for all of a project's environments, run in main's namespace.
-	if (suffix === undefined) {
-		for (const key of services) {
-			const service = project.services[key] as Service;
-			daemons[key] = await kindOf(service).prepare(service, placeOf(project, ports, here, key));
-		}
+	// Main's servers, and a worktree's own; a worktree's other services run on main's.
+	for (const key of ownServers(ports)) {
+		const service = project.services[key] as Service;
+		daemons[key] = await kindOf(service).prepare(service, placeOf(project, ports, here, key));
 	}
 	const servers = Object.values(ports.services).map((place) => place.daemon);
 	// No request reaches these, so the apps with a domain start them.
@@ -268,34 +325,50 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 		for (const line of await trustAsRoot(supervisor)) print(line);
 	}
 	const lay = layout(project, await machineWithPortFree(here, supervisor), suffix);
-	for (const line of await syncHosts(
-		lay.namespace,
-		Object.values(lay.apps).flatMap((a) => a.host ?? []),
-	)) {
+	// Services' domains are main's, as the services are.
+	const domains = Object.values(lay.services).flatMap((place) =>
+		place.web === undefined || suffix !== undefined ? [] : [place.web.host],
+	);
+	for (const line of await syncHosts(lay.namespace, [
+		...Object.values(lay.apps).flatMap((a) => a.host ?? []),
+		...domains,
+	])) {
 		print(line);
 	}
 	const since = new Date(Date.now() - 1000);
 	const outputs: Record<string, unknown> = {};
-	if (services.length > 0) {
-		const states = await supervisor.start(lay.mainNamespace, services, APP_WAIT_MS, {});
-		const failed = services.filter((key) => states[key] === "failed");
+	const own = ownServers(lay);
+	const runsIn = (key: string) => (own.includes(key) ? lay.namespace : lay.mainNamespace);
+	const started = services.filter((key) => runsIn(key) === lay.mainNamespace || start(key));
+	for (const namespace of new Set(started.map(runsIn))) {
+		const keys = started.filter((key) => runsIn(key) === namespace);
+		const hosts = Object.fromEntries(
+			keys.flatMap((key) => {
+				const web = lay.services[key]?.web;
+				return web === undefined ? [] : [[key, web.host]];
+			}),
+		);
+		const states = await supervisor.start(namespace, keys, APP_WAIT_MS, hosts);
+		const failed = keys.filter((key) => states[key] === "failed");
 		if (failed.length > 0)
-			throw new BasepadError(await failures(supervisor, lay.mainNamespace, failed, since));
-		for (const key of services) {
-			const service = project.services[key] as Service;
-			try {
-				outputs[key] = await kindOf(service).provision(service, placeOf(project, lay, here, key), {
-					claim: context.claim,
-					print,
-					stopped: async () => {
-						const state = (await supervisor.status(lay.mainNamespace))[key];
-						return state === "failed" || state === "stopped";
-					},
-				});
-			} catch (error) {
-				if (!(error instanceof Stopped)) throw error;
-				throw new BasepadError(await failures(supervisor, lay.mainNamespace, [key], since));
-			}
+			throw new BasepadError(await failures(supervisor, namespace, failed, since));
+	}
+	for (const key of services) {
+		const service = project.services[key] as Service;
+		const namespace = runsIn(key);
+		try {
+			outputs[key] = await kindOf(service).provision(service, placeOf(project, lay, here, key), {
+				claim: context.claim,
+				started: started.includes(key),
+				print,
+				stopped: async () => {
+					const state = (await supervisor.status(namespace))[key];
+					return state === "failed" || state === "stopped";
+				},
+			});
+		} catch (error) {
+			if (!(error instanceof Stopped)) throw error;
+			throw new BasepadError(await failures(supervisor, namespace, [key], since));
 		}
 	}
 	for (const [key, app] of Object.entries(lay.apps)) {
@@ -338,9 +411,7 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const { supervisor, here } = context;
 	const lay = await ready(environment, context);
 	const { states, failure } = await startApps(supervisor, project, lay);
-	print(
-		await stateTables(environment, lay, here, await withServices(supervisor, project, lay, states)),
-	);
+	print(await stateTables(environment, lay, here, await withServices(supervisor, lay, states)));
 	if (failure !== undefined) throw new BasepadError(failure);
 }
 
@@ -400,9 +471,7 @@ async function upOnTerminal(
 	if (error !== undefined) throw error;
 	if (outcome === undefined) return;
 	const { lay, states, failure } = outcome;
-	print(
-		await stateTables(environment, lay, here, await withServices(supervisor, project, lay, states)),
-	);
+	print(await stateTables(environment, lay, here, await withServices(supervisor, lay, states)));
 	if (failure !== undefined) throw new BasepadError(failure);
 }
 
@@ -461,7 +530,8 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 		const { project } = environment;
 		for (const note of await clonePaths(main.root, project.root, project.worktrees.clone))
 			say(note);
-		lay = await ready(environment, context);
+		// Its own servers with its apps: now with `--start`, else on their first start.
+		lay = await ready(environment, context, { start: () => flags.start === true });
 	} catch (error) {
 		if (!(error instanceof BasepadError)) throw error;
 		throw new BasepadError(
@@ -483,7 +553,7 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	if (flags.json === true) {
 		print(JSON.stringify({ name: suffix, path: root }));
 	} else {
-		const all = await withServices(context.supervisor, environment.project, lay, states);
+		const all = await withServices(context.supervisor, lay, states);
 		say(await stateTables(environment, lay, context.here, all));
 		say("");
 		say(
@@ -494,17 +564,17 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	if (failure !== undefined) throw new BasepadError(failure);
 }
 
-/** A worktree's daemon states with its services', which run in main's namespace. */
+/** A worktree's daemon states with those of its services that run in main's namespace. */
 async function withServices(
 	supervisor: Supervisor,
-	project: Project,
-	lay: Pick<Layout, "suffix" | "mainNamespace">,
+	lay: Pick<Layout, "namespace" | "mainNamespace" | "services">,
 	states: Record<string, DaemonState>,
 ): Promise<Record<string, DaemonState>> {
-	if (lay.suffix === undefined) return states;
+	const own = ownServers(lay);
+	const mains = Object.keys(lay.services).filter((key) => !own.includes(key));
+	if (mains.length === 0) return states;
 	const main = await supervisor.status(lay.mainNamespace);
-	const services = Object.keys(project.services).map((key) => [key, main[key] ?? "stopped"]);
-	return { ...states, ...Object.fromEntries(services) };
+	return { ...states, ...Object.fromEntries(mains.map((key) => [key, main[key] ?? "stopped"])) };
 }
 
 /** The machine with `portFree` asked from its port 443, once the supervisor runs. */
@@ -593,14 +663,15 @@ async function failures(
 async function down({ cwd, print }: Invocation): Promise<void> {
 	const { project, suffix } = await environmentAt(cwd);
 	const supervisor = await openSupervisor(machine(process.env), print);
-	const { namespace } = layout(project, machine(process.env), suffix);
+	const lay = layout(project, machine(process.env), suffix);
+	const { namespace } = lay;
 	const apps = Object.keys(project.apps);
-	// On a terminal, the landing shows while they stop: its apps, and its services in main.
+	// Its own servers stop with its apps; those on main's keep running for main.
+	const own = ownServers(lay);
+	const mains = Object.keys(project.services).filter((key) => !own.includes(key));
+	// On a terminal, the landing shows while they stop.
 	const landed = process.stdout.isTTY
-		? await startLanding(project.name, suffix, [
-				...apps,
-				...(suffix === undefined ? Object.keys(project.services) : []),
-			])
+		? await startLanding(project.name, suffix, [...apps, ...own], mains)
 		: undefined;
 	try {
 		// Held first, so no request starts an app again while it stops.
@@ -614,16 +685,21 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 		await landed.land();
 		return;
 	}
-	// A worktree's services are main's, which keeps them.
+	const names = (keys: string[]) => keys.map((key) => `\`${key}\``).join(", ");
 	print(
 		suffix === undefined
 			? `Stopped ${project.name}'s apps and services.`
-			: `Stopped worktree ${suffix}'s apps; its services are main's and keep running.`,
+			: `Stopped worktree ${suffix}'s apps${own.length > 0 ? ` and ${names(own)}` : ""}.${mains.length > 0 ? ` ${names(mains)} ${mains.length > 1 ? "run" : "runs"} on main's and keep${mains.length > 1 ? "" : "s"} running.` : ""}`,
 	);
 }
 
 /** Opens the landing for an environment's apps and services on the terminal. */
-async function startLanding(project: string, suffix: string | undefined, parts: string[]) {
+async function startLanding(
+	project: string,
+	suffix: string | undefined,
+	parts: string[],
+	kept: string[],
+) {
 	const [{ landing }, { colorsFor }, { default: chalk }] = await Promise.all([
 		import("./mission-control/launch.ts"),
 		import("./mission-control/frame.ts"),
@@ -633,6 +709,7 @@ async function startLanding(project: string, suffix: string | undefined, parts: 
 		project,
 		environment: suffix ?? "main",
 		parts,
+		kept,
 		color: colorsFor(process.env.NO_COLOR, chalk.level),
 	});
 }
@@ -647,12 +724,7 @@ async function status({ cwd, print }: Invocation): Promise<void> {
 	}
 	const supervisor = await openSupervisor(here, print);
 	const ports = layout(project, here, suffix);
-	const states = await withServices(
-		supervisor,
-		project,
-		ports,
-		await supervisor.status(ports.namespace),
-	);
+	const states = await withServices(supervisor, ports, await supervisor.status(ports.namespace));
 	// With no supervisor running nothing answers on 443, so the URL form is the port's default.
 	const lay = layout(
 		project,
@@ -695,7 +767,6 @@ async function printWorktrees(
 			const ports = layout(environment.project, here, tree.suffix);
 			const states = await withServices(
 				supervisor,
-				environment.project,
 				ports,
 				await supervisor.status(ports.namespace),
 			);
@@ -818,16 +889,15 @@ async function removeEnvironment(
 	const lay = layout(main, here);
 	const tree = worktreeLayout(main, here, suffix);
 	for (const [key, service] of Object.entries(main.services)) {
+		const store = kindOf(service).worktreeData;
+		if (store === undefined) continue;
 		const place = placeOf(main, lay, here, key);
 		// Its data by name or stamp; with no names that fit, by its stamp among every worktree's.
 		const data =
 			tree === undefined
-				? (await kindOf(service).worktreeData(service, place)).filter((d) => d.owner === root)
-				: await kindOf(service).worktreeData(service, {
-						...placeOf(main, tree, here, key),
-						owner: root,
-					});
-		await kindOf(service).dropWorktreeData(
+				? (await store.list(service, place)).filter((d) => d.owner === root)
+				: await store.list(service, { ...placeOf(main, tree, here, key), owner: root });
+		await store.drop(
 			service,
 			place,
 			data.map((d) => d.name),
@@ -865,7 +935,9 @@ async function leftoversOf(
 	const lay = layout(main, here);
 	const data: Leftovers["data"] = [];
 	for (const [key, service] of Object.entries(main.services)) {
-		const found = await kindOf(service).worktreeData(service, placeOf(main, lay, here, key));
+		const store = kindOf(service).worktreeData;
+		if (store === undefined) continue;
+		const found = await store.list(service, placeOf(main, lay, here, key));
 		const gone = found.filter((d) => d.owner !== "" && !existsSync(d.owner));
 		if (gone.length > 0) data.push({ key, data: gone });
 	}
@@ -958,7 +1030,7 @@ async function removeLeftovers(main: Project, left: Leftovers, context: Context)
 	const lay = layout(main, here);
 	for (const { key, data } of left.data) {
 		const service = main.services[key] as Service;
-		await kindOf(service).dropWorktreeData(
+		await kindOf(service).worktreeData?.drop(
 			service,
 			placeOf(main, lay, here, key),
 			data.map((d) => d.name),
@@ -978,4 +1050,198 @@ async function ask(question: string): Promise<boolean | undefined> {
 	const answer = await prompt.question(`${question} [y/N] `);
 	prompt.close();
 	return /^y(es)?$/i.test(answer.trim());
+}
+
+/** The label `db save` and `db load` use when given none. */
+const DEFAULT_LABEL = "default";
+
+/** One database service of the environment a `db` command runs in. */
+interface DatabaseService {
+	key: string;
+	service: Service;
+	database: Database<Service, NamesOf<Service>>;
+}
+
+/** A database service on its running server, where its kind's `db` commands act. */
+type DatabaseTarget = DatabaseService & { place: Place<NamesOf<Service>> };
+
+/** The environment `cwd` is in, with its database services; throws when it has none. */
+async function databaseServicesAt(
+	cwd: string,
+): Promise<{ environment: Environment; services: [DatabaseService, ...DatabaseService[]] }> {
+	const environment = await environmentAt(cwd);
+	const { project } = environment;
+	const [first, ...rest] = Object.entries(project.services).flatMap(([key, service]) => {
+		const { database } = kindOf(service);
+		return database === undefined ? [] : [{ key, service, database }];
+	});
+	if (first === undefined) {
+		throw new BasepadError(`${project.file} names no database service.`);
+	}
+	return { environment, services: [first, ...rest] };
+}
+
+/**
+ * The database a `db` command acts on: `--service`'s, or the environment's one database. With
+ * several and no `--service`, says which there are.
+ */
+function chosen(
+	project: Project,
+	services: [DatabaseService, ...DatabaseService[]],
+	wanted: unknown,
+): DatabaseService {
+	const names = services.map(({ key }) => `\`${key}\``).join(", ");
+	if (typeof wanted === "string") {
+		const found = services.find(({ key }) => key === wanted);
+		if (found === undefined) {
+			throw new BasepadError(
+				`${project.file} has no database service \`${wanted}\`. Its databases: ${names}.`,
+			);
+		}
+		return found;
+	}
+	const [only, ...more] = services;
+	if (more.length > 0) {
+		throw new BasepadError(
+			`${project.file} has several databases: ${names}. Name one with \`--service <key>\`.`,
+		);
+	}
+	return only;
+}
+
+/**
+ * Makes the environment ready as `up` makes it, without starting apps, for `db` commands on
+ * `services`: of a worktree's own servers, only theirs start. Resolves to what puts a database
+ * service on its server.
+ */
+async function readyFor(
+	environment: Environment,
+	print: Invocation["print"],
+	services: DatabaseService[],
+): Promise<(service: DatabaseService) => DatabaseTarget> {
+	const keys = services.map(({ key }) => key);
+	const context = await open(environment, {}, print);
+	const lay = await ready(environment, context, { start: (key) => keys.includes(key) });
+	return (service) => ({
+		...service,
+		place: placeOf(environment.project, lay, context.here, service.key),
+	});
+}
+
+/** The database a `db` command acts on, chosen as `chosen` says, ready on its server. */
+async function databaseAt({ cwd, flags, print }: Invocation): Promise<DatabaseTarget> {
+	const { environment, services } = await databaseServicesAt(cwd);
+	const service = chosen(environment.project, services, flags.service);
+	const onServer = await readyFor(environment, print, [service]);
+	return onServer(service);
+}
+
+/** A snapshot label given, or the default; a lowercase DNS label, as suffixes are. */
+function labelOf(args: string[]): string {
+	const [label = DEFAULT_LABEL] = args;
+	if (!LABEL.test(label)) {
+		throw new BasepadError(
+			`A snapshot label must be lowercase letters, digits and inner hyphens; got \`${label}\`.`,
+		);
+	}
+	return label;
+}
+
+async function dbSave(invocation: Invocation): Promise<void> {
+	const label = labelOf(invocation.args);
+	const { key, service, place, database } = await databaseAt(invocation);
+	await database.save(service, place, label);
+	invocation.print(`Saved \`${key}\` as snapshot ${label}.`);
+}
+
+async function dbLoad(invocation: Invocation): Promise<void> {
+	const label = labelOf(invocation.args);
+	const { key, service, place, database } = await databaseAt(invocation);
+	await database.load(service, place, label);
+	invocation.print(`Loaded snapshot ${label} into \`${key}\`.`);
+}
+
+async function dbRm(invocation: Invocation): Promise<void> {
+	const label = labelOf(invocation.args);
+	const { key, service, place, database } = await databaseAt(invocation);
+	await database.remove(service, place, label);
+	invocation.print(`Deleted snapshot ${label} of \`${key}\`.`);
+}
+
+/** Every database's snapshots in the environment. */
+async function dbSnapshots({ cwd, print }: Invocation): Promise<void> {
+	const { environment, services } = await databaseServicesAt(cwd);
+	const onServer = await readyFor(environment, print, services);
+	const targets = services.map(onServer);
+	const rows: string[][] = [];
+	for (const { key, service, place, database } of targets) {
+		for (const snapshot of await database.snapshots(service, place)) {
+			rows.push([
+				snapshot.label,
+				key,
+				snapshot.database,
+				snapshot.invalid ? "invalid" : size(snapshot.bytes),
+			]);
+		}
+	}
+	if (rows.length === 0) {
+		print("No snapshots. Make one with `basepad db save [label]`.");
+		return;
+	}
+	print(table([["LABEL", "SERVICE", "DATABASE", "SIZE"], ...rows]));
+}
+
+/** Bytes as a person reads them: `7.5 MB`. */
+function size(bytes: number): string {
+	const units = ["B", "kB", "MB", "GB", "TB"];
+	let value = bytes;
+	let unit = 0;
+	while (value >= 1000 && unit < units.length - 1) {
+		value /= 1000;
+		unit++;
+	}
+	return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
+}
+
+/**
+ * `db import`: replaces the database with a dump or another server's, after asking with its name
+ * on a terminal; `--yes` answers. With no terminal and no `--yes`, it changes nothing.
+ */
+async function dbImport(invocation: Invocation): Promise<void> {
+	const [given = ""] = invocation.args;
+	const { key, service, place, database } = await databaseAt(invocation);
+	// A file is the developer's from where they ran it; anything else is the kind's to read.
+	const file = resolve(invocation.cwd, given);
+	const source = existsSync(file) ? file : given;
+	let replaced = "";
+	const read = await database.import(service, place, source, async (name) => {
+		replaced = name;
+		if (invocation.flags.yes === true) return;
+		const yes = await ask(`Replace \`${key}\`'s database ${name}? Its data is lost.`);
+		if (yes === undefined) {
+			throw new BasepadError(
+				`Import replaces \`${key}\`'s database ${name}, and there is no terminal to ask. Run it again with \`--yes\` to replace it.`,
+			);
+		}
+		if (!yes) throw new BasepadError(`Nothing imported; ${name} is unchanged.`);
+	});
+	invocation.print(`Imported ${read} into \`${key}\`'s database ${replaced}.`);
+}
+
+/**
+ * `db export`: a dump of the database to a file, or to standard output, which then carries only
+ * the dump: anything else basepad says goes to standard error. Never a binary dump to a terminal.
+ */
+async function dbExport(invocation: Invocation): Promise<void> {
+	const [given] = invocation.args;
+	if (given === undefined && process.stdout.isTTY) {
+		throw new BasepadError(
+			"With no file, `db export` writes the dump to standard output, which is a terminal here. Name a file, or redirect it: `basepad db export > db.dump`.",
+		);
+	}
+	const say = given === undefined ? (line: string) => console.error(line) : invocation.print;
+	const { key, service, place, database } = await databaseAt({ ...invocation, print: say });
+	const file = given === undefined ? undefined : resolve(invocation.cwd, given);
+	const format = await database.export(service, place, file);
+	if (file !== undefined) invocation.print(`Exported \`${key}\` to ${file} as ${format}.`);
 }

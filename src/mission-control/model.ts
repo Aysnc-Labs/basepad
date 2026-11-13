@@ -35,7 +35,7 @@ export interface EnvironmentView {
 	/** Its folder, as shown: from `~` under the home folder. */
 	dir: string;
 	apps: Part[];
-	/** Its services, which run in main's namespace. */
+	/** Its services, which run in main's namespace or, for a server of its own, in its. */
 	services: Part[];
 	/** Why its parts cannot be shown, such as a config that does not load. */
 	problem?: string;
@@ -187,6 +187,8 @@ export function streamLines(snapshot: Snapshot, view: View): LogLine[] {
 		.sort((a, b) => a.seq - b.seq);
 }
 
+/** A web page `enter` can open: an app's URL, or a service's page such as an inbox. */
+const isPage = (address: string): boolean => /^https?:\/\//.test(address);
 /** Whether a line says anything: the blank ones an app prints are left out of the stream. */
 export const printed = (line: LogLine) => line.text.trim() !== "";
 
@@ -278,11 +280,11 @@ export function reduce(previous: View, key: Press, snapshot: Snapshot, page = 10
 	switch (key) {
 		case "return":
 			if (target === undefined) return { view: { ...view, notice: "Nothing here to open." } };
-			if (!env?.apps.includes(target)) {
+			if (target.address === undefined) return { view: { ...view, notice: noAddress } };
+			if (!isPage(target.address)) {
 				const notice = `${target.name} is a service, with no page to open; c copies its address.`;
 				return { view: { ...view, notice } };
 			}
-			if (target.address === undefined) return { view: { ...view, notice: noAddress } };
 			return { view, intent: { kind: "open", url: target.address } };
 		case "c":
 			if (target === undefined) return { view: { ...view, notice: "Nothing here to copy." } };
@@ -462,7 +464,7 @@ function actionOn(
 			label: part.name,
 		};
 	}
-	// A worktree's services are main's: only main's own actions reach them.
+	// A worktree's services on main's servers are main's: only main's own actions reach them.
 	const services = env.services.filter((s) => ofDaemon(s.id).namespace === env.namespace);
 	if (env.apps.length + services.length === 0) return undefined;
 	return {

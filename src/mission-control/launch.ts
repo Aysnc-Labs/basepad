@@ -326,8 +326,10 @@ function pixels(rows: string[], c: Palette): ReactElement[] {
 export interface LandingInput {
 	project: string;
 	environment: string;
-	/** What stops: the apps, and the services in main. */
+	/** What stops: the apps, and the services that are the environment's own. */
 	parts: string[];
+	/** Services that run on main's servers, which keep running: a worktree's, mostly. */
+	kept?: string[];
 	state: "stopping" | "stopped" | "failed";
 	tick: number;
 	/** How far the capsule has come down, in pixels. */
@@ -347,13 +349,14 @@ export function landingFrame(input: LandingInput): ReactElement {
 			: input.state === "failed"
 				? ["NO-GO  ·  not everything stopped", c.bad]
 				: ["DESCENT", c.warn];
-	const worktree = input.environment !== "main";
+	const kept = input.kept ?? [];
+	const names = kept.map((key) => `\`${key}\``).join(", ");
 	const note =
 		input.state !== "stopped"
 			? undefined
-			: worktree
-				? "Its services are main's and keep running. `basepad up` relaunches."
-				: "`basepad up` relaunches.";
+			: kept.length === 0
+				? "`basepad up` relaunches."
+				: `${names} ${kept.length > 1 ? "run" : "runs"} on main's and keep${kept.length > 1 ? "" : "s"} running. \`basepad up\` relaunches.`;
 	return beside(
 		art ? pixels(capsule(input), c) : [],
 		checklist(
@@ -440,6 +443,7 @@ export function landing(options: {
 	project: string;
 	environment: string;
 	parts: string[];
+	kept?: string[];
 	color: Colors;
 }): Landing {
 	let tick = 0;

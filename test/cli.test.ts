@@ -28,6 +28,12 @@ test("--help lists every command and the top flags", async () => {
 			"  worktree ls   List main's worktrees with their branches and folders",
 			"  worktree rm   Remove a worktree: its apps, databases, registrations and git worktree; its branch stays",
 			"  prune         Remove what is left of worktrees whose folder is gone, after showing it",
+			"  db save       Save this environment's database as a snapshot, replacing one of the same label",
+			"  db load       Replace this environment's database with a snapshot, which is kept",
+			"  db snapshots  List this environment's snapshots",
+			"  db rm         Delete one of this environment's snapshots",
+			"  db import     Replace this environment's database with a dump file or a postgres:// URL's, after asking",
+			"  db export     Write a dump of this environment's database to a file, or to standard output",
 			"",
 			"Flags:",
 			"  -h, --help     Show this help",
@@ -77,6 +83,32 @@ test("a two-word command takes its flags after both words", async () => {
 	expect(typo.stderr).toBe(
 		"basepad: Unknown command `worktree ad`. The nearest is `worktree add`; run `basepad --help` for every command.\n",
 	);
+});
+
+test("a command group with no command, or with --help, lists its commands", async () => {
+	const help = await box.basepad(dir, "db", "--help");
+	expect(help.code).toBe(0);
+	expect(help.stdout).toBe(
+		[
+			"Usage: basepad db <command> [flags]",
+			"",
+			"Commands:",
+			"  db save       Save this environment's database as a snapshot, replacing one of the same label",
+			"  db load       Replace this environment's database with a snapshot, which is kept",
+			"  db snapshots  List this environment's snapshots",
+			"  db rm         Delete one of this environment's snapshots",
+			"  db import     Replace this environment's database with a dump file or a postgres:// URL's, after asking",
+			"  db export     Write a dump of this environment's database to a file, or to standard output",
+			"",
+			"Run `basepad db <command> --help` for a command's flags.",
+			"",
+		].join("\n"),
+	);
+	const bare = await box.basepad(dir, "worktree");
+	expect(bare.code).toBe(1);
+	expect(bare.stdout).toContain("Usage: basepad worktree <command> [flags]\n");
+	expect(bare.stdout).toContain("  worktree rm   Remove a worktree");
+	expect((await box.basepad(dir, "worktree", "-h")).stdout).toBe(bare.stdout);
 });
 
 test("a flag that takes a value says so when it has none", async () => {

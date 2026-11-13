@@ -28,6 +28,10 @@ _Avoid_: Label, slug, worktree name
 Something basepad provides to an environment from its catalogue, such as a Postgres database.
 _Avoid_: Daemon, dependency, backing service
 
+**Snapshot**:
+A saved copy of one environment's database, under a label, that it can be put back from. It belongs to that environment.
+_Avoid_: Backup, dump, checkpoint
+
 **App**:
 A process of the project's own that basepad runs and gives a domain, unless it listens on nothing, as a queue worker does, or serves another app's page from `localhost`, as Vite can.
 _Avoid_: Daemon, server, service
