@@ -35,7 +35,7 @@ export interface EnvironmentView {
 	/** Its folder. */
 	dir: string;
 	apps: Part[];
-	/** Its services, which run in main's namespace. */
+	/** Its services, which run in main's namespace or, for a server of its own, in its. */
 	services: Part[];
 	/** Why its parts cannot be shown, such as a config that does not load. */
 	problem?: string;
@@ -438,7 +438,7 @@ function actionOn(
 			label: part.name,
 		};
 	}
-	// A worktree's services are main's: only main's own actions reach them.
+	// A worktree's services on main's servers are main's: only main's own actions reach them.
 	const services = env.services.filter((s) => ofDaemon(s.id).namespace === env.namespace);
 	if (env.apps.length + services.length === 0) return undefined;
 	return {

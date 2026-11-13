@@ -17,3 +17,6 @@ export const PITCHFORK_VERSION = "2.34.0";
  * the last build for 17.
  */
 export const PGVECTOR_VERSIONS = { 17: "0.8.0", 18: "0.8.6" } as const;
+
+/** Redis's major, from mise (conda-forge's build). */
+export const REDIS_VERSION = "8";

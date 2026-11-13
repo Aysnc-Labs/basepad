@@ -1,16 +1,20 @@
 import { expect, test } from "vitest";
-import { postgres } from "../src/index.ts";
+import type { PostgresNames } from "../src/catalogue/postgres.ts";
+import { postgres, redis } from "../src/index.ts";
 import {
 	daemonId,
 	layout,
 	machine,
 	nextSuffix,
 	ofDaemon,
+	type ServicePlace,
 	suffixOf,
 	worktreeFolder,
 } from "../src/layout.ts";
 
 const app = { run: "next dev", cwd: "/p" };
+/** A Postgres service's place, with the names Postgres derives. */
+const pg = (place: ServicePlace | undefined) => place as (ServicePlace & PostgresNames) | undefined;
 const here = { home: "/h", proxyPort: 7443, portFree: false };
 
 function project(name: string, apps: string[] = [], services: string[] = [], prefix = "worktree") {
@@ -32,8 +36,8 @@ test("each app is served at https://<app>.<name>.localhost", () => {
 
 test("a service's database is <name>_<service>, hyphens turned to underscores", () => {
 	const { services } = layout(project("my-shop", [], ["db", "read-model"]), here);
-	expect(services.db?.database).toBe("my_shop_db");
-	expect(services["read-model"]?.database).toBe("my_shop_read_model");
+	expect(pg(services.db)?.database).toBe("my_shop_db");
+	expect(pg(services["read-model"])?.database).toBe("my_shop_read_model");
 });
 
 test("a service's port comes from the name and key alone, in [15000, 20000)", () => {
@@ -63,10 +67,10 @@ test("a database name of exactly 63 bytes is kept whole", () => {
 	// Shared, so no worktree database needs room beside it.
 	const name = "a".repeat(60);
 	const shared = { ...project(name), services: { db: postgres({ worktree: "shared" }) } };
-	expect(layout(shared, here).services.db?.database).toBe(`${name}_db`);
+	expect(pg(layout(shared, here).services.db)?.database).toBe(`${name}_db`);
 	const tree = `${"b".repeat(48)}_db`;
 	expect(
-		layout(project("b".repeat(48), [], ["db"]), here, "worktree-12").services.db?.database,
+		pg(layout(project("b".repeat(48), [], ["db"]), here, "worktree-12").services.db)?.database,
 	).toBe(`${tree}_worktree_12`);
 });
 
@@ -148,8 +152,8 @@ test("a worktree's apps are at https://<app>.<suffix>.<name>.localhost", () => {
 });
 
 test("a worktree's database is <name>_<service>_<suffix>, on main's server", () => {
-	const main = layout(project("my-shop", [], ["db"]), here).services.db;
-	const tree = layout(project("my-shop", [], ["db"]), here, "worktree-12").services.db;
+	const main = pg(layout(project("my-shop", [], ["db"]), here).services.db);
+	const tree = pg(layout(project("my-shop", [], ["db"]), here, "worktree-12").services.db);
 	expect(tree?.database).toBe("my_shop_db_worktree_12");
 	expect(tree?.main).toBe("my_shop_db");
 	expect(tree?.port).toBe(main?.port);
@@ -158,7 +162,7 @@ test("a worktree's database is <name>_<service>_<suffix>, on main's server", () 
 
 test("a shared service's worktree database is main's", () => {
 	const shared = { ...project("shop"), services: { db: postgres({ worktree: "shared" }) } };
-	expect(layout(shared, here, "worktree-1").services.db?.database).toBe("shop_db");
+	expect(pg(layout(shared, here, "worktree-1").services.db)?.database).toBe("shop_db");
 });
 
 test("a worktree registers under its own namespace and definitions file", () => {
@@ -224,4 +228,15 @@ test("a worktree takes the lowest free number for the prefix", () => {
 	expect(nextSuffix("worktree", [])).toBe("worktree-1");
 	expect(nextSuffix("worktree", ["worktree-1", "worktree-3", "main"])).toBe("worktree-2");
 	expect(nextSuffix("wt", ["worktree-1", "wt-1", "wt-01"])).toBe("wt-2");
+});
+
+test("a worktree's own Redis runs in its namespace, on a port from its name; a shared one is main's", () => {
+	const services = { cache: redis(), ref: redis({ worktree: "shared" }) };
+	const main = layout({ ...project("shop"), services }, here).services;
+	const tree = layout({ ...project("shop"), services }, here, "worktree-1").services;
+	expect(main.cache?.daemon).toBe("shop/cache");
+	expect(tree.cache?.daemon).toBe("shop.worktree-1/cache");
+	expect(tree.cache?.port).not.toBe(main.cache?.port);
+	expect(tree.ref?.daemon).toBe("shop/ref");
+	expect(tree.ref?.port).toBe(main.ref?.port);
 });

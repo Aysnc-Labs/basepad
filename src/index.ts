@@ -13,6 +13,8 @@ export type {
 	PostgresWorktree,
 } from "./catalogue/postgres.ts";
 export { postgres } from "./catalogue/postgres.ts";
+export type { RedisOutputs, RedisService, RedisWorktree } from "./catalogue/redis.ts";
+export { redis } from "./catalogue/redis.ts";
 export type { Service };
 
 /** A process of the project's own that basepad runs and gives a domain. */

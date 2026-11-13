@@ -21,7 +21,9 @@ import {
 	type Machine,
 	machine,
 	namespaceOf,
+	ofDaemon,
 	placeOf,
+	type ServicePlace,
 	servicesHome,
 	suffixOf,
 } from "./layout.ts";
@@ -196,10 +198,11 @@ interface Context {
 
 /**
  * Makes an environment ready to start its apps: registers its definitions, starts its services
- * (main's, in a worktree) and provisions them, and writes its env files. Starts no app. A worktree
- * needs main ready first.
+ * (main's, in a worktree, and its own servers) and provisions them, and writes its env files.
+ * Starts no app. A worktree needs main ready first. Not `start`: a worktree's own servers are left
+ * to its first start, and its env files say where they will listen.
  */
-async function ready(environment: Environment, context: Context): Promise<Layout> {
+async function ready(environment: Environment, context: Context, start = true): Promise<Layout> {
 	const { project, suffix, main } = environment;
 	const { here, supervisor, print } = context;
 	// Ports, folders and databases; the URL form waits for the supervisor, which answers on 443.
@@ -218,12 +221,11 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 		);
 	}
 	const daemons: Record<string, Daemon> = {};
-	// Each service has one server for all of a project's environments, run in main's namespace.
-	if (suffix === undefined) {
-		for (const key of services) {
-			const service = project.services[key] as Service;
-			daemons[key] = await kindOf(service).prepare(service, placeOf(project, ports, here, key));
-		}
+	// Main's servers, and a worktree's own; a worktree's other services run on main's.
+	for (const key of services) {
+		if (namespaceOfService(ports, key) !== ports.namespace) continue;
+		const service = project.services[key] as Service;
+		daemons[key] = await kindOf(service).prepare(service, placeOf(project, ports, here, key));
 	}
 	for (const [key, app] of Object.entries(project.apps)) {
 		daemons[key] = {
@@ -253,26 +255,30 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 	}
 	const since = new Date(Date.now() - 1000);
 	const outputs: Record<string, unknown> = {};
-	if (services.length > 0) {
-		const states = await supervisor.start(lay.mainNamespace, services, APP_WAIT_MS, {});
-		const failed = services.filter((key) => states[key] === "failed");
+	const started = services.filter((key) => start || namespaceOfService(lay, key) !== lay.namespace);
+	for (const namespace of new Set(started.map((key) => namespaceOfService(lay, key)))) {
+		const keys = started.filter((key) => namespaceOfService(lay, key) === namespace);
+		const states = await supervisor.start(namespace, keys, APP_WAIT_MS, {});
+		const failed = keys.filter((key) => states[key] === "failed");
 		if (failed.length > 0)
-			throw new BasepadError(await failures(supervisor, lay.mainNamespace, failed, since));
-		for (const key of services) {
-			const service = project.services[key] as Service;
-			try {
-				outputs[key] = await kindOf(service).provision(service, placeOf(project, lay, here, key), {
-					claim: context.claim,
-					print,
-					stopped: async () => {
-						const state = (await supervisor.status(lay.mainNamespace))[key];
-						return state === "failed" || state === "stopped";
-					},
-				});
-			} catch (error) {
-				if (!(error instanceof Stopped)) throw error;
-				throw new BasepadError(await failures(supervisor, lay.mainNamespace, [key], since));
-			}
+			throw new BasepadError(await failures(supervisor, namespace, failed, since));
+	}
+	for (const key of services) {
+		const service = project.services[key] as Service;
+		const namespace = namespaceOfService(lay, key);
+		try {
+			outputs[key] = await kindOf(service).provision(service, placeOf(project, lay, here, key), {
+				claim: context.claim,
+				started: started.includes(key),
+				print,
+				stopped: async () => {
+					const state = (await supervisor.status(namespace))[key];
+					return state === "failed" || state === "stopped";
+				},
+			});
+		} catch (error) {
+			if (!(error instanceof Stopped)) throw error;
+			throw new BasepadError(await failures(supervisor, namespace, [key], since));
 		}
 	}
 	for (const [key, app] of Object.entries(lay.apps)) outputs[key] = { url: app.url };
@@ -280,6 +286,11 @@ async function ready(environment: Environment, context: Context): Promise<Layout
 	if (main !== undefined) await copyEnvFiles(main.root, project.root, Object.keys(files));
 	await writeEnvFiles(project.root, files);
 	return lay;
+}
+
+/** The namespace a service's server runs in: main's, or a worktree's own. */
+function namespaceOfService(lay: Pick<Layout, "services">, key: string): string {
+	return ofDaemon((lay.services[key] as ServicePlace).daemon).namespace;
 }
 
 /** Opens the supervisor, and readies main first when the environment is a worktree. */
@@ -301,9 +312,7 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const { supervisor, here } = context;
 	const lay = await ready(environment, context);
 	const { states, failure } = await startApps(supervisor, project, lay);
-	print(
-		await stateTables(environment, lay, here, await withServices(supervisor, project, lay, states)),
-	);
+	print(await stateTables(environment, lay, here, await withServices(supervisor, lay, states)));
 	// Only on a terminal: scripts, CI and agents get `-d`'s behaviour without asking for it.
 	if (flags.detach !== true && process.stdin.isTTY && process.stdout.isTTY) {
 		// Loaded only here, so other commands never load the terminal UI.
@@ -371,7 +380,7 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 		const { project } = environment;
 		for (const note of await clonePaths(main.root, project.root, project.worktrees.clone))
 			say(note);
-		lay = await ready(environment, context);
+		lay = await ready(environment, context, flags.start === true);
 	} catch (error) {
 		if (!(error instanceof BasepadError)) throw error;
 		throw new BasepadError(
@@ -393,7 +402,7 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	if (flags.json === true) {
 		print(JSON.stringify({ name: suffix, path: root }));
 	} else {
-		const all = await withServices(context.supervisor, environment.project, lay, states);
+		const all = await withServices(context.supervisor, lay, states);
 		say(await stateTables(environment, lay, context.here, all));
 		say("");
 		say(
@@ -404,17 +413,18 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	if (failure !== undefined) throw new BasepadError(failure);
 }
 
-/** A worktree's daemon states with its services', which run in main's namespace. */
+/** A worktree's daemon states with those of its services that run in main's namespace. */
 async function withServices(
 	supervisor: Supervisor,
-	project: Project,
-	lay: Pick<Layout, "suffix" | "mainNamespace">,
+	lay: Pick<Layout, "namespace" | "mainNamespace" | "services">,
 	states: Record<string, DaemonState>,
 ): Promise<Record<string, DaemonState>> {
-	if (lay.suffix === undefined) return states;
+	const mains = Object.keys(lay.services).filter(
+		(key) => namespaceOfService(lay, key) !== lay.namespace,
+	);
+	if (mains.length === 0) return states;
 	const main = await supervisor.status(lay.mainNamespace);
-	const services = Object.keys(project.services).map((key) => [key, main[key] ?? "stopped"]);
-	return { ...states, ...Object.fromEntries(services) };
+	return { ...states, ...Object.fromEntries(mains.map((key) => [key, main[key] ?? "stopped"])) };
 }
 
 /** The machine with `portFree` asked from its port 443, once the supervisor runs. */
@@ -503,15 +513,21 @@ async function failures(
 async function down({ cwd, print }: Invocation): Promise<void> {
 	const { project, suffix } = await environmentAt(cwd);
 	const supervisor = await openSupervisor(machine(process.env), print);
-	const { namespace } = layout(project, machine(process.env), suffix);
+	const lay = layout(project, machine(process.env), suffix);
+	const { namespace } = lay;
 	// Held first, so no request starts an app again while it stops.
 	await supervisor.hold(namespace, Object.keys(project.apps));
+	// Its own servers with its apps; those on main's keep running for main.
 	await supervisor.stop(namespace);
-	// A worktree's services are main's, which keeps them.
+	const own = Object.keys(project.services).filter(
+		(key) => namespaceOfService(lay, key) === namespace,
+	);
+	const mains = Object.keys(project.services).filter((key) => !own.includes(key));
+	const names = (keys: string[]) => keys.map((key) => `\`${key}\``).join(", ");
 	print(
 		suffix === undefined
 			? `Stopped ${project.name}'s apps and services.`
-			: `Stopped worktree ${suffix}'s apps; its services are main's and keep running.`,
+			: `Stopped worktree ${suffix}'s apps${own.length > 0 ? ` and ${names(own)}` : ""}.${mains.length > 0 ? ` ${names(mains)} ${mains.length > 1 ? "run" : "runs"} on main's and keep${mains.length > 1 ? "" : "s"} running.` : ""}`,
 	);
 }
 
@@ -525,12 +541,7 @@ async function status({ cwd, print }: Invocation): Promise<void> {
 	}
 	const supervisor = await openSupervisor(here, print);
 	const ports = layout(project, here, suffix);
-	const states = await withServices(
-		supervisor,
-		project,
-		ports,
-		await supervisor.status(ports.namespace),
-	);
+	const states = await withServices(supervisor, ports, await supervisor.status(ports.namespace));
 	// With no supervisor running nothing answers on 443, so the URL form is the port's default.
 	const lay = layout(
 		project,
@@ -573,7 +584,6 @@ async function printWorktrees(
 			const ports = layout(environment.project, here, tree.suffix);
 			const states = await withServices(
 				supervisor,
-				environment.project,
 				ports,
 				await supervisor.status(ports.namespace),
 			);

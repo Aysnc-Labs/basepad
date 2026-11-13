@@ -1,7 +1,15 @@
 import { kindOf, type Service } from "../catalogue.ts";
 import { loadProject, type Project } from "../config.ts";
 import { BasepadError } from "../internal/exec.ts";
-import { daemonId, layout, type Machine, namespaceOf, ofDaemon, placeOf } from "../layout.ts";
+import {
+	daemonId,
+	layout,
+	type Machine,
+	namespaceOf,
+	ofDaemon,
+	placeOf,
+	type ServicePlace,
+} from "../layout.ts";
 import type { DaemonInfo, Supervisor } from "../supervisor.ts";
 import { hasChanges, listWorktrees, mainBranch } from "../worktrees.ts";
 import type { EnvironmentView, LogLine, Part, Snapshot } from "./model.ts";
@@ -258,7 +266,8 @@ async function environmentOf(
 	});
 	const services: Part[] = [];
 	for (const [key, service] of Object.entries(project.services) as [string, Service][]) {
-		const id = daemonId(lay.mainNamespace, key);
+		// In main's namespace, or the worktree's for a server of its own.
+		const id = (lay.services[key] as ServicePlace).daemon;
 		const daemon = daemons.get(id);
 		services.push({
 			id,
