@@ -7,7 +7,7 @@ import type { Removal, Work } from "./model.ts";
  * A worktree's addition or removal from mission control, run as `basepad worktree add` or
  * `worktree rm` itself in a process of its own, which outlives the view: closing the view, or a
  * crash in it, stops nothing. Each one leaves files in `dir` (Layout's `workHome`): a record, its
- * output, and once done, its exit code. So a view opened later shows it too.
+ * shell's pid, its output, and once done, its exit code. So a view opened later shows it too.
  */
 
 /** What to run: an addition, or a worktree's removal. */
