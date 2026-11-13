@@ -318,9 +318,13 @@ function centred(cols: number, rows: number, color: string | undefined, text: st
 	);
 }
 
+/** The columns a panel `width` wide has for its title: its border's corners and a space each side take 6. */
+const titleRoom = (width: number) => width - 6;
+
 /**
  * A rounded panel with its title set in the top border, `╭─ title ──── right ─╮`: Ink draws no
- * titles, so the top line is drawn here. Its content gets `width - 4` columns, `height - 2` rows.
+ * titles, so the top line is drawn here. Its content gets `width - 4` columns, `height - 2` rows;
+ * its title, `titleRoom(width)`.
  */
 function panel(
 	key: string,
@@ -332,7 +336,7 @@ function panel(
 	children: ReactNode[],
 ): ReactElement {
 	// The title is cut inside the border, so its corner always draws.
-	const t = title.length > 0 ? clip([run(" "), ...title, run(" ")], width - 4) : [];
+	const t = title.length > 0 ? clip([run(" "), ...title, run(" ")], titleRoom(width) + 2) : [];
 	let r = right.length > 0 ? [run(" "), ...right, run(" ")] : [];
 	if (widthOf(t) + widthOf(r) > width - 4) r = [];
 	const fill = Math.max(0, width - 4 - widthOf(t) - widthOf(r));
@@ -776,18 +780,56 @@ function partsPanel(
 	);
 }
 
-/** The search in the stream's title: the query being typed, or the one found and how to go on. */
-function searchTitle(view: View, c: Palette): Run[] {
+/**
+ * The search in the stream's title: the query being typed, or the one found, then how to go on,
+ * which gives way first (`HINT`).
+ */
+function searchTitle(view: View, c: Palette): Piece[] {
 	const { search } = view;
 	if (search === undefined) return [];
 	if (search.typing) {
 		return [
-			run("  / ", c.accent, { bold: true }),
-			run(`${search.query}▏`, c.text, { bold: true }),
-			run("  enter find · esc cancel", c.mute),
+			{
+				runs: [
+					run("  / ", c.accent, { bold: true }),
+					run(`${search.query}▏`, c.text, { bold: true }),
+				],
+				gives: QUERY,
+			},
+			{ runs: [run("  enter find · esc cancel", c.mute)], gives: HINT },
 		];
 	}
-	return [run(`  “${search.query}”`, c.accent, { bold: true }), run("  n older · N newer", c.mute)];
+	return [
+		{ runs: [run(`  “${search.query}”`, c.accent, { bold: true })], gives: QUERY },
+		{ runs: [run("  n older · N newer", c.mute)], gives: HINT },
+	];
+}
+
+/** A piece of a title, left out whole where the title can't fit it: those with the least `gives` first. */
+interface Piece {
+	runs: Run[];
+	/** Never left out when none. */
+	gives?: number;
+}
+
+/** In the stream's title, the order pieces give way in: hints, then names, never cut. */
+const NEWER = 1;
+const HINT = 2;
+const LIVE_HINT = 3;
+const NAME = 4;
+const QUERY = 5;
+
+/** `pieces` as runs in at most `room` columns: those that give way first are left out first. */
+function fitted(pieces: Piece[], room: number): Run[] {
+	let kept = pieces;
+	const order = pieces
+		.filter((p) => p.gives !== undefined)
+		.sort((a, b) => (a.gives ?? 0) - (b.gives ?? 0));
+	for (const piece of order) {
+		if (widthOf(kept.flatMap((p) => p.runs)) <= room) break;
+		kept = kept.filter((p) => p !== piece);
+	}
+	return kept.flatMap((p) => p.runs);
 }
 
 /** `text` with each match of `query` (ignoring case) drawn in reverse. */
@@ -858,7 +900,7 @@ function columns(
 			),
 		];
 	});
-	const rows = top;
+	const rows = [...top];
 	for (let i = 0; i < tall; i++) {
 		const runs = cells.flatMap((cell, k) => [
 			...(k === 0 ? [] : [run(" │ ", c.frame)]),
@@ -886,7 +928,8 @@ function clip(runs: Run[], width: number): Run[] {
 			left -= chars.length;
 			continue;
 		}
-		out.push({ ...r, text: `${chars.slice(0, Math.max(0, left - 1)).join("")}…` });
+		// A run that starts at the limit is left out, not cut to a lone `…`.
+		if (left > 0) out.push({ ...r, text: `${chars.slice(0, left - 1).join("")}…` });
 		return out;
 	}
 	return out;
@@ -956,32 +999,37 @@ function stream(
 		run("■ ", partColor(env, part.id, c)),
 		run(part.name, focused === undefined || focused === part ? c.soft : c.dim),
 	]);
-	const mode = [
-		run("LOGS", c.mute, { bold: true }),
-		view.sideBySide
-			? run("  side by side", c.soft)
-			: run(
-					focused === undefined ? "  all" : `  ${focused.name} only`,
-					focused ? c.accent : c.soft,
-				),
-	];
-	const found = searchTitle(view, c);
-	// Paused, the title says how to go live; where the whole hint won't fit, the count goes first.
-	const live = [` · ${all.length - end} newer · end for live`, " · end for live"];
-	const room = inner - 2 - widthOf([...mode, ...found]) - widthOf([run("  ⏸ paused")]);
-	const hint = live.find((text) => [...text].length <= room) ?? (live[1] as string);
+	// The focused part's name may be left out: the parts panel above marks it, and the border's colour.
+	const mode: Piece = {
+		runs: [
+			view.sideBySide
+				? run("  side by side", c.soft)
+				: run(
+						focused === undefined ? "  all" : `  ${focused.name} only`,
+						focused ? c.accent : c.soft,
+					),
+		],
+		gives: NAME,
+	};
+	// Paused, the title says how to go live.
+	const live: Piece[] =
+		paused === undefined
+			? []
+			: [
+					{ runs: [run("  ⏸ paused", c.warn, { bold: true })] },
+					{ runs: [run(` · ${all.length - end} newer`, c.soft)], gives: NEWER },
+					{ runs: [run(" · end for live", c.soft)], gives: LIVE_HINT },
+				];
+	const title = fitted(
+		[{ runs: [run("LOGS", c.mute, { bold: true })] }, mode, ...live, ...searchTitle(view, c)],
+		titleRoom(width),
+	);
 	return panel(
 		"stream",
 		width,
 		height,
 		focused === undefined || view.sideBySide ? c.frame : c.focus,
-		[
-			...mode,
-			...(paused === undefined
-				? []
-				: [run("  ⏸ paused", c.warn, { bold: true }), run(hint, c.soft)]),
-			...found,
-		],
+		title,
 		legend,
 		rows,
 	);
