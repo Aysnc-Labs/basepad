@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { registerHooks } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { FACTORIES, SCHEMAS, type Service } from "./catalogue.ts";
@@ -21,6 +21,16 @@ export interface Project {
 	/** Each app with its folder made absolute. */
 	apps: Record<string, Required<App>>;
 	env: (outputs: Outputs<Record<string, Service>, Record<string, App>>) => EnvFiles;
+	/** How worktrees are named, and where they are checked out when the config says. */
+	worktrees: {
+		prefix: string;
+		/** Absolute. When absent, beside the git repository (the Worktrees module decides). */
+		dir?: string;
+		/** Paths relative to the config, copied from main's folder into a new worktree's. */
+		clone: string[];
+		/** Shell commands run in order in a new worktree's folder. */
+		setup: string[];
+	};
 }
 
 /**
@@ -60,6 +70,12 @@ export async function loadProject(cwd: string): Promise<Project> {
 			]),
 		),
 		env: (config.env as Project["env"] | undefined) ?? (() => ({})),
+		worktrees: {
+			prefix: config.worktrees?.prefix ?? "worktree",
+			clone: config.worktrees?.clone ?? [],
+			setup: config.worktrees?.setup ?? [],
+			...(config.worktrees?.dir === undefined ? {} : { dir: resolve(root, config.worktrees.dir) }),
+		},
 	};
 }
 
@@ -73,6 +89,14 @@ function findConfig(cwd: string): string {
 		`No ${CONFIG_FILE} in ${cwd} or any folder above it. Run \`basepad init\` to write one.`,
 	);
 }
+
+/** What a config imports basepad as. */
+const PACKAGE = "@aysnc-labs/basepad";
+/** The running basepad's own entry: `index.ts` from source, `index.js` once built. */
+const OWN_INDEX = new URL(
+	import.meta.url.endsWith(".ts") ? "./index.ts" : "./index.js",
+	import.meta.url,
+).href;
 
 /** Real paths of the files basepad loads; the hook reads each as TypeScript ESM. */
 const typescriptFiles = new Set<string>();
@@ -88,6 +112,16 @@ async function importDefault(file: string): Promise<unknown> {
 	if (!hooked) {
 		hooked = true;
 		registerHooks({
+			resolve(specifier, context, nextResolve) {
+				try {
+					return nextResolve(specifier, context);
+				} catch (error) {
+					// A fresh worktree has no `node_modules` yet: its config gets the running basepad.
+					const fromConfig = context.parentURL && typescriptFiles.has(context.parentURL);
+					if (specifier !== PACKAGE || !fromConfig) throw error;
+					return { url: OWN_INDEX, shortCircuit: true };
+				}
+			},
 			load(url, context, nextLoad) {
 				if (!typescriptFiles.has(url)) return nextLoad(url, context);
 				const loaded = nextLoad(url, { ...context, format: "module-typescript" });
@@ -112,7 +146,7 @@ function messageOf(error: unknown): string {
 }
 
 /** A lowercase DNS label: letters, digits and inner hyphens. */
-const LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+export const LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const label = z
 	.string({ error: "must be a string" })
 	.regex(LABEL, "must be a lowercase DNS label (letters, digits and inner hyphens)");
@@ -138,6 +172,33 @@ const ConfigSchema = z
 		env: z
 			.custom<Config["env"]>((value) => typeof value === "function", {
 				error: "`env` must be a function from outputs to env files",
+			})
+			.optional(),
+		worktrees: z
+			.strictObject({
+				prefix: label.optional(),
+				dir: z
+					.string({ error: "must be a folder relative to the config" })
+					.min(1, "must be a folder relative to the config")
+					.optional(),
+				clone: z
+					.array(
+						z
+							.string({ error: "each must be a path relative to the config" })
+							.min(1, "each must be a path relative to the config")
+							.refine(
+								(path) => !isAbsolute(path) && !normalize(path).startsWith(".."),
+								"each must be a path inside the config's folder",
+							),
+					)
+					.optional(),
+				setup: z
+					.array(
+						z
+							.string({ error: "each must be a shell command" })
+							.min(1, "each must be a shell command"),
+					)
+					.optional(),
 			})
 			.optional(),
 	})

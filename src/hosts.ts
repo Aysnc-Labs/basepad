@@ -23,6 +23,24 @@ export function withHosts(text: string, name: string, hosts: string[]): string {
 	return `${text}${gap}${block}`;
 }
 
+/** `text` without the project's block of domains. Pure. */
+export function withoutHosts(text: string, name: string): string {
+	const start = `# >>> basepad ${name}\n`;
+	const end = `# <<< basepad ${name}\n`;
+	const at = text.indexOf(start);
+	const until = at === -1 ? -1 : text.indexOf(end, at);
+	if (at === -1 || until === -1) return text;
+	return text.slice(0, at) + text.slice(until + end.length);
+}
+
+/** Takes the project's block out of the hosts file, when it is there and writable. */
+export async function dropHosts(name: string): Promise<void> {
+	const current = await readFile(HOSTS_FILE, "utf8").catch(() => undefined);
+	if (current === undefined) return;
+	const text = withoutHosts(current, name);
+	if (text !== current && (await writable(HOSTS_FILE))) await writeFile(HOSTS_FILE, text);
+}
+
 /**
  * Makes the project's domains resolve: nothing when they already do (and no block of ours is
  * there to keep current), else writes its block when the file is writable, else returns the lines

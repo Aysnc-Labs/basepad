@@ -10,6 +10,7 @@ export type {
 	PostgresOutputs,
 	PostgresService,
 	PostgresVersion,
+	PostgresWorktree,
 } from "./catalogue/postgres.ts";
 export { postgres } from "./catalogue/postgres.ts";
 export type { Service };
@@ -46,8 +47,22 @@ export interface Config<
 	services?: S;
 	/** Each app is served at `https://<key>.<name>.localhost`; keys are lowercase DNS labels. */
 	apps?: A;
-	/** Which values go into which env files. basepad sets exactly these keys and nothing else. */
+	/**
+	 * Which values go into which env files. basepad sets exactly these keys and nothing else. A
+	 * worktree's files start as copies of main's.
+	 */
 	env?: (outputs: Outputs<S, A>) => EnvFiles;
+	/** Worktrees: environments `basepad worktree add` makes from main, each in its own git worktree. */
+	worktrees?: {
+		/** Worktrees are named `<prefix>-<n>`, with the lowest free `n`. Defaults to `worktree`. */
+		prefix?: string;
+		/** Where worktrees are checked out, relative to the config. Defaults to `<repository>/../<name>.worktrees`. */
+		dir?: string;
+		/** Untracked paths, relative to the config, copied from main into each new worktree (copy-on-write where the filesystem can). */
+		clone?: string[];
+		/** Shell commands run in order in each new worktree, after its env files are written. */
+		setup?: string[];
+	};
 }
 
 /** Types a project's config. It returns the config unchanged. */

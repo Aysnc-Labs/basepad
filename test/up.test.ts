@@ -172,11 +172,17 @@ test("an app that exits on start is reported with its output, and up fails", asy
 	});
 	const out = await box.basepad(dir, "up");
 	expect(out.code).toBe(1);
-	expect(out.stdout).toMatch(/bad +https:\/\/bad\.broken\.localhost:\d+ +failed/);
+	// basepad's stderr as the message, so a failure shows why.
+	expect(out.stdout, out.stderr).toMatch(/bad +https:\/\/bad\.broken\.localhost:\d+ +failed/);
 	expect(out.stdout).toMatch(/ok +https:\/\/ok\.broken\.localhost:\d+ +running/);
 	expect(out.stderr).toContain("basepad: `bad` exited on start. Its last output:");
 	expect(out.stderr).toContain("boom: DATABASE_URL is not set");
-	expect(out.stderr).toMatch(/pitchfork logs broken\/bad/);
+	// The command it suggests works as printed.
+	const hint = out.stderr.match(/For more, run: (.+)/)?.[1] as string;
+	expect(hint).toMatch(/pitchfork'? logs broken\/bad$/);
+	const logs = await box.run("sh", ["-c", hint]);
+	expect(logs.code).toBe(0);
+	expect(logs.stdout).toContain("boom: DATABASE_URL is not set");
 	await box.basepad(dir, "down");
 });
 
@@ -217,4 +223,4 @@ test("up says so before a settings change restarts the supervisor, and only then
 	expect(out.stdout).toContain(`web  https://web.shop.localhost:${other}  running`);
 	// Back on the sandbox's own port, so the supervisor is left as the file found it.
 	expect((await box.basepad(shop, "down")).code).toBe(0);
-}, 240_000); // Two restarts, and as root on Linux pitchfork's supervisor takes about 60 s to stop.
+}, 240_000); // Two restarts. In a container without an init, each supervisor stop takes about 60 s.

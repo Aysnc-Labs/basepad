@@ -19,11 +19,15 @@ test("--help lists every command and the top flags", async () => {
 			"Usage: basepad <command> [flags]",
 			"",
 			"Commands:",
-			"  init    Write a starter basepad.config.ts in this folder",
-			"  setup   Once per machine: trust basepad's certificate and drop the port from URLs",
-			"  up      Start this project's services and apps, set its env files and show their state",
-			"  down    Stop this project's apps and services; nothing is deleted",
-			"  status  Show each app and service with its address and state",
+			"  init          Write a starter basepad.config.ts in this folder",
+			"  setup         Once per machine: trust basepad's certificate and drop the port from URLs",
+			"  up            Start this project's services and apps, set its env files and show their state",
+			"  down          Stop this project's apps and services; nothing is deleted",
+			"  status        Show each app and service with its address and state",
+			"  worktree add  Make a worktree of main, with its own databases, domains and env files",
+			"  worktree ls   List main's worktrees with their branches and folders",
+			"  worktree rm   Remove a worktree: its apps, databases, registrations and git worktree; its branch stays",
+			"  prune         Remove what is left of worktrees whose folder is gone, after showing it",
 			"",
 			"Flags:",
 			"  -h, --help     Show this help",
@@ -59,6 +63,37 @@ test("up's and setup's help show their own flags", async () => {
 	const setup = await box.basepad(dir, "setup", "--help");
 	expect(setup.stdout).toContain("      --dry-run  Print the plan and change nothing\n");
 	expect(setup.stdout).toContain("  -y, --yes      Apply the plan without asking\n");
+});
+
+test("a two-word command takes its flags after both words", async () => {
+	const help = await box.basepad(dir, "worktree", "add", "--help");
+	expect(help.stdout).toContain("Usage: basepad worktree add [flags]\n");
+	expect(help.stdout).toContain(
+		"      --json           Print only the worktree's name and path, as JSON\n",
+	);
+	expect(help.stdout).toContain("      --branch <name>  Check out this branch,");
+	const typo = await box.basepad(dir, "worktree", "ad");
+	expect(typo.code).toBe(1);
+	expect(typo.stderr).toBe(
+		"basepad: Unknown command `worktree ad`. The nearest is `worktree add`; run `basepad --help` for every command.\n",
+	);
+});
+
+test("a flag that takes a value says so when it has none", async () => {
+	const out = await box.basepad(dir, "worktree", "add", "--branch");
+	expect(out.code).toBe(1);
+	expect(out.stderr).toBe(
+		"basepad: `--branch` needs a name: `basepad worktree add --branch <name>`.\n",
+	);
+});
+
+test("a command's arguments are in its usage, and a missing one shows it", async () => {
+	const help = await box.basepad(dir, "worktree", "rm", "--help");
+	// Optional, as `--claude` takes the worktree from its input.
+	expect(help.stdout).toContain("Usage: basepad worktree rm [<worktree>] [flags]\n");
+	const missing = await box.basepad(dir, "worktree", "rm", "--force");
+	expect(missing.code).toBe(1);
+	expect(missing.stderr).toBe("basepad: Usage: basepad worktree rm <worktree> [flags]\n");
 });
 
 test("a mistyped command names the nearest and exits non-zero", async () => {

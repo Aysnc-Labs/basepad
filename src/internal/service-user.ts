@@ -24,8 +24,18 @@ export async function serviceUser(): Promise<ServiceUser> {
 			"As root, basepad runs services as a system user, which it supports on Linux only.",
 		);
 	}
-	if ((await exec("id", ["-u", NAME])).code !== 0) {
-		await must("useradd", ["--system", "--no-create-home", "--shell", "/usr/sbin/nologin", NAME]);
+	const exists = async () => (await exec("id", ["-u", NAME])).code === 0;
+	if (!(await exists())) {
+		// Another basepad, such as a second project's `up`, may create the user at the same time.
+		await must("useradd", [
+			"--system",
+			"--no-create-home",
+			"--shell",
+			"/usr/sbin/nologin",
+			NAME,
+		]).catch(async (error) => {
+			if (!(await exists())) throw error;
+		});
 	}
 	const uid = Number((await must("id", ["-u", NAME])).trim());
 	const gid = Number((await must("id", ["-g", NAME])).trim());
