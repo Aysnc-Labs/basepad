@@ -61,7 +61,7 @@ Paths: src/init.ts
 
 Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.localhost`, starts services, sets the env keys the config names; stops them; shows their state.
 Entry: `basepad up [-d] [--claim]`, `basepad down`, `basepad status`
-Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts
+Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts, src/internal/processes.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### Mission control

@@ -1,9 +1,10 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Kind, Place, Web } from "../catalogue.ts";
 import { BasepadError, shellQuote } from "../internal/exec.ts";
 import { answers, freePort, waitFor } from "../internal/ports.ts";
+import { recordRunning, runningPort } from "../internal/processes.ts";
 import { install } from "../tools.ts";
 import { MAILPIT_VERSION } from "../versions.ts";
 
@@ -83,10 +84,8 @@ export const mailpitKind: Kind<MailpitService, MailpitOutputs, MailpitNames> = {
 			"--smtp-disable-rdns",
 			"--disable-version-check",
 		];
-		// `exec` keeps the shell's process id, so the file names the running Mailpit.
-		const record = `printf '%s\\n%s\\n' "$$" ${smtp} > ${shellQuote(place.pid)}`;
 		return {
-			run: `${record} && exec ${argv.map(shellQuote).join(" ")} --listen "${HOST}:$PORT"`,
+			run: `${recordRunning(place.pid, smtp)} && exec ${argv.map(shellQuote).join(" ")} --listen "${HOST}:$PORT"`,
 			dir: place.dir,
 			port: webOf(place).port,
 		};
@@ -129,21 +128,4 @@ export const mailpitKind: Kind<MailpitService, MailpitOutputs, MailpitNames> = {
 function webOf(place: Place): Web {
 	if (place.web === undefined) throw new BasepadError(`\`${place.key}\` has no domain.`);
 	return place.web;
-}
-
-/** The SMTP port of the Mailpit running for this service, from the file it wrote as it started. */
-async function runningPort(file: string): Promise<number | undefined> {
-	const text = await readFile(file, "utf8").catch(() => undefined);
-	const [pid, port] = text?.split("\n") ?? [];
-	if (!pid || !port || !alive(Number(pid))) return undefined;
-	return Number(port);
-}
-
-function alive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "EPERM";
-	}
 }

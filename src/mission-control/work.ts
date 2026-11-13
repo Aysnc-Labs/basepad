@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { aliveAndOurs } from "../internal/processes.ts";
 import { checkedOutIn } from "../worktrees.ts";
 import type { Removal, Work } from "./model.ts";
 
@@ -172,18 +173,8 @@ async function underWay(base: string): Promise<boolean> {
 	}
 	const start = await startOf(shell.pid);
 	return start === undefined || shell.start === undefined
-		? alive(shell.pid)
+		? aliveAndOurs(shell.pid)
 		: start === shell.start;
-}
-
-/** Whether a process of ours is there: one we may not signal is not ours. */
-function alive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
 }
 
 /**

@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { Kind, Place, Snapshot } from "../catalogue.ts";
 import { BasepadError, exec, must, shellQuote } from "../internal/exec.ts";
 import { freePort, waitFor } from "../internal/ports.ts";
+import { runningPort } from "../internal/processes.ts";
 import { serviceUser } from "../internal/service-user.ts";
 import { install, type Tool } from "../tools.ts";
 import { PGVECTOR_VERSIONS } from "../versions.ts";
@@ -174,7 +175,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 				`\`${place.key}\` asks for Postgres ${service.version}, but its data in ${data} is Postgres ${initialised.trim()}. Dump it with Postgres ${initialised.trim()}, remove that folder, then run \`basepad up\` again.`,
 			);
 		}
-		const port = (await runningPort(data)) ?? (await freePort(place.port));
+		const port = (await serverPort(data)) ?? (await freePort(place.port));
 		const server = user.wrap([
 			pg.bin("postgres"),
 			"-D",
@@ -201,7 +202,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		const { data } = place;
 		const port = await waitFor(
 			async () => {
-				const port = await runningPort(data);
+				const port = await serverPort(data);
 				if (port === undefined) throw new Error("It has not started.");
 				await query(pg, port, "select 1");
 				return port;
@@ -256,7 +257,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 	},
 
 	async worktreeData(service, place) {
-		const port = await runningPort(place.data);
+		const port = await serverPort(place.data);
 		if (port === undefined) return [];
 		const pg = await installPostgres(service.version, place.machine.home);
 		const rows = await query(
@@ -283,7 +284,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		if (names.includes(place.main)) {
 			throw new BasepadError(`\`${place.main}\` is main's database, which basepad never drops.`);
 		}
-		const port = await runningPort(place.data);
+		const port = await serverPort(place.data);
 		if (port === undefined || names.length === 0) return;
 		const pg = await installPostgres(service.version, place.machine.home);
 		for (const name of names) {
@@ -293,7 +294,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 	},
 
 	async address(_service, place) {
-		const port = (await runningPort(place.data)) ?? place.port;
+		const port = (await serverPort(place.data)) ?? place.port;
 		return `postgresql://${USER}@${HOST}:${port}/${place.database}`;
 	},
 
@@ -513,7 +514,7 @@ async function own(
 			`\`${place.key}\` is shared with main in worktrees (\`worktree: "shared"\`), so its database is main's. Run this in main to act on it.`,
 		);
 	}
-	const port = await runningPort(place.data);
+	const port = await serverPort(place.data);
 	if (port === undefined) throw new BasepadError(`Postgres for \`${place.key}\` is not running.`);
 	const pg = await installPostgres(service.version, place.machine.home);
 	return { pg, port, sql: (text) => query(pg, port, text) };
@@ -688,21 +689,9 @@ async function copyDatabase(pg: Tool, port: number, from: string, to: string): P
 	return "dump and restore";
 }
 
-/** The port of the server running on `data`, read from Postgres's own pid file. */
-async function runningPort(data: string): Promise<number | undefined> {
-	const text = await readFile(join(data, "postmaster.pid"), "utf8").catch(() => undefined);
-	const [pid, , , port] = text?.split("\n") ?? [];
-	if (!pid || !port || !alive(Number(pid))) return undefined;
-	return Number(port);
-}
-
-function alive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "EPERM";
-	}
+/** The port of the server running on `data`, from Postgres's own pid file. */
+function serverPort(data: string): Promise<number | undefined> {
+	return runningPort(join(data, "postmaster.pid"), 3);
 }
 
 /**
