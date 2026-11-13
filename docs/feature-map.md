@@ -19,6 +19,10 @@ flowchart LR
   Layout --> Catalogue
   Commands --> Catalogue["catalogue: postgres"]
   Commands --> Supervisor
+  Commands -- "up, on a terminal" --> MissionControl["mission control (Ink)"]
+  MissionControl -- "reads states, follows logs; start, stop" --> Supervisor
+  MissionControl --> Worktrees
+  MissionControl -- "worktree add, rm" --> Commands
   Commands --> EnvFiles["env files"]
   Supervisor -- "mise exec" --> Pitchfork["pitchfork (isolated)"]
   Catalogue --> Tools
@@ -56,6 +60,12 @@ Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.lo
 Entry: `basepad up [-d] [--claim]`, `basepad down`, `basepad status`
 Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md)
+
+### Mission control
+
+Purpose: one place to see and steer a project while it runs, so nothing needs another command: every environment (main and each worktree) at a glance, the selected one's apps and services with their addresses, and their logs live, with crashes standing out. Its keys are in the README. It only reads and asks: the supervisor runs everything, and worktrees are added and removed by the `worktree add` and `worktree rm` commands in processes of their own (`work.ts`), so closing or crashing the view stops nothing. A pure frame (state to Ink element) and a pure reducer (key to view and intent), behind one feed (git, configs, the supervisor's states and `pitchfork logs --tail`, worktree work under way), one place that performs intents (`act.ts`) and one terminal adapter.
+Entry: `basepad up` on a terminal (`-d`, or no terminal, skips it)
+Paths: src/mission-control/, src/supervisor.ts, src/commands.ts, src/worktrees.ts
 
 ### `basepad worktree add`
 

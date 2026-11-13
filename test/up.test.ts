@@ -106,6 +106,16 @@ test("up starts each app, prints the table and returns", () => {
 	);
 });
 
+test("with no terminal, up and up -d return without opening mission control", async () => {
+	// Mission control draws on the terminal's alternate screen, and waits for `q` there.
+	const alternateScreen = "\x1b[?1049h";
+	expect(firstUp.stdout).not.toContain(alternateScreen);
+	const detached = await box.basepad(shop, "up", "-d");
+	expect(detached.code).toBe(0);
+	expect(detached.stdout).toContain(`web  ${url("web")}  running`);
+	expect(detached.stdout).not.toContain(alternateScreen);
+});
+
 test("each app answers over HTTPS at its domain, from its folder, on its own PORT", async () => {
 	const web = await get(url("web"));
 	const cms = await get(url("cms"));

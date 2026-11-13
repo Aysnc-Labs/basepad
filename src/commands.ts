@@ -3,7 +3,7 @@ import { readdir, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { z } from "zod";
-import { kindOf, type NamesOf, type Place, type Service, type WorktreeData } from "./catalogue.ts";
+import { kindOf, type Service, type WorktreeData } from "./catalogue.ts";
 import { readHookInput } from "./claude-hooks.ts";
 import { CONFIG_FILE, LABEL, loadProject, type Project } from "./config.ts";
 import { copyEnvFiles, writeEnvFiles } from "./env-files.ts";
@@ -21,7 +21,7 @@ import {
 	type Machine,
 	machine,
 	namespaceOf,
-	type ServicePlace,
+	placeOf,
 	servicesHome,
 	suffixOf,
 } from "./layout.ts";
@@ -79,9 +79,12 @@ export const COMMANDS: Record<string, Command> = {
 		run: setup,
 	},
 	up: {
-		summary: "Start this project's services and apps, set its env files and show their state",
+		summary: "Start this project's services and apps, set its env files, then open mission control",
 		flags: {
-			detach: { short: "d", description: "Accepted for Docker habits; `up` always returns" },
+			detach: {
+				short: "d",
+				description: "Return once started, without opening mission control (as with no terminal)",
+			},
 			claim: {
 				description:
 					"Make this folder the owner of the project's databases, which another checkout under the same name holds",
@@ -300,6 +303,21 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	print(
 		await stateTables(environment, lay, here, await withServices(supervisor, project, lay, states)),
 	);
+	// Only on a terminal: scripts, CI and agents get `-d`'s behaviour without asking for it.
+	if (flags.detach !== true && process.stdin.isTTY && process.stdout.isTTY) {
+		// Loaded only here, so other commands never load the terminal UI.
+		const { missionControl } = await import("./mission-control/run.ts");
+		const main = environment.main ?? project;
+		await missionControl({
+			main,
+			machine: await machineWithPortFree(here, supervisor),
+			supervisor,
+			selected: lay.namespace,
+			// This very command, run again on the same Node: mission control adds and removes worktrees
+			// with it, in processes of their own that outlive the view.
+			basepad: [process.execPath, ...process.execArgv, process.argv[1] as string],
+		});
+	}
 	if (failure !== undefined) throw new BasepadError(failure);
 }
 
@@ -400,18 +418,6 @@ async function withServices(
 /** The machine with `portFree` asked from its port 443, once the supervisor runs. */
 async function machineWithPortFree(here: Machine, supervisor: Supervisor): Promise<Machine> {
 	return { ...here, portFree: (await supervisor.standardPort()) === "proxy" };
-}
-
-/** Where one of the project's services lives. */
-function placeOf(
-	project: Project,
-	lay: Layout,
-	here: Machine,
-	key: string,
-): Place<NamesOf<Service>> {
-	const service = lay.services[key] as ServicePlace;
-	const suffix = lay.suffix === undefined ? {} : { suffix: lay.suffix };
-	return { name: project.name, key, owner: project.root, machine: here, ...suffix, ...service };
 }
 
 /** Runs the config's `env` with each service's and app's outputs, and checks what it returns. */

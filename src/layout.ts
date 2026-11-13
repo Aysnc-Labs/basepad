@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { kindOf, type NamesOf, type Service } from "./catalogue.ts";
+import { kindOf, type NamesOf, type Place, type Service } from "./catalogue.ts";
 import type { Project } from "./config.ts";
 import { BasepadError } from "./internal/exec.ts";
 
@@ -178,6 +178,18 @@ export function layout(
 	};
 }
 
+/** Where one of the project's services lives in the layout `lay`, for its kind in the catalogue. */
+export function placeOf(
+	project: Pick<Project, "name" | "root">,
+	lay: Layout,
+	machine: Machine,
+	key: string,
+): Place<NamesOf<Service>> {
+	const service = lay.services[key] as ServicePlace;
+	const suffix = lay.suffix === undefined ? {} : { suffix: lay.suffix };
+	return { name: project.name, key, owner: project.root, machine, ...suffix, ...service };
+}
+
 /**
  * An app's domain: `<app>.<name>.localhost` in main, `<app>.<suffix>.<name>.localhost` in a
  * worktree, as the supervisor's proxy serves it.
@@ -202,6 +214,12 @@ export function definitionsFile(machine: Pick<Machine, "home">, namespace: strin
 /** A daemon's id with the supervisor: `<namespace>/<name>`. */
 export function daemonId(namespace: string, name: string): string {
 	return `${namespace}/${name}`;
+}
+
+/** `daemonId` undone: a daemon's namespace and name from its id. */
+export function ofDaemon(id: string): { namespace: string; name: string } {
+	const slash = id.lastIndexOf("/");
+	return { namespace: id.slice(0, slash), name: id.slice(slash + 1) };
 }
 
 /** The suffix of `namespace` when it is a worktree's of the project `name`; else none. */
@@ -233,6 +251,14 @@ export function nextSuffix(prefix: string, taken: Iterable<string>): string {
 /** The folder in basepad's home holding a project's services, one folder per service key. */
 export function servicesHome(machine: Pick<Machine, "home">, name: string): string {
 	return join(machine.home, "services", name);
+}
+
+/**
+ * The folder in basepad's home holding a project's worktree additions and removals started from
+ * mission control, while they run and until a view reads how they ended.
+ */
+export function workHome(machine: Pick<Machine, "home">, name: string): string {
+	return join(machine.home, "work", name);
 }
 
 /** basepad's own pitchfork's folders in the home, and the CA its proxy signs with. */
