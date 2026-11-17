@@ -562,7 +562,7 @@ function ownerOf(sql: Sql, name: string): Promise<string> {
 }
 
 /** A comment on a database that has gone is only a warning, so the owner is read back: https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/comment.c#L46-L62 */
-async function stampOwnerAndCheck(sql: Sql, name: string, owner: string): Promise<void> {
+export async function stampOwnerAndCheck(sql: Sql, name: string, owner: string): Promise<void> {
 	await stampOwner(sql, name, owner);
 	if ((await ownerOf(sql, name)) !== owner) {
 		throw new BasepadError(`Could not mark \`${name}\` as belonging to ${owner}.`);
