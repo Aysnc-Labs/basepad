@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Kind, Place, Snapshot } from "../catalogue.ts";
 import { BasepadError, must, shellQuote } from "../internal/exec.ts";
+import { writeWhole } from "../internal/files.ts";
 import { freePort, waitFor } from "../internal/ports.ts";
 import { runningPort } from "../internal/processes.ts";
 import { serviceUser } from "../internal/service-user.ts";
@@ -341,14 +342,9 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			if (file === undefined) {
 				await toStdout(pg.bin("pg_dump"), args);
 			} else {
-				const partial = `${file}.partial`;
-				try {
-					await must(pg.bin("pg_dump"), [...args, `--file=${partial}`], { env: clientEnv() });
-				} catch (error) {
-					await rm(partial, { force: true });
-					throw error;
-				}
-				await rename(partial, file);
+				await writeWhole(file, (partial) =>
+					must(pg.bin("pg_dump"), [...args, `--file=${partial}`], { env: clientEnv() }),
+				);
 			}
 			return plain ? "plain SQL" : "a custom-format dump";
 		},
@@ -436,16 +432,12 @@ async function restore(pg: Tool, port: number, to: string, from: Source): Promis
 		"--exit-on-error",
 	];
 	if (from.format === "url") {
-		const env = {
-			...clientEnv(),
-			BASEPAD_SOURCE_URL: from.url,
-			...(from.password ? { PGPASSWORD: from.password } : {}),
-		};
+		const env = { ...clientEnv(), ...(from.password ? { PGPASSWORD: from.password } : {}) };
 		await must(
 			"bash",
 			[
 				"-c",
-				`set -o pipefail; ${shellQuote(pg.bin("pg_dump"))} --format=custom --dbname="$BASEPAD_SOURCE_URL" | ${[...restoreAsSuperuser, ...into].map(shellQuote).join(" ")}`,
+				`set -o pipefail; ${shellQuote(pg.bin("pg_dump"))} --format=custom --dbname=${shellQuote(from.url)} | ${[...restoreAsSuperuser, ...into].map(shellQuote).join(" ")}`,
 			],
 			{ env, label: "pg_dump | pg_restore" },
 		);
@@ -494,7 +486,7 @@ function toStdout(file: string, args: string[]): Promise<void> {
 async function own(
 	service: PostgresService,
 	place: Place<PostgresNames>,
-): Promise<{ pg: Tool; port: number; sql: (text: string) => Promise<string> }> {
+): Promise<{ pg: Tool; port: number; sql: Sql }> {
 	if (place.suffix !== undefined && service.worktree === "shared") {
 		throw new BasepadError(
 			`\`${place.key}\` is shared with main in worktrees (\`worktree: "shared"\`), so its database is main's. Run this in main to act on it.`,
@@ -506,10 +498,7 @@ async function own(
 	return { pg, port, sql: (text) => query(pg, port, text) };
 }
 
-async function snapshotsOf(
-	sql: (text: string) => Promise<string>,
-	place: Place<PostgresNames>,
-): Promise<Snapshot[]> {
+async function snapshotsOf(sql: Sql, place: Place<PostgresNames>): Promise<Snapshot[]> {
 	const prefix = place.snapshots;
 	const rows = await sql(
 		// `datconnlimit` -2 marks an invalid database: https://www.postgresql.org/docs/current/catalog-pg-database.html
@@ -539,7 +528,7 @@ function noSnapshot(
 }
 
 async function replace(
-	sql: (text: string) => Promise<string>,
+	sql: Sql,
 	{
 		target,
 		staging,
@@ -562,26 +551,18 @@ async function replace(
 	await sql(`alter database ${identifier(staging)} rename to ${identifier(target)}`);
 }
 
-async function stampOwner(
-	sql: (text: string) => Promise<string>,
-	name: string,
-	owner: string,
-): Promise<void> {
+async function stampOwner(sql: Sql, name: string, owner: string): Promise<void> {
 	await sql(`comment on database ${identifier(name)} is ${literal(owner)}`);
 }
 
-function ownerOf(sql: (text: string) => Promise<string>, name: string): Promise<string> {
+function ownerOf(sql: Sql, name: string): Promise<string> {
 	return sql(
 		`select coalesce(shobj_description(oid, 'pg_database'), '') from pg_database where datname = ${literal(name)}`,
 	);
 }
 
 /** A comment on a database that has gone is only a warning, so the owner is read back: https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/comment.c#L46-L62 */
-async function stampOwnerAndCheck(
-	sql: (text: string) => Promise<string>,
-	name: string,
-	owner: string,
-): Promise<void> {
+async function stampOwnerAndCheck(sql: Sql, name: string, owner: string): Promise<void> {
 	await stampOwner(sql, name, owner);
 	if ((await ownerOf(sql, name)) !== owner) {
 		throw new BasepadError(`Could not mark \`${name}\` as belonging to ${owner}.`);
@@ -601,8 +582,8 @@ async function installPostgres(version: PostgresVersion, home: string): Promise<
 
 async function placePgvector(pg: Tool, version: string, home: string): Promise<void> {
 	const from = (await install("conda:pgvector", version, home)).dir;
-	const pgConfigNotAmongMiseBins = join(pg.dir, "bin", "pg_config");
-	const config = (flag: string) => must(pgConfigNotAmongMiseBins, [flag]).then((out) => out.trim());
+	const pgConfig = join(pg.dir, "bin", "pg_config");
+	const config = (flag: string) => must(pgConfig, [flag]).then((out) => out.trim());
 	const libDir = await config("--pkglibdir");
 	const extensionDir = join(await config("--sharedir"), "extension");
 	const copies: [string, string][] = [];
@@ -617,11 +598,11 @@ async function placePgvector(pg: Tool, version: string, home: string): Promise<v
 	}
 	for (const [file, dir] of copies) {
 		const target = join(dir, file.slice(file.lastIndexOf("/") + 1));
-		const temp = `${target}.${process.pid}.tmp`;
-		await copyFile(file, temp);
-		await rename(temp, target);
+		await writeWhole(target, (partial) => copyFile(file, partial));
 	}
 }
+
+type Sql = (text: string) => Promise<string>;
 
 type Route = "file clone" | "template copy" | "dump and restore";
 
@@ -663,11 +644,7 @@ async function copyDatabase(
 	return "dump and restore";
 }
 
-async function templateRoutes(
-	sql: (text: string) => Promise<string>,
-	from: string,
-	to: string,
-): Promise<[Route, string[]][]> {
+async function templateRoutes(sql: Sql, from: string, to: string): Promise<[Route, string[]][]> {
 	const offered = await sql(
 		"select coalesce(enumvals::text, '') from pg_settings where name = 'file_copy_method'",
 	);
@@ -679,11 +656,7 @@ async function templateRoutes(
 	return [["file clone", ["set file_copy_method = clone", create]], templateCopy];
 }
 
-async function withSourceClosed<T>(
-	sql: (text: string) => Promise<string>,
-	database: string,
-	copy: () => Promise<T>,
-): Promise<T> {
+async function withSourceClosed<T>(sql: Sql, database: string, copy: () => Promise<T>): Promise<T> {
 	await sql(`alter database ${identifier(database)} allow_connections false`);
 	try {
 		await sql(

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
+import { type AddressInfo, createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
@@ -212,7 +213,30 @@ test("import from a postgres:// URL copies that database, and with several datab
 	expect(await rows(main)).toBe(sourceRows);
 }, 300_000);
 
-test("a failed import from a postgres:// URL names the copy, not the command or the password", async () => {
+test("an import from a postgres:// URL keeps its password off pg_dump's command line", async () => {
+	const sockets: Socket[] = [];
+	const silent = createServer((socket) => sockets.push(socket));
+	const reached = new Promise((resolve) => silent.once("connection", resolve));
+	await new Promise<void>((resolve) => silent.listen(0, "127.0.0.1", resolve));
+	const { port } = silent.address() as AddressInfo;
+	const importing = box.basepad(
+		main,
+		"db",
+		"import",
+		`postgres://basepad:s3cret-pw@127.0.0.1:${port}/source`,
+		"--yes",
+	);
+	await reached;
+	const { stdout: processes } = await promisify(execFile)("ps", ["-e", "-w", "-w", "-o", "args="]);
+	for (const socket of sockets) socket.destroy();
+	silent.close();
+	expect((await importing).code).toBe(1);
+	const pgDump = processes.split("\n").filter((line) => /\/pg_dump /.test(line));
+	expect(pgDump).not.toEqual([]);
+	expect(pgDump.filter((line) => line.includes("s3cret-pw"))).toEqual([]);
+}, 120_000);
+
+test("a failed import from a postgres:// URL names the failing step, pg_dump | pg_restore, not its command", async () => {
 	const source = new URL(await url(main));
 	source.password = "s3cret-pw";
 	source.pathname = "/no_such_db";

@@ -2,7 +2,8 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 
-const CLEARS_PROXY_PORT = /BASEPAD_PROXY_PORT\s*:\s*(""|''|``)|delete\s+[\w.]+\.BASEPAD_PROXY_PORT/;
+const CLEARS_PROXY_PORT =
+	/BASEPAD_PROXY_PORT["'`\]]*\s*[:=]\s*(""|''|``|undefined)|delete\s+[^;\n]*BASEPAD_PROXY_PORT/;
 
 test("only setup.test.ts clears BASEPAD_PROXY_PORT, so only it takes port 443 as root on Linux", async () => {
 	const dir = import.meta.dirname;

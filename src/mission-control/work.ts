@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { writeWhole } from "../internal/files.ts";
 import { aliveAndOurs } from "../internal/processes.ts";
 import { checkedOutIn } from "../worktrees.ts";
 import type { Removal, Work } from "./model.ts";
@@ -44,7 +45,7 @@ export async function startWork(options: {
 		order.kind === "add"
 			? { kind: "add", title: "Adding a worktree", ...(before ? { before } : {}) }
 			: { kind: "remove", title: `Removing ${order.suffix}`, namespace: order.namespace, args };
-	await writeWhole(`${base}.json`, JSON.stringify(record));
+	await writeWhole(`${base}.json`, (partial) => writeFile(partial, JSON.stringify(record)));
 	const child = spawn(
 		"sh",
 		["-c", '"$@" >"$0.log" 2>&1; echo $? >"$0.exit"', base, ...command, ...args],
@@ -61,12 +62,7 @@ export async function startWork(options: {
 	const pid = child.pid as number;
 	const start = await startOf(pid);
 	const shell: Shell = { pid, ...(start === undefined ? {} : { start }) };
-	await writeWhole(`${base}.pid`, JSON.stringify(shell));
-}
-
-async function writeWhole(file: string, text: string): Promise<void> {
-	await writeFile(`${file}.partial`, text);
-	await rename(`${file}.partial`, file);
+	await writeWhole(`${base}.pid`, (partial) => writeFile(partial, JSON.stringify(shell)));
 }
 
 export async function takeWork(dir: string): Promise<{ running: Running[]; finished: string[] }> {

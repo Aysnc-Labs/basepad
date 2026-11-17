@@ -6,6 +6,7 @@ import { createConnection, createServer } from "node:net";
 import { constants, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { shellQuote } from "../src/internal/exec.ts";
 import { PITCHFORK_VERSION } from "../src/versions.ts";
 
 const run = promisify(execFile);
@@ -161,12 +162,13 @@ export async function sandbox(): Promise<Sandbox> {
 					return await box.get<T>(url);
 				} catch (error) {
 					if (Date.now() > until) throw error;
+					await new Promise((resolve) => setTimeout(resolve, 100));
 				}
 			}
 		},
 		onTerminal(cwd, input, ...args) {
-			const command = [process.execPath, cli, ...args].map((arg) => `'${arg}'`).join(" ");
-			const shell = `cd '${cwd}' && ${command}`;
+			const command = [process.execPath, cli, ...args].map(shellQuote).join(" ");
+			const shell = `cd ${shellQuote(cwd)} && ${command}`;
 			const [file, argv] =
 				process.platform === "darwin"
 					? [

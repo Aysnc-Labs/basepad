@@ -152,7 +152,7 @@ export async function openSupervisor(
 		if (running.length > 0) await run("stop", ...running.map((d) => d.id));
 	};
 
-	const ownHistory = async (id: string, lines: number) => {
+	const historyOfOne = async (id: string, lines: number) => {
 		if (lines === 0) return [];
 		const out = await run("logs", id, "-n", String(lines), "--no-pager").catch(() => "");
 		return out
@@ -167,7 +167,7 @@ export async function openSupervisor(
 	): Promise<{ error: unknown } | undefined> => {
 		if (idle.length === 0) return undefined;
 		const ids = idle.map((name) => daemonId(namespace, name));
-		return run("start", ...ids, ...READY_AT_ONCE).then(
+		return run("start", ...ids, ...READY_CHECK_PASSES_AT_ONCE).then(
 			() => undefined,
 			(error: unknown) => ({ error }),
 		);
@@ -372,7 +372,7 @@ export async function openSupervisor(
 				if (replayed) line(entry);
 				else live.push(entry);
 			});
-			Promise.all(ids.map((id) => ownHistory(id, history))).then((lists) => {
+			Promise.all(ids.map((id) => historyOfOne(id, history))).then((lists) => {
 				if (stopped) return;
 				const past = lists.flat().sort((a, b) => a.stamp.localeCompare(b.stamp));
 				const key = (e: { id: string; stamp: string; text: string }) =>
@@ -510,7 +510,7 @@ const Listed = z.looseObject({
 });
 type Listed = z.infer<typeof Listed>;
 
-const READY_AT_ONCE = ["--cmd", "true"];
+const READY_CHECK_PASSES_AT_ONCE = ["--cmd", "true"];
 
 async function pollUntil(done: () => Promise<boolean>, ms: number, everyMs: number): Promise<void> {
 	const until = Date.now() + ms;

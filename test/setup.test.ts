@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { nssStores } from "../src/setup.ts";
@@ -93,7 +92,7 @@ test("one app fetches another by its HTTPS domain from server-side code", async 
 });
 
 test("Chrome's NSS store is ~/.pki/nssdb when it exists, else ~/.local/share/pki/nssdb", async () => {
-	const home = await mkdtemp(join(tmpdir(), "basepad-nss-"));
+	const home = await mkdtemp(join(box.root, "nss-"));
 	const store = async (dir: string) => {
 		await mkdir(join(home, dir), { recursive: true });
 		await writeFile(join(home, dir, "cert9.db"), "");

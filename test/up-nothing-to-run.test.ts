@@ -7,7 +7,7 @@ beforeAll(async () => {
 });
 afterAll(() => box.dispose());
 
-test("up in a project with nothing to run registers it, and again on a second up", async () => {
+test("up in a project with nothing to run succeeds, and again on a second up", async () => {
 	const dir = await box.project("b40bare", {
 		"basepad.config.ts": configFile(`{ name: "b40bare" }`),
 	});
