@@ -1,8 +1,9 @@
 import { chmod, chown, stat } from "node:fs/promises";
 import { dirname } from "node:path";
-import { BasepadError, exec, must } from "./exec.ts";
+import { BasepadError, must } from "./exec.ts";
 
 const NAME = "basepad";
+const CREATE_LOCK = "/tmp/basepad-service-user.lock";
 
 export interface ServiceUser {
 	wrap(argv: readonly string[]): string[];
@@ -11,27 +12,21 @@ export interface ServiceUser {
 
 const self: ServiceUser = { wrap: (argv) => [...argv], grant: async () => {} };
 
-export async function serviceUser(): Promise<ServiceUser> {
+export async function serviceUser(name = NAME): Promise<ServiceUser> {
 	if (process.getuid?.() !== 0) return self;
 	if (process.platform !== "linux") {
 		throw new BasepadError(
 			"As root, basepad runs services as a system user, which it supports on Linux only.",
 		);
 	}
-	const exists = async () => (await exec("id", ["-u", NAME])).code === 0;
-	if (!(await exists())) {
-		await must("useradd", [
-			"--system",
-			"--no-create-home",
-			"--shell",
-			"/usr/sbin/nologin",
-			NAME,
-		]).catch(async (error) => {
-			if (!(await exists())) throw error;
-		});
-	}
-	const uid = Number((await must("id", ["-u", NAME])).trim());
-	const gid = Number((await must("id", ["-g", NAME])).trim());
+	await must("flock", [
+		CREATE_LOCK,
+		"sh",
+		"-c",
+		`id -u ${name} >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin ${name}`,
+	]);
+	const uid = Number((await must("id", ["-u", name])).trim());
+	const gid = Number((await must("id", ["-g", name])).trim());
 	return {
 		// setpriv execs the program itself, so the supervisor's pid is the server's and its stop
 		// signal reaches the server directly; runuser would stay in between:
