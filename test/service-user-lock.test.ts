@@ -24,9 +24,19 @@ function within<T>(ms: number, work: Promise<T>): Promise<T | "stalled"> {
 	return Promise.race([work, stalled]).finally(() => clearTimeout(timer));
 }
 
+function killGroup(pid: number | undefined): void {
+	if (pid === undefined) return;
+	try {
+		process.kill(-pid);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+	}
+}
+
 test.runIf(rootOnLinux)(
 	"another user cannot hold the service-user lock to stall root's basepad",
 	async () => {
+		await serviceUser(name);
 		const held = spawn(
 			"setpriv",
 			[
@@ -38,15 +48,18 @@ test.runIf(rootOnLinux)(
 				"sleep",
 				"8",
 			],
-			{ stdio: "ignore" },
+			{ stdio: "ignore", detached: true },
 		);
-		const exited = new Promise((resolve) => held.once("exit", resolve));
+		const exited = new Promise((resolve, reject) => {
+			held.once("exit", resolve);
+			held.once("error", reject);
+		});
 		try {
 			await within(1_000, exited);
 			const created = serviceUser(name).then(() => "done");
 			expect(await within(4_000, created)).toBe("done");
 		} finally {
-			held.kill();
+			killGroup(held.pid);
 			await exited;
 		}
 	},
