@@ -30,9 +30,28 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
 
-  linux-root:
-    name: Check (Linux, as root)
+  mise-min:
+    name: Read MISE_MIN_VERSION
     if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: read
+        run: |
+          version=$(sed -n 's/^export const MISE_MIN_VERSION = "\(.*\)";$/\1/p' src/versions.ts)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  linux-root:
+    name: Check (Linux, as root, ${{ matrix.mise }} mise)
+    if: ${{ !github.event.pull_request.draft }}
+    needs: mise-min
+    strategy:
+      fail-fast: false
+      matrix:
+        mise: [pinned, oldest]
     runs-on: ubuntu-24.04
     container:
       image: ubuntu:24.04
@@ -48,6 +67,6 @@ jobs:
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: jdx/mise-action@v5
         with:
-          version: ${{ env.MISE_VERSION }}
+          version: ${{ matrix.mise == 'oldest' && needs.mise-min.outputs.version || env.MISE_VERSION }}
       - run: id -u && pnpm install --frozen-lockfile
       - run: pnpm check
