@@ -19,7 +19,6 @@ const PASSWORD = "basepad";
 const READY_MS = 60_000;
 const NO_UNIX_SOCKETS = "unix_socket_directories=";
 const NEON_PROXY = "neon-proxy";
-const PROXIED_POSTGRES_PORT_LINE = 2;
 const ANY_PORT = `${HOST}:0`;
 
 export type PostgresVersion = 17 | 18;
@@ -328,12 +327,9 @@ export const postgresWithNeonProxyKind: Kind<
 			place.machine.home,
 		);
 		const extra = neonProxyOf(place);
-		const file = extra.pid;
-		const running = await runningPort(file);
-		const proxyPort = running ?? (await freePort(extra.port));
-		const againstOldPostgres =
-			running !== undefined &&
-			(await runningPort(file, PROXIED_POSTGRES_PORT_LINE)) !== postgresPort;
+		const running = await runningProxy(extra.pid);
+		const proxyPort = running?.proxy ?? (await freePort(extra.port));
+		const againstOldPostgres = running !== undefined && running.postgres !== postgresPort;
 		const argv = [
 			proxy.bin("neon-proxy"),
 			"--auth-backend=postgres",
@@ -352,7 +348,7 @@ export const postgresWithNeonProxyKind: Kind<
 		return {
 			[place.daemon]: daemon,
 			[extra.daemon]: {
-				run: `${recordRunning(file, proxyPort, postgresPort)} && export LOGFMT=text RUST_LOG=warn && exec ${argv.map(shellQuote).join(" ")}`,
+				run: `${recordProxy(extra.pid, { proxy: proxyPort, postgres: postgresPort })} && export LOGFMT=text RUST_LOG=warn && exec ${argv.map(shellQuote).join(" ")}`,
 				dir: place.dir,
 				listens: proxyPort,
 				depends: [place.daemon],
@@ -385,7 +381,22 @@ function neonProxyOf(place: Place<PostgresNames>): ExtraDaemon {
 }
 
 async function neonProxyPort(place: Place<PostgresNames>): Promise<number> {
-	return (await runningPort(neonProxyOf(place).pid)) ?? neonProxyOf(place).port;
+	const extra = neonProxyOf(place);
+	return (await runningProxy(extra.pid))?.proxy ?? extra.port;
+}
+
+interface ProxyPorts {
+	proxy: number;
+	postgres: number | undefined;
+}
+
+function recordProxy(pid: string, ports: { proxy: number; postgres: number }): string {
+	return recordRunning(pid, ports.proxy, ports.postgres);
+}
+
+async function runningProxy(pid: string): Promise<ProxyPorts | undefined> {
+	const proxy = await runningPort(pid, 1);
+	return proxy === undefined ? undefined : { proxy, postgres: await runningPort(pid, 2) };
 }
 
 async function prepareServer(
