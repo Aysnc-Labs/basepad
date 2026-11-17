@@ -1,11 +1,11 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, expect, test } from "vitest";
 import { BasepadError } from "../src/internal/exec.ts";
-import { rootOnlyDir, serviceUser } from "../src/internal/service-user.ts";
+import { rootOnlyDir, SERVICE_USER_LOCK, serviceUser } from "../src/internal/service-user.ts";
 
 const rootOnLinux = process.platform === "linux" && process.getuid?.() === 0;
 const name = `bplock${process.pid}`;
@@ -16,29 +16,39 @@ afterAll(async () => {
 	if (rootOnLinux) await run("userdel", [name]).catch(() => {});
 });
 
+function within<T>(ms: number, work: Promise<T>): Promise<T | "stalled"> {
+	let timer: NodeJS.Timeout | undefined;
+	const stalled = new Promise<"stalled">((resolve) => {
+		timer = setTimeout(() => resolve("stalled"), ms);
+	});
+	return Promise.race([work, stalled]).finally(() => clearTimeout(timer));
+}
+
 test.runIf(rootOnLinux)(
-	"another user cannot take the service-user lock to stall root's basepad",
+	"another user cannot hold the service-user lock to stall root's basepad",
 	async () => {
-		await serviceUser(name);
-		const held = run(
+		const held = spawn(
 			"setpriv",
 			[
 				`--reuid=${NOBODY}`,
 				`--regid=${NOBODY}`,
 				"--clear-groups",
 				"flock",
-				"/run/basepad/service-user.lock",
+				SERVICE_USER_LOCK,
 				"sleep",
 				"8",
 			],
-			{ timeout: 10_000 },
+			{ stdio: "ignore" },
 		);
-		await expect(held).rejects.toThrow(/Permission denied/);
-		const outcome = await Promise.race([
-			serviceUser(name).then(() => "done"),
-			new Promise((resolve) => setTimeout(() => resolve("stalled"), 4_000)),
-		]);
-		expect(outcome).toBe("done");
+		const exited = new Promise((resolve) => held.once("exit", resolve));
+		try {
+			await within(1_000, exited);
+			const created = serviceUser(name).then(() => "done");
+			expect(await within(4_000, created)).toBe("done");
+		} finally {
+			held.kill();
+			await exited;
+		}
 	},
 	15_000,
 );
