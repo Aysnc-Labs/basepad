@@ -54,7 +54,7 @@ export async function serviceUser(name = NAME): Promise<ServiceUser> {
 }
 
 export async function rootOnlyDir(path: string): Promise<void> {
-	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+	await mkdir(dirname(path), { recursive: true });
 	await mkdir(path, { mode: 0o700 }).catch(ignoreExisting);
 	const dir = await lstat(path);
 	if (!dir.isDirectory() || dir.uid !== 0 || (dir.mode & 0o077) !== 0) {

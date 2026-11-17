@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -55,6 +55,22 @@ test.runIf(rootOnLinux)(
 				await expect(failure).rejects.toBeInstanceOf(BasepadError);
 				await expect(failure).rejects.toThrow(/only root can enter/);
 			}
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	},
+);
+
+test.runIf(rootOnLinux)(
+	"a missing parent of the lock directory gets ordinary permissions",
+	async () => {
+		const root = await mkdtemp(join(tmpdir(), "bplockdir-"));
+		try {
+			await mkdir(join(root, "ordinary"));
+			await rootOnlyDir(join(root, "run/basepad"));
+			const ordinary = (await stat(join(root, "ordinary"))).mode & 0o777;
+			expect((await stat(join(root, "run"))).mode & 0o777).toBe(ordinary);
+			expect((await stat(join(root, "run/basepad"))).mode & 0o777).toBe(0o700);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
