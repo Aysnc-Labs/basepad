@@ -149,14 +149,14 @@ Keys of `services` and `apps` are lowercase DNS labels, and one key can't be bot
 
 A service gives:
 
-| Output     | Postgres                                                    |
-| ---------- | ----------------------------------------------------------- |
-| `url`      | `postgresql://postgres:basepad@127.0.0.1:<port>/<database>` |
-| `host`     | `127.0.0.1`                                                 |
-| `port`     | the server's port, a number                                 |
-| `user`     | `postgres`                                                  |
-| `password` | `basepad`, a placeholder: local connections need none       |
-| `database` | `<name>_<key>`, with hyphens made underscores: `shop_db`    |
+| Output     | Postgres                                                                    |
+| ---------- | --------------------------------------------------------------------------- |
+| `url`      | `postgresql://postgres:basepad@127.0.0.1:<port>/<database>`                 |
+| `host`     | `127.0.0.1`                                                                 |
+| `port`     | the server's port, a number                                                 |
+| `user`     | `postgres`                                                                  |
+| `password` | `basepad`, the `postgres` role's real password; local connections need none |
+| `database` | `<name>_<key>`, with hyphens made underscores: `shop_db`                    |
 
 Redis gives `url` (`redis://127.0.0.1:<port>`, with no database index: clients pick their own), `host` and `port`.
 
