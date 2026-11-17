@@ -238,3 +238,43 @@ test("escape steps back one layer at a time: the search, then the pause, then th
 	expect(scroll(["escape"], paused).until).toBeUndefined();
 	expect(scroll(["escape", "escape"], paused).focus).toBeUndefined();
 });
+
+test("stopping or starting a service stops or starts its extra daemons with it; one alone acts on itself", () => {
+	const db = part("shop/db", { extraDaemons: ["db-neon-proxy"] });
+	const proxy = part("shop/db-neon-proxy", { note: "with db" });
+	const withProxy: Snapshot = {
+		...snapshot,
+		environments: [{ ...env("shop", ["web"]), services: [db, proxy] }],
+	};
+	const act = (keys: string[], at: Snapshot) => {
+		let step = { view: initialView("shop") } as ReturnType<typeof reduce>;
+		for (const key of keys) step = reduce(step.view, key, at);
+		return step.intent;
+	};
+	const services = ["db", "db-neon-proxy"];
+	expect(act(["down", "down", "space"], withProxy)).toEqual({
+		kind: "stop",
+		namespace: "shop",
+		apps: [],
+		services,
+		label: "db",
+	});
+	const stopped: Snapshot = {
+		...withProxy,
+		environments: [
+			{
+				...env("shop", ["web"]),
+				services: [
+					{ ...db, state: "stopped" },
+					{ ...proxy, state: "stopped" },
+				],
+			},
+		],
+	};
+	expect(act(["down", "down", "space"], stopped)).toMatchObject({ kind: "start", services });
+	expect(act(["down", "down", "down", "space"], withProxy)).toMatchObject({
+		kind: "stop",
+		services: ["db-neon-proxy"],
+	});
+	expect(act(["r"], withProxy)).toMatchObject({ kind: "restart", apps: ["web"], services });
+});
