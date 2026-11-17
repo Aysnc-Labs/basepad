@@ -28,7 +28,6 @@ test("a project on Postgres 17 gets 17, and pgvector can be created", async () =
 	expect(vector.stdout).toContain("5");
 }, 300_000);
 
-// Reinstalling Postgres touches mise's installs, so it runs only where they are not a developer's own.
 const ownInstalls = Boolean(process.env.CI || process.env.MISE_DATA_DIR);
 
 test.runIf(ownInstalls)(

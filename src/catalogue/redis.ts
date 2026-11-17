@@ -10,14 +10,7 @@ import { recordRunning, runningPort } from "../internal/processes.ts";
 import { install } from "../tools.ts";
 import { REDIS_VERSION } from "../versions.ts";
 
-/**
- * A Redis of the environment's own: mise's Redis, on loopback only, kept in memory (nothing is
- * saved), on a port derived from the environment's name. Each environment's server has a folder of
- * its own in the service's folder, holding its pid and port while it runs.
- */
-
 const HOST = "127.0.0.1";
-/** How long `up` waits for the server to answer before it gives up. */
 const READY_MS = 30_000;
 
 /** What a worktree's Redis is: its own, empty one, or main's (`shared`). */
@@ -45,18 +38,11 @@ export interface RedisOutputs {
 	port: number;
 }
 
-/** The names a Redis service derives. */
 export interface RedisNames {
-	/**
-	 * The environment's server's folder: `main` in the service's folder, `worktrees/<suffix>` for
-	 * a worktree's own (main's when the service is `shared`).
-	 */
 	server: string;
-	/** Where worktrees' servers' folders are. */
 	worktrees: string;
 }
 
-/** The file in a server's folder naming the checkout it belongs to. */
 const OWNER = "owner";
 
 export const redisKind: Kind<RedisService, RedisOutputs, RedisNames> = {
@@ -88,7 +74,6 @@ export const redisKind: Kind<RedisService, RedisOutputs, RedisNames> = {
 			String(port),
 			"--bind",
 			HOST,
-			// In memory: nothing is saved, so a worktree's starts empty and none outlives its server.
 			"--save",
 			"",
 			"--appendonly",
@@ -105,7 +90,6 @@ export const redisKind: Kind<RedisService, RedisOutputs, RedisNames> = {
 
 	async provision(_service, place, { started, stopped }) {
 		const outputs = (port: number) => ({ url: `redis://${HOST}:${port}`, host: HOST, port });
-		// Not started: where it will listen, which is where `prepare` put it.
 		if (!started)
 			return outputs((await runningPort(pidFile(place.server))) ?? (await freePort(place.port)));
 		const port = await waitFor(
@@ -154,12 +138,10 @@ export const redisKind: Kind<RedisService, RedisOutputs, RedisNames> = {
 	},
 };
 
-/** The file in a server's folder with its process id and port while it runs. */
 function pidFile(server: string): string {
 	return join(server, "redis.pid");
 }
 
-/** Resolves once Redis on `port` answers PING with PONG. */
 function ping(port: number): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const socket = createConnection({ host: HOST, port });

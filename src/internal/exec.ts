@@ -6,17 +6,14 @@ export interface Output {
 	stderr: string;
 }
 
-/** A failure the user can act on. The CLI prints its message without a stack. */
 export class BasepadError extends Error {}
 
 export interface ExecOptions {
 	cwd?: string;
 	env?: NodeJS.ProcessEnv;
-	/** Written to the program's stdin, which is otherwise closed. */
 	input?: string;
 }
 
-/** Runs a program to completion and captures its output. Never throws for a non-zero exit. */
 export function exec(
 	file: string,
 	args: readonly string[],
@@ -45,31 +42,24 @@ export function exec(
 	});
 }
 
-/** Runs a program and returns its stdout, or throws with what it printed. */
 export async function must(
 	file: string,
 	args: readonly string[],
-	options: ExecOptions = {},
+	options: ExecOptions & { label?: string } = {},
 ): Promise<string> {
 	const out = await exec(file, args, options);
 	if (out.code !== 0) {
 		const detail = (out.stderr || out.stdout).trim();
-		throw new BasepadError(
-			`\`${[file, ...args].join(" ")}\` failed (exit ${out.code}):\n${detail}`,
-		);
+		const label = options.label ?? [file, ...args].join(" ");
+		throw new BasepadError(`\`${label}\` failed (exit ${out.code}):\n${detail}`);
 	}
 	return out.stdout;
 }
 
-/** Quotes one word for a POSIX shell. */
 export function shellQuote(word: string): string {
 	return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
 }
 
-/**
- * Runs a program on the user's own terminal, so it can ask them things (`sudo`'s password, a
- * confirmation). Returns its exit code; never throws for a non-zero exit.
- */
 export function interactive(
 	file: string,
 	args: readonly string[],

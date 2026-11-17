@@ -55,7 +55,6 @@ const views: [string, View][] = [
 	["a search", { ...paused, focus: "shop/chatty", search: { query: "lorem", typing: false } }],
 ];
 
-// Every width from the minimum up, so a title that fills its border exactly is among them.
 for (const [name, view] of views) {
 	test(`paused with ${name}, the stream's top border keeps its corner at every width`, () => {
 		for (let cols = 72; cols <= 120; cols++) {
@@ -65,7 +64,6 @@ for (const [name, view] of views) {
 	});
 }
 
-// A name or a query found is never cut: the hints give way first, and one that still can't fit is left out.
 for (const [name, view] of [
 	...views,
 	[
@@ -91,7 +89,6 @@ test("a long query being typed shows its end and the caret, as an input field do
 		const title = top(view, cols, 16);
 		expect(title, `${cols} columns`).toMatch(/LOGS.* ‖ paused/);
 		expect(title, `${cols} columns`).toMatch(/─╮$|[^…]╮$/);
-		// Whole where it fits, else its end after a "…".
 		expect(title, `${cols} columns`).toMatch(new RegExp(`/ (${query}|…[a-j]+)▏`));
 	}
 	expect(top(view, 72, 16)).toMatch(/ \/ …[a-j]{10,}hij▏ /);

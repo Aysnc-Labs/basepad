@@ -5,8 +5,6 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, type Result, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
 
-/** `db import` and `db export`: dumps in and out of the environment's own database. */
-
 let box: Sandbox;
 let main: string;
 let tree: string;
@@ -25,7 +23,6 @@ const git = async (cwd: string, ...args: string[]) => {
 	});
 };
 
-/** A main checkout under git with `services`, up; `env` writes `<KEY>_URL` for each. */
 async function project(name: string, services: Record<string, string>): Promise<string> {
 	const keys = Object.keys(services);
 	const dir = await box.project(name, {
@@ -55,7 +52,6 @@ async function sql(dir: string, query: string, key = "db"): Promise<string> {
 	return out.stdout.trim();
 }
 
-/** The names in `items`, sorted; `none` when there is no such table. */
 const rows = (dir: string, key = "db") =>
 	sql(
 		dir,
@@ -63,7 +59,6 @@ const rows = (dir: string, key = "db") =>
 		key,
 	);
 
-/** `basepad` in `dir`, expected to succeed; its output. */
 async function ok(dir: string, ...args: string[]): Promise<string> {
 	const result = await box.basepad(dir, ...args);
 	expect(result.stderr).toBe("");
@@ -71,10 +66,6 @@ async function ok(dir: string, ...args: string[]): Promise<string> {
 	return result.stdout;
 }
 
-/**
- * `basepad` on a terminal of its own, typing `input` once it asks. Input stays open until basepad
- * exits. On macOS, Python's `pty`: macOS's `script` fails on Node's stdin, a socket there.
- */
 function onTerminal(cwd: string, input: string, ...args: string[]): Promise<Result> {
 	const command = [process.execPath, cli, ...args].map((arg) => `'${arg}'`).join(" ");
 	const shell = `cd '${cwd}' && ${command}`;
@@ -98,7 +89,6 @@ function onTerminal(cwd: string, input: string, ...args: string[]): Promise<Resu
 	});
 }
 
-/** A plain SQL file in the sandbox that makes `items` hold `names`. */
 async function sqlFile(name: string, ...names: string[]): Promise<string> {
 	const file = join(box.root, name);
 	await writeFile(
@@ -108,7 +98,6 @@ async function sqlFile(name: string, ...names: string[]): Promise<string> {
 	return file;
 }
 
-/** The first bytes of `file`, as text. */
 const head = async (file: string, bytes = 5) =>
 	(await readFile(file)).subarray(0, bytes).toString("latin1");
 
@@ -240,9 +229,19 @@ test("import from a postgres:// URL copies that database, and with several datab
 	expect(copied).toMatch(
 		/Imported a copy of 127\.0\.0\.1:\d+\/t27io_db into `ref`'s database t27src_ref\./,
 	);
-	// The URL's placeholder password is never shown.
 	expect(copied).not.toContain("basepad@");
 	expect(await rows(other, "ref")).toBe(sourceRows);
 	expect(await rows(other)).toBe("db-own");
 	expect(await rows(main)).toBe(sourceRows);
 }, 300_000);
+
+test("a failed import from a postgres:// URL names the copy, not the command or the password", async () => {
+	const source = new URL(await url(main));
+	source.password = "s3cret-pw";
+	source.pathname = "/no_such_db";
+	const failed = await box.basepad(main, "db", "import", source.href, "--yes");
+	expect(failed.code).toBe(1);
+	expect(failed.stderr).toMatch(/`pg_dump \| pg_restore` failed \(exit \d+\):\n.*no_such_db/);
+	expect(failed.stderr).not.toContain("s3cret-pw");
+	expect(failed.stderr).not.toContain("bash");
+}, 120_000);

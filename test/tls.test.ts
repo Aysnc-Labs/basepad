@@ -12,7 +12,6 @@ const openssl = (...args: string[]) => promisify(execFile)("openssl", args);
 let dir: string;
 let paths: { ca: string; caKey: string; cert: string; key: string };
 
-/** A CA in `dir` named `name`, as the proxy makes one. */
 async function makeCa(name: string): Promise<{ ca: string; caKey: string }> {
 	const caKey = join(dir, `${name}-key.pem`);
 	const ca = join(dir, `${name}.pem`);

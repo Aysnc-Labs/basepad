@@ -12,7 +12,6 @@ const coverage = [
 	{ dir: "scripts", include: "files" },
 ] as const;
 
-// A git repository with one module, one script and its test, and an ADR, plus the given map, all tracked.
 function fixture(map: string): string {
 	const root = mkdtempSync(join(tmpdir(), "feature-map-"));
 	roots.push(root);

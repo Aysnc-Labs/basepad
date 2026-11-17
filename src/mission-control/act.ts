@@ -3,33 +3,20 @@ import type { Supervisor } from "../supervisor.ts";
 import type { Intent } from "./model.ts";
 import type { WorkOrder } from "./work.ts";
 
-/**
- * Where mission control's intents are done: the one place the view acts on what runs (through the
- * supervisor) and on the developer's desktop (browser and clipboard). Everything else it only reads.
- */
 export interface Hands {
 	supervisor: Pick<Supervisor, "start" | "stop" | "hold">;
-	/** Opens a URL in the default browser. Throws when there is none to open it in. */
 	open(url: string): Promise<void>;
-	/** Puts text on the clipboard. Returns where it went (`the clipboard`). */
 	copy(text: string): Promise<string>;
-	/**
-	 * Starts `basepad worktree add` or `worktree rm` itself, from main, in a process that outlives
-	 * the view (`startWork`). Resolves once it runs; rejects when it cannot start.
-	 */
 	worktrees(order: WorkOrder): Promise<void>;
 }
 
-/** How long a start waits for each daemon to listen or fail before it says how it went. */
 const START_WAIT_MS = 10_000;
 
-/** Does what the developer asked. Resolves to what to tell them; never rejects. */
 export async function perform(intent: Intent, hands: Hands): Promise<string> {
 	const { supervisor } = hands;
 	switch (intent.kind) {
 		case "add":
 		case "remove": {
-			// Its progress, and how it ended, the feed reads from its files.
 			const doing = intent.kind === "add" ? "Adding a worktree" : `Removing ${intent.suffix}`;
 			const what = intent.kind === "add" ? "add a worktree" : `remove ${intent.suffix}`;
 			return hands.worktrees(intent).then(
@@ -52,7 +39,6 @@ export async function perform(intent: Intent, hands: Hands): Promise<string> {
 	const names = [...apps, ...services];
 	try {
 		if (kind === "stop") {
-			// Held first, as `basepad down` does, so no request starts an app again while it stops.
 			await supervisor.hold(namespace, apps);
 			await supervisor.stop(namespace, names);
 			return `Stopped ${label}.`;
@@ -74,11 +60,6 @@ function reason(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * The developer's own desktop: `open` on macOS, `xdg-open` on Linux; the clipboard through the
- * platform's command, else through the terminal itself (OSC 52), which reaches the developer's
- * clipboard over SSH too, in terminals that allow it.
- */
 export function desktopHands(
 	supervisor: Hands["supervisor"],
 	worktrees: Hands["worktrees"],
@@ -116,7 +97,6 @@ export function desktopHands(
 	};
 }
 
-/** Runs a desktop command with `input` on its stdin. Rejects when it is missing or fails. */
 function runWith(command: string, args: string[], input?: string): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(command, args, {

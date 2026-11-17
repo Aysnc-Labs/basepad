@@ -5,11 +5,6 @@ import type { Invocation } from "./commands.ts";
 import { CONFIG_FILE, LOCAL_FILE } from "./config.ts";
 import { BasepadError } from "./internal/exec.ts";
 
-/**
- * `basepad init`: a starter config named from the folder, the local file kept out of git, and
- * basepad added as a devDependency.
- */
-
 const PACKAGE = "basepad";
 
 export async function init({ cwd, print }: Invocation): Promise<void> {
@@ -28,7 +23,6 @@ export async function init({ cwd, print }: Invocation): Promise<void> {
 	}
 }
 
-/** A folder's name as a lowercase DNS label. Never truncated: `status` says when it is too long. */
 function labelOf(folder: string): string {
 	const label = folder
 		.toLowerCase()
@@ -55,7 +49,6 @@ export default defineConfig({
 `;
 }
 
-/** Adds the local file to `.gitignore`, creating it. Returns whether it changed anything. */
 async function ignoreLocalFile(cwd: string): Promise<boolean> {
 	const file = join(cwd, ".gitignore");
 	const text = await readFile(file, "utf8").catch(() => "");
@@ -66,7 +59,6 @@ async function ignoreLocalFile(cwd: string): Promise<boolean> {
 	return true;
 }
 
-/** Adds basepad to `package.json`'s devDependencies when the file exists and lacks it. */
 async function addDevDependency(cwd: string): Promise<boolean> {
 	const file = join(cwd, "package.json");
 	const text = await readFile(file, "utf8").catch(() => undefined);

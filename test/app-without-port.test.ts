@@ -6,8 +6,6 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, type Result, type Sandbox, sandbox } from "./sandbox.ts";
 
-/** An app with `port: false`, such as a queue worker: it runs, but listens on nothing. */
-
 const node = (script: string) =>
 	JSON.stringify(`exec '${process.execPath}' '${join(import.meta.dirname, "apps", script)}'`);
 
@@ -63,7 +61,6 @@ test("in a worktree, it starts with the first request to one of the worktree's d
 	expect(added.stderr).toBe("");
 	const tree = join(box.root, "jobs.worktrees/worktree-1");
 	expect(existsSync(join(tree, "worker.json"))).toBe(false);
-	// The proxy may not route a worktree's domain for a moment after it is made.
 	const web = `https://web.worktree-1.jobs.localhost:${box.proxyPort}`;
 	for (const until = Date.now() + 10_000; ; ) {
 		try {

@@ -7,8 +7,6 @@ import {
 	type View,
 } from "../src/mission-control/model.ts";
 
-/** A service with a domain of its own, such as Mailpit's inbox, has a page `o` can open. */
-
 const snapshot: Snapshot = {
 	project: "shop",
 	environments: [
@@ -48,7 +46,6 @@ function press(keys: Press[]) {
 }
 
 test("enter on Mailpit opens its inbox", () => {
-	// web, db, mail
 	expect(press(["down", "down", "down", "return"]).intent).toEqual({
 		kind: "open",
 		url: "https://mail.shop.localhost",

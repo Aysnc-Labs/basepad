@@ -64,7 +64,6 @@ const snap = (environments: EnvironmentView[], logs: [string, LogLine[]][] = [])
 	rate: 12,
 });
 
-/** The frame as plain text, a line per row, without trailing spaces. */
 function draw(
 	snapshot: Snapshot,
 	view: View = initialView("shop"),
@@ -85,7 +84,7 @@ test("main only: the header names the project and counts, main is listed, its pa
 	const out = draw(snap([main], [lines("shop/web", "GET / 200 3ms"), lines("shop/api", "ready")]));
 	expect(out).toMatch(/basepad.*shop.*2 running/);
 	expect(out).toContain("10:00:05");
-	expect(out).toMatch(/│ ▌1 ● main +│/); // selected; its branch is its name, so not said again
+	expect(out).toMatch(/│ ▌1 ● main +│/);
 	expect(out).toMatch(/web +running +https:\/\/web\.shop\.localhost:7443 *│/);
 	expect(out).toMatch(/db +running +postgresql:\/\/postgres@127\.0\.0\.1:15432\/shop *│/);
 	expect(out).toMatch(/10:00:00 +▎web +GET \/ 200 3ms/);
@@ -129,7 +128,7 @@ test("an errored app stands out: an alert line names it and its error wherever t
 		/✖ worktree-1 › api exited \(exit code 1\) +TypeError: Cannot read properties of undefined/,
 	);
 	expect(onMain).toContain("1 failed");
-	expect(onMain).toMatch(/✖ worktree-1[\s\S]*api failed/); // its environment, in the sidebar
+	expect(onMain).toMatch(/✖ worktree-1[\s\S]*api failed/);
 	const onIt = draw(snap([main, broken], logs), initialView("shop.worktree-1"));
 	expect(onIt).toMatch(/✖ api +failed +exit code 1 +TypeError: Cannot read properties/);
 });
@@ -169,7 +168,7 @@ test("a very long branch name wraps in the sidebar and is never cut", () => {
 		.map((row) => /^│ [ ▌] {4}(\S*)/.exec(row)?.[1] ?? "")
 		.join("");
 	expect(sidebar).toContain(branch);
-	expect(out).toMatch(/│ {6}feature\/JIRA-12345- +│/); // broken after a dash, not mid-word
+	expect(out).toMatch(/│ {6}feature\/JIRA-12345- +│/);
 	expect(out).not.toMatch(/^│[^│]*…/m);
 });
 
@@ -244,7 +243,6 @@ test("a search being typed shows in the stream's title; a found one marks its li
 		until,
 		search: { query: "typeerr", typing: false },
 	});
-	// Found near the top, the page still fills with the lines after it.
 	expect(found).toMatch(/10:00:00 › ▎web +TypeError: boom +│\n.*GET \/cart 200/);
 	expect(found).toContain("0 newer");
 	expect(found).toMatch(/“typeerr” +n older · N newer/);
@@ -283,7 +281,6 @@ test("a worktree being added or removed shows its progress above the keys; the o
 	expect(out).toMatch(/● worktree-1[^\n]*\n[^\n]*feature\/thing-1[^\n]*\n[^\n]*being removed/);
 });
 
-/** Every frame size the tests draw: the minimum, split panes, a laptop and a large screen. */
 const SIZES = [
 	[72, 16],
 	[80, 24],
@@ -314,7 +311,6 @@ test("at every size from the minimum up, the frame fills the terminal exactly, e
 		expect(out, at).toContain("Restarting web…");
 		expect(out, at).toMatch(/▌2 ● worktree-1/);
 		expect(out, at).toMatch(/GET \/49 200/);
-		// The selected part with its whole address, wrapped where it must be: the database's too.
 		const db = draw(busy, { ...initialView(ns), focus: "shop/db" }, cols, rows);
 		for (const [view, address] of [
 			[out, "https://web.worktree-1.shop.localhost:7443"],
@@ -371,14 +367,11 @@ test("the frame resized keeps the view: the same selection, focus and pause at e
 	}
 });
 
-// ── colour ────────────────────────────────────────────────────────────────────────────────
-
 const level = chalk.level;
 afterEach(() => {
 	chalk.level = level;
 });
 
-/** The SGR codes a frame uses, each once. */
 const codes = (text: string) =>
 	new Set(
 		text
@@ -430,7 +423,6 @@ test("16 colours: the terminal's own named colours, a different one for running,
 	expect(out).toContain("\u001b[32m● ");
 	expect(out).toContain("\u001b[33m◉ ");
 	expect(out).toContain("\u001b[31m✖ ");
-	// The panels' borders are not black, which a dark terminal would hide.
 	expect(out).not.toContain("\u001b[30m╭");
 });
 
@@ -452,7 +444,6 @@ test("256 colours: running, starting, failed and idle each keep a colour, and ea
 	const names = ["web", "api", "worker", "admin", "mail", "search"];
 	const apps = names.map((name) => app("shop", name, states[name]));
 	const out = draw(snap([{ ...main, apps }]), initialView("shop"), 160, 40, "rgb");
-	/** In the parts panel, the 256-colour codes of an app's state glyph and of its name. */
 	const colours = (glyph: string, name: string) => {
 		const found = new RegExp(
 			`\u001b\\[38;5;(\\d+)m${glyph} \u001b\\[1m\u001b\\[38;5;(\\d+)m${name} `,
@@ -467,7 +458,6 @@ test("256 colours: running, starting, failed and idle each keep a colour, and ea
 	const glyphs: Record<string, string> = { api: "✖", worker: "◉", mail: "○" };
 	const own = names.map((name) => colours(glyphs[name] ?? "●", name).own);
 	expect(new Set(own).size).toBe(names.length);
-	// An app's own colour is never a state's, so a name never reads as running or failed.
 	for (const code of own) expect(looks).not.toContain(code);
 });
 

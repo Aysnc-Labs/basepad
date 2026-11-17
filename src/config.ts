@@ -10,37 +10,23 @@ import { BasepadError } from "./internal/exec.ts";
 export const CONFIG_FILE = "basepad.config.ts";
 export const LOCAL_FILE = "basepad.config.local.ts";
 
-/** An app as the project describes it: its folder absolute, and `port` and `domain` when `false`. */
 export type ProjectApp = Required<Pick<App, "run" | "cwd">> & Pick<App, "port" | "domain">;
 
-/** One plain description of the project, from its config and the local file over it. */
 export interface Project {
-	/** The config file's real path. */
 	file: string;
-	/** The config's folder: app folders and env file paths are relative to it. */
 	root: string;
 	name: string;
 	services: Record<string, Service>;
-	/** Each app with its folder made absolute. */
 	apps: Record<string, ProjectApp>;
 	env: (outputs: Outputs<Record<string, Service>, Record<string, App>>) => EnvFiles;
-	/** How worktrees are named, and where they are checked out when the config says. */
 	worktrees: {
 		prefix: string;
-		/** Absolute. When absent, beside the git repository (the Worktrees module decides). */
 		dir?: string;
-		/** Paths relative to the config, copied from main's folder into a new worktree's. */
 		clone: string[];
-		/** Shell commands run in order in a new worktree's folder. */
 		setup: string[];
 	};
 }
 
-/**
- * Finds `basepad.config.ts` in `cwd` or its nearest parent that has one, loads it and the local
- * file beside it, and validates the result. Every failure is a `BasepadError` naming the file,
- * and the key when one is at fault.
- */
 export async function loadProject(cwd: string): Promise<Project> {
 	const file = findConfig(cwd);
 	const root = dirname(file);
@@ -98,22 +84,15 @@ function findConfig(cwd: string): string {
 	);
 }
 
-/** What a config imports basepad as. */
 const PACKAGE = "basepad";
-/** The running basepad's own entry: `index.ts` from source, `index.js` once built. */
 const OWN_INDEX = new URL(
 	import.meta.url.endsWith(".ts") ? "./index.ts" : "./index.js",
 	import.meta.url,
 ).href;
 
-/** Real paths of the files basepad loads; the hook reads each as TypeScript ESM. */
 const typescriptFiles = new Set<string>();
 let hooked = false;
 
-/**
- * Imports a file as TypeScript ESM, whatever the nearest `package.json` says about module type, so
- * a project never renames files or changes settings for basepad, and Node prints no warning.
- */
 async function importDefault(file: string): Promise<unknown> {
 	const real = realpathSync(file);
 	typescriptFiles.add(pathToFileURL(real).href);
@@ -124,7 +103,6 @@ async function importDefault(file: string): Promise<unknown> {
 				try {
 					return nextResolve(specifier, context);
 				} catch (error) {
-					// A fresh worktree has no `node_modules` yet: its config gets the running basepad.
 					const fromConfig = context.parentURL && typescriptFiles.has(context.parentURL);
 					if (specifier !== PACKAGE || !fromConfig) throw error;
 					return { url: OWN_INDEX, shortCircuit: true };
@@ -153,7 +131,6 @@ function messageOf(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-/** A lowercase DNS label: letters, digits and inner hyphens. */
 export const LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const label = z
 	.string({ error: "must be a string" })
@@ -178,7 +155,6 @@ const ConfigSchema = z
 		services: z
 			.record(
 				label,
-				// Each kind's schema is a strict object with a literal `kind`, as a discriminated union needs.
 				z.discriminatedUnion("kind", SCHEMAS as unknown as [z.ZodObject], {
 					error: `a service must be made by a service function, such as ${FACTORIES.join(" or ")}`,
 				}),
@@ -228,7 +204,6 @@ const ConfigSchema = z
 				});
 			}
 		}
-		// Services and apps share one namespace: `env`'s outputs and the supervisor's daemons.
 		for (const key of Object.keys(config.services ?? {})) {
 			if (config.apps && key in config.apps) {
 				ctx.addIssue({
@@ -249,7 +224,6 @@ function validate(value: unknown, file: string): Config {
 			const keys = issue.keys.map((key) => `\`${at ? `${at}.` : ""}${key}\``).join(", ");
 			return `unknown key ${keys}`;
 		}
-		// A bad record key's own reason is nested inside the issue.
 		const message =
 			issue.code === "invalid_key" ? (issue.issues[0]?.message ?? issue.message) : issue.message;
 		return at ? `\`${at}\`: ${message}` : message;

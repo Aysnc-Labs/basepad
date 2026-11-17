@@ -1,5 +1,3 @@
-// An HTTPS dev server for the tests, as Vite serves itself: on PORT, with the certificate basepad
-// gives it. It records its port in `tls.json` in its folder, and answers with its folder.
 import { readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:https";
 

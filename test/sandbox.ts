@@ -18,44 +18,18 @@ export interface Result {
 	stderr: string;
 }
 
-/**
- * A machine of its own: basepad's home, mise's state and config, and pitchfork's state live in a
- * temp dir, and basepad's proxy has a free port of its own, so a test never sees the user's real
- * setup and never collides with another lane. The `PITCHFORK_*` dirs stand for a developer's own
- * pitchfork, which basepad must leave alone.
- * Tool installs stay in mise's data dir (`MISE_DATA_DIR`, else the user's), so tools download once.
- */
 export interface Sandbox {
 	root: string;
 	env: NodeJS.ProcessEnv;
-	/** The port basepad's HTTPS proxy listens on. */
 	proxyPort: number;
-	/** The certificate authority basepad's proxy signs with, once `up` has run. */
 	ca(): Promise<string>;
-	/**
-	 * Makes a scratch project: a dir holding `files` (paths may have folders), with basepad
-	 * installed in its `node_modules` as `npm install` would, so its config's import resolves.
-	 */
 	project(name: string, files?: Record<string, string>): Promise<string>;
-	/** Runs the built `basepad` bin in `cwd`, as a developer would. */
 	basepad(cwd: string, ...args: string[]): Promise<Result>;
-	/** Runs a program in the sandbox's root with its environment. */
 	run(file: string, args: string[]): Promise<Result>;
-	/** Runs `psql` from mise's Postgres 18 with `args` (a URL, or `-h`, `-p` and the rest). */
 	psql(args: string[], sql: string): Promise<Result>;
-	/** Runs `redis-cli` from mise's Redis 8 against a Redis URL. */
 	redis(url: string, ...args: string[]): Promise<Result>;
-	/** Runs `sql` against the `DATABASE_URL` that `up` wrote to the project's `.env.local`. */
 	sql(project: string, sql: string): Promise<Result>;
-	/**
-	 * GETs a URL through basepad's proxy on 127.0.0.1, trusting only the sandbox's certificate
-	 * authority, and returns its JSON body. Rejects on any status but 200.
-	 */
 	get<T = unknown>(url: string): Promise<T>;
-	/**
-	 * `basepad` with extra environment variables, under another program (an older Node), or with
-	 * `input` on its standard input.
-	 */
 	basepadWith(
 		options: { env?: NodeJS.ProcessEnv; via?: string[]; input?: string },
 		cwd: string,
@@ -65,7 +39,8 @@ export interface Sandbox {
 }
 
 export async function sandbox(): Promise<Sandbox> {
-	// Short and real (macOS's tmpdir is a symlink): unix socket paths have a ~104-byte limit.
+	// Short and real (macOS's tmpdir is a symlink): unix socket paths have a ~104-byte limit:
+	// https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/un.h#L79
 	const root = await realpath(
 		await mkdtemp(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "bp-")),
 	);
@@ -104,7 +79,6 @@ export async function sandbox(): Promise<Sandbox> {
 			if (typeof e.code === "string") throw error;
 			const stdout = e.stdout ?? "";
 			const stderr = e.stderr ?? "";
-			// A kill is not an exit: report it as a shell does (128 + n), and name it.
 			if (e.signal) {
 				const code = 128 + (constants.signals[e.signal] ?? 0);
 				return { code, stdout, stderr: `${stderr}[killed by ${e.signal}]` };
@@ -185,7 +159,6 @@ export async function sandbox(): Promise<Sandbox> {
 			return exec(file as string, [...via, cli, ...args], cwd, options.env, options.input);
 		},
 		async dispose() {
-			// Stop basepad's supervisor and its apps, so nothing outlives the test.
 			const home = join(root, "home/pitchfork");
 			if (existsSync(join(home, "state/sock"))) {
 				const pitchfork = ["exec", `pitchfork@${PITCHFORK_VERSION}`, "--", "pitchfork"];
@@ -193,12 +166,10 @@ export async function sandbox(): Promise<Sandbox> {
 					PITCHFORK_STATE_DIR: join(home, "state"),
 					PITCHFORK_CONFIG_DIR: join(home, "config"),
 					PITCHFORK_LOGS_DIR: join(home, "logs"),
-					// As in src/tools.ts: a failed skill fetch must not fail the stop.
 					MISE_SKILLS_FETCH: "false",
 				};
 				await exec("mise", [...pitchfork, "stop", "--all"], root, own);
 				const stopped = await exec("mise", [...pitchfork, "supervisor", "stop"], root, own);
-				// A supervisor left running holds the proxy's port and outlives the test.
 				if (stopped.code !== 0) {
 					throw new Error(`dispose: the supervisor in ${root} did not stop:\n${stopped.stderr}`);
 				}
@@ -208,7 +179,6 @@ export async function sandbox(): Promise<Sandbox> {
 	};
 }
 
-/** A port nothing listens on right now. */
 export function freePort(): Promise<number> {
 	return new Promise((resolve, reject) => {
 		const server = createServer();
@@ -220,12 +190,10 @@ export function freePort(): Promise<number> {
 	});
 }
 
-/** Drops the parent shell's mise activation, so it can't leak config from the developer's cwd. */
 function stripMise(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	return Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith("__MISE")));
 }
 
-/** An env file's keys and values, as written unquoted. */
 export async function readEnv(dir: string, file: string): Promise<Record<string, string>> {
 	const text = await readFile(join(dir, file), "utf8");
 	return Object.fromEntries(
@@ -236,15 +204,10 @@ export async function readEnv(dir: string, file: string): Promise<Record<string,
 	);
 }
 
-/** A `basepad.config.ts` exporting `body` through `defineConfig`, with every kind's factory. */
 export function configFile(body: string): string {
 	return `import { defineConfig, mailpit, postgres, redis } from "basepad";\n\nexport default defineConfig(${body});\n`;
 }
 
-/**
- * Sends one message through an `smtp://user:pass@host:port` URL, as an app's mailer would: EHLO,
- * AUTH PLAIN with the URL's credentials, then the message.
- */
 export async function sendMail(
 	url: string,
 	message: { from: string; to: string; subject: string },
@@ -256,7 +219,8 @@ export async function sendMail(
 	const waiting: ((reply: string) => void)[] = [];
 	socket.on("data", (chunk: string) => {
 		buffer += chunk;
-		// A reply ends with a line whose code is followed by a space: "250 OK", not "250-AUTH".
+		// A reply ends with a line whose code is followed by a space: "250 OK", not "250-AUTH":
+		// https://www.rfc-editor.org/rfc/rfc5321#section-4.2
 		for (
 			let at = buffer.search(/^\d{3} .*\r\n/m);
 			at !== -1;
@@ -269,7 +233,6 @@ export async function sendMail(
 		}
 	});
 	const failed = new Promise<never>((_, reject) => socket.on("error", reject));
-	// Awaited only while a reply is awaited; an error after the last one is no failure of the send.
 	failed.catch(() => {});
 	const expectReply = async (code: string) => {
 		const got = await Promise.race([

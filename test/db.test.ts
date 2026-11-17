@@ -5,8 +5,6 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
 
-/** `db save`, `load`, `snapshots` and `rm`: snapshots of the environment's own database. */
-
 let box: Sandbox;
 let main: string;
 const clients: ChildProcess[] = [];
@@ -24,7 +22,6 @@ const git = async (cwd: string, ...args: string[]) => {
 	});
 };
 
-/** A main checkout under git with `services`, up; `env` writes `<KEY>_URL` for each. */
 async function project(name: string, services: Record<string, string>): Promise<string> {
 	const keys = Object.keys(services);
 	const dir = await box.project(name, {
@@ -57,7 +54,6 @@ async function sql(dir: string, query: string, key = "db"): Promise<string> {
 const rows = (dir: string, key = "db") =>
 	sql(dir, "select coalesce(string_agg(name, ',' order by name), '') from items", key);
 
-/** `basepad` in `dir`, expected to succeed; its output. */
 async function ok(dir: string, ...args: string[]): Promise<string> {
 	const result = await box.basepad(dir, ...args);
 	expect(result.stderr).toBe("");
@@ -65,7 +61,6 @@ async function ok(dir: string, ...args: string[]): Promise<string> {
 	return result.stdout;
 }
 
-/** A client that connects to `dir`'s database and stays connected, as an app's pool does. */
 async function holdOpen(dir: string): Promise<ChildProcess> {
 	const db = await url(dir);
 	const client = spawn("mise", ["exec", "postgres@18", "--", "psql", db, "-tAX"], {
@@ -81,7 +76,6 @@ async function holdOpen(dir: string): Promise<ChildProcess> {
 	throw new Error("The client never connected.");
 }
 
-/** How many other sessions hold `dir`'s database. */
 async function sessions(dir: string): Promise<string> {
 	const db = await url(dir);
 	const name = new URL(db).pathname.slice(1);
@@ -117,7 +111,6 @@ test("save and load work while a client holds the database open, and a new conne
 	await holdOpen(main);
 	await ok(main, "db", "load", "busy");
 	expect(await sessions(main)).toBe("0");
-	// A pool's next connection is a new one, to the loaded database.
 	expect(await rows(main)).toBe("saved");
 }, 120_000);
 
@@ -148,7 +141,6 @@ test("an invalid snapshot is marked so, its load refused up front, and rm remove
 	await ok(main, "db", "save", "broken");
 	await sql(main, "insert into items values ('unsaved')");
 	const before = await rows(main);
-	// Marked invalid, as an interrupted copy or drop leaves a database.
 	await sql(main, "update pg_database set datconnlimit = -2 where datname = 't26snap_db@broken'");
 	expect(await ok(main, "db", "snapshots")).toMatch(/^broken\s+db\s+t26snap_db\s+invalid$/m);
 	const result = await box.basepad(main, "db", "load", "broken");
@@ -166,8 +158,6 @@ test("a save whose copy fails keeps the snapshot of that label as it was, and no
 	await ok(main, "db", "save", "keep");
 	const saved = await rows(main);
 	await sql(main, "insert into items values ('newer')");
-	// The database marked invalid, as an interrupted drop leaves one, so no route can copy it; marked
-	// and restored from the server's maintenance database, as it takes no connections meanwhile.
 	const server = new URL(await url(main));
 	const maintenance = [`postgresql://postgres@${server.host}/postgres`];
 	const mark = async (limit: number) => {
@@ -203,7 +193,6 @@ test("a label that would make a name too long, or is no label, is rejected befor
 	expect(await ok(main, "db", "snapshots")).not.toContain("xxxx");
 }, 120_000);
 
-/** The databases on `dir`'s `db` server whose name has `@`: every environment's snapshots. */
 const snapshotDatabases = async (dir: string) =>
 	(
 		await sql(
@@ -232,7 +221,6 @@ test("with several databases, the service is required and the choices are listed
 	await sql(two, "delete from items");
 	await ok(two, "db", "load", "--service", "ref");
 	expect(await rows(two, "ref")).toBe("ref");
-	// Only the named service's database is replaced.
 	expect(await rows(two)).toBe("");
 	const listed = await ok(two, "db", "snapshots");
 	expect(listed).toMatch(/default\s+ref\s+t26two_ref\s/);
@@ -258,7 +246,6 @@ test("inside a worktree the commands act on its database and snapshots, and leav
 	expect(await rows(tree)).toBe(`${mainRows},tree`.split(",").sort().join(","));
 	expect(await rows(main)).toBe(mainRows);
 
-	// Each lists its own, and main cannot reach the worktree's.
 	expect(await ok(tree, "db", "snapshots")).toMatch(/same\s+db\s+t26snap_db_worktree_1\s/);
 	expect(await ok(tree, "db", "snapshots")).not.toMatch(/\st26snap_db\s/);
 	expect(await ok(main, "db", "snapshots")).not.toContain("tree-only");
@@ -266,7 +253,6 @@ test("inside a worktree the commands act on its database and snapshots, and leav
 	expect(fromMain.code).toBe(1);
 	expect(await rows(main)).toBe(mainRows);
 
-	// Main's own snapshot of the same label is still main's rows.
 	await ok(main, "db", "load", "same");
 	expect(await rows(main)).toBe(mainRows);
 	await ok(tree, "db", "rm", "same");

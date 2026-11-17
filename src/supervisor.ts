@@ -13,180 +13,93 @@ import { daemonId, type Machine, ofDaemon, supervisorPaths } from "./layout.ts";
 import { install } from "./tools.ts";
 import { PITCHFORK_VERSION } from "./versions.ts";
 
-/**
- * The supervisor: basepad's own pitchfork, isolated from any other pitchfork on the machine (its
- * config, state and logs live in basepad's home). It runs each environment's daemons and serves
- * those with a port over HTTPS at `<daemon>.<label>.localhost` on the machine's proxy port.
- */
-
-/** One process an environment runs. */
 export interface Daemon {
-	/** A shell command. */
 	run: string;
-	/** The folder it runs in. */
 	dir: string;
-	/** The port it is first offered as `PORT`; a taken one is passed over. Gives it a domain. */
 	port?: number;
-	/** `false` for a daemon with a port but no domain: the proxy does not route it. */
 	proxy?: false;
-	/** The signal that stops it, sent to its process group; pitchfork's default is SIGTERM. */
 	stopSignal?: "SIGINT";
-	/** A port it listens on once ready, for a daemon without `port` (a service's server). */
 	listens?: number;
-	/** Daemons, as `<namespace>/<name>`, that start before it when the proxy starts it. */
 	depends?: string[];
 }
 
-/** A daemon's state, as `status` shows it. */
 export type DaemonState = "running" | "starting" | "stopped" | "failed";
 
 export interface Environment {
-	/** Its namespace with the supervisor, from Layout. */
 	namespace: string;
 	/**
 	 * Main's domain label, the project's name. A worktree has none: pitchfork serves a git
-	 * worktree's daemons at `<daemon>.<folder>.<main's label>.localhost`, from its folder.
+	 * worktree's daemons at `<daemon>.<folder>.<main's label>.localhost`, from its folder:
+	 * https://pitchfork.jdx.dev/concepts/namespaces.html#git-worktrees
 	 */
 	label?: string;
-	/** Its folder: the config's. */
 	dir: string;
-	/** Where its generated definitions are written, in basepad's home. */
 	definitions: string;
 	daemons: Record<string, Daemon>;
 }
 
-/**
- * A daemon as mission control reads it. `idle`: not running, and the proxy starts it on a first
- * request to its domain (`hold` makes it `stopped`).
- */
 export interface DaemonInfo {
-	/** `<namespace>/<name>`. */
 	id: string;
 	namespace: string;
 	name: string;
 	state: DaemonState | "idle";
 	pid?: number;
-	/** The port it listens on. */
 	port?: number;
-	/** Why it failed, as pitchfork says (`exit code 1`). */
 	error?: string;
 }
 
-/** One line a daemon printed, stamped by the supervisor to the second. */
 export interface LogEntry {
-	/** The daemon's id. */
 	id: string;
-	/** `HH:MM:SS`, local time. */
 	time: string;
 	text: string;
 }
 
-/** What answers on the machine's port 443: basepad's proxy, something else, or nothing. */
 export type StandardPort = "proxy" | "other" | "closed";
 
 export interface Supervisor {
-	/** The certificate authority basepad's proxy signs with. Exists once the supervisor has run. */
 	ca: string;
-	/**
-	 * Applies basepad's supervisor settings and starts the supervisor when none runs, waiting
-	 * briefly for its proxy to listen.
-	 */
 	serve(): Promise<void>;
-	/**
-	 * What port 443 reaches, asked from the port itself: basepad's proxy only when the certificate
-	 * it serves verifies against basepad's CA (a developer's own pitchfork there is `other`).
-	 */
 	standardPort(): Promise<StandardPort>;
-	/** pitchfork's own plan for trusting the CA and redirecting port 443, one step per line. */
 	proxySetupPlan(): Promise<string[]>;
-	/** Applies that plan on the user's terminal (`sudo` may ask for a password). Returns its exit code. */
 	proxySetup(): Promise<number>;
-	/** Undoes pitchfork's proxy setup on the user's terminal (`sudo` may ask). Returns its exit code. */
 	proxyUndo(): Promise<number>;
-	/** Adds the CA to the system trust store. Needs root on Linux. Throws with pitchfork's reason. */
 	trust(): Promise<void>;
-	/**
-	 * Applies basepad's supervisor settings, writes the environment's definitions and registers them
-	 * against its folder. Idempotent. A namespace registered from another folder is taken over: its
-	 * running daemons stop first.
-	 */
 	register(environment: Environment): Promise<void>;
-	/** The folder a namespace is registered against, if it is. */
 	owner(namespace: string): Promise<string | undefined>;
-	/** Every registered namespace, with the folder it is registered against. */
 	registrations(): Promise<{ namespace: string; dir: string }[]>;
-	/**
-	 * Undoes `register`: stops the namespace's daemons, forgets them, detaches its definitions and
-	 * deletes them. Idempotent.
-	 */
 	unregister(environment: Pick<Environment, "namespace" | "definitions">): Promise<void>;
-	/**
-	 * Starts the named daemons that are not running (and lets the proxy start them again on a first
-	 * request, if `hold` kept them stopped), then waits up to `waitMs` for each to listen
-	 * (when it has a port) or fail, and for the proxy to route each of `hosts` (daemon to domain)
-	 * that runs. Returns every daemon's state in the namespace.
-	 */
 	start(
 		namespace: string,
 		names: string[],
 		waitMs: number,
 		hosts: Record<string, string>,
 	): Promise<Record<string, DaemonState>>;
-	/** Stops every running daemon in the namespace, or only the named ones. Deletes nothing. */
 	stop(namespace: string, names?: string[]): Promise<void>;
-	/**
-	 * Keeps the named daemons (apps) from being started by a request to their domains, until
-	 * `start`. A service is never held: another environment's app may depend on it.
-	 */
 	hold(namespace: string, names: string[]): Promise<void>;
-	/** Every registered daemon's state in the namespace. */
 	status(namespace: string): Promise<Record<string, DaemonState>>;
-	/** A daemon's output lines since `since`, the last `lines` of them. */
 	logs(namespace: string, name: string, since: Date, lines: number): Promise<string[]>;
-	/** The shell command a developer runs to see a daemon's whole log. */
 	logsCommand(namespace: string, name: string): string;
-	/** Every daemon in every namespace, with its state; none while no supervisor runs. */
 	daemons(): Promise<DaemonInfo[]>;
-	/**
-	 * Follows the daemons' output until the returned function is called: first each one's last
-	 * `history` lines, oldest first across them all, then each new line as it is printed, including
-	 * from a daemon that starts later. Only reads; stopping it affects no daemon.
-	 */
 	follow(ids: string[], history: number, line: (entry: LogEntry) => void): () => void;
 }
 
-/**
- * The settings basepad's pitchfork runs with, in its user config (which also holds pitchfork's
- * registry, so basepad sets keys through pitchfork rather than writing the file). The proxy's are
- * read once, at supervisor start.
- */
 function settings(machine: Machine): Record<string, string> {
 	return {
-		// Every daemon basepad runs is waited on by basepad itself, never by a fixed delay.
 		"general.ready_delay": "0s",
-		// A worktree's domains are <daemon>.<folder>.<name>.localhost, its folder being a git worktree.
 		"general.worktree": "true",
 		"proxy.enable": "true",
 		"proxy.https": "true",
 		"proxy.port": String(machine.proxyPort),
-		// Name resolution, trust and port-free URLs are `basepad setup`'s, not pitchfork's own.
 		"proxy.dns": "false",
 		"proxy.sync_hosts": "false",
 		"proxy.auto_trust": "false",
-		// A first request to an app's domain starts it, and what it depends on. `hold` keeps an app
-		// stopped, until `start`.
 		"proxy.auto_start": "true",
 	};
 }
 
-/** What `serve` prints before a settings change restarts a running supervisor. */
 export const RESTART_WARNING =
 	"basepad's supervisor restarts to take new settings, which stops every project's running apps and services. Run `basepad up` in a project to start it again.";
 
-/**
- * Installs pitchfork through mise and opens basepad's supervisor. Nothing starts until asked.
- * `print` gets what the developer must know before it happens: a restart that stops their apps.
- */
 export async function openSupervisor(
 	machine: Machine,
 	print: (line: string) => void,
@@ -204,7 +117,6 @@ export async function openSupervisor(
 	const running = () => existsSync(join(dirs.PITCHFORK_STATE_DIR, "sock"));
 	const { ca } = paths;
 
-	/** Sets what differs; a running supervisor restarts to take changed settings (its daemons stop). */
 	const applySettings = async () => {
 		const current = z
 			.array(z.looseObject({ key: z.string(), value: z.string() }))
@@ -220,7 +132,6 @@ export async function openSupervisor(
 		}
 	};
 
-	/** The namespace's daemons. With no supervisor running there are none, and none is started. */
 	const list = async (namespace: string): Promise<Listed[]> => {
 		if (!running()) return [];
 		return z.array(Listed).parse(JSON.parse(await run("list", "--json", "--namespace", namespace)));
@@ -254,7 +165,10 @@ export async function openSupervisor(
 	const registeredDir = async (namespace: string): Promise<string | undefined> =>
 		(await registrations()).find((entry) => entry.namespace === namespace)?.dir;
 
-	/** Drops a namespace from pitchfork's registry, which keeps its folder after its file is detached. */
+	/**
+	 * Drops a namespace from pitchfork's registry, which keeps its folder after its file is detached
+	 * and refuses the namespace another: https://github.com/jdx/pitchfork/blob/v2.34.0/src/extra_configs.rs#L342-L352
+	 */
 	const forget = async (namespace: string, definitions: string) => {
 		await run("config", "remove", definitions);
 		const file = join(dirs.PITCHFORK_CONFIG_DIR, "config.toml");
@@ -267,7 +181,6 @@ export async function openSupervisor(
 		await applySettings();
 		if (!running()) {
 			await run("supervisor", "start");
-			// The proxy (and its CA, on a first start) comes up just after the supervisor returns.
 			const until = Date.now() + 5000;
 			while (!(await listening(machine.proxyPort)) && Date.now() < until) {
 				await new Promise((resolve) => setTimeout(resolve, 100));
@@ -276,11 +189,6 @@ export async function openSupervisor(
 		if (machine.forwards443) await forward443();
 	};
 
-	/**
-	 * Starts the forwarder (src/forward.ts) when nothing answers on port 443, and waits briefly for
-	 * it. Something else there (Herd, Valet, a pf redirect) is left alone. It stops with the
-	 * supervisor; the next `serve` starts it again.
-	 */
 	const forward443 = async () => {
 		if ((await probeStandardPort(ca)) !== "closed") return;
 		const script = fileURLToPath(
@@ -305,14 +213,11 @@ export async function openSupervisor(
 
 		async proxySetupPlan() {
 			const out = await run("proxy", "setup", "--dry-run");
-			return (
-				out
-					.split("\n")
-					.map((line) => line.trim())
-					.filter((line) => line !== "" && !line.endsWith("following:"))
-					// pitchfork lists this step even when the CA exists, and skips it when applying.
-					.filter((line) => !(line.startsWith("generate the pitchfork CA") && existsSync(ca)))
-			);
+			return out
+				.split("\n")
+				.map((line) => line.trim())
+				.filter((line) => line !== "" && !line.endsWith("following:"))
+				.filter((line) => !(line.startsWith("generate the pitchfork CA") && existsSync(ca)));
 		},
 
 		proxySetup: () =>
@@ -328,15 +233,12 @@ export async function openSupervisor(
 		async register({ namespace, label, dir, definitions, daemons }) {
 			await serve();
 			const text = toml(daemons);
-			// Written even when empty (a worktree with no apps): pitchfork refuses a missing file.
 			if ((await readFile(definitions, "utf8").catch(() => undefined)) !== text) {
 				await mkdir(dirname(definitions), { recursive: true });
 				await writeFile(definitions, text);
 			}
 			const owner = await registeredDir(namespace);
 			if (owner !== undefined && owner !== dir) {
-				// pitchfork keeps a namespace's folder even after its file is detached, and refuses
-				// another, so the namespace's entry is dropped from its registry by hand.
 				await stopAll(namespace);
 				await forget(namespace, definitions);
 			}
@@ -373,8 +275,6 @@ export async function openSupervisor(
 			const idle = names.filter(
 				(name) => !listed.some((d) => d.name === name && LIVE.has(d.status)),
 			);
-			// basepad waits on them itself, below, so pitchfork's readiness here is immediate.
-			// pitchfork fails the start when a daemon fails: that is an app's failure, read below.
 			let refused: unknown;
 			if (idle.length > 0) {
 				await run("start", ...idle.map((name) => daemonId(namespace, name)), "--cmd", "true").catch(
@@ -388,12 +288,11 @@ export async function openSupervisor(
 				const now = await states(namespace);
 				const settled = names.every((name) => now[name] !== "starting");
 				if (settled || Date.now() >= until) {
-					// With none it was asked to start failed, pitchfork's refusal is its own trouble: an
-					// app already live, left alone here, that has failed since does not explain it.
 					if (refused !== undefined && !idle.some((name) => now[name] === "failed")) {
 						throw refused;
 					}
-					// The proxy re-reads its routes every 2 s, so a new daemon's domain can lag.
+					// The proxy re-reads its routes every 2 s, so a new daemon's domain can lag:
+					// https://github.com/jdx/pitchfork/blob/v2.34.0/src/proxy/server.rs#L126-L127
 					for (const [name, host] of Object.entries(hosts)) {
 						if (now[name] !== "running") continue;
 						while (!(await routed(machine.proxyPort, host)) && Date.now() < until + 3000) {
@@ -449,8 +348,6 @@ export async function openSupervisor(
 		follow(ids, history, line) {
 			if (ids.length === 0) return () => {};
 			let stopped = false;
-			// One process follows them all from now. `-n` with several ids counts lines over all of
-			// them, so a chatty daemon would push out a crashed one's: each one's history is its own.
 			const tail = spawn(pitchfork, ["logs", ...ids, "--tail", "-n", "0"], {
 				cwd: machine.home,
 				env,
@@ -482,9 +379,7 @@ export async function openSupervisor(
 				),
 			).then((lists) => {
 				if (stopped) return;
-				// A stable sort: each daemon's own lines stay in order within a second.
 				const past = lists.flat().sort((a, b) => a.stamp.localeCompare(b.stamp));
-				// A line printed while both ran is in each; the history's copy is kept.
 				const key = (e: { id: string; stamp: string; text: string }) =>
 					`${e.id}\0${e.stamp}\0${e.text}`;
 				const seen = new Set(past.map(key));
@@ -499,17 +394,11 @@ export async function openSupervisor(
 		},
 
 		logsCommand(namespace, name) {
-			// basepad's own pitchfork binary, so the command needs no mise and no PATH.
 			return `PITCHFORK_LOGS_DIR=${shellQuote(dirs.PITCHFORK_LOGS_DIR)} ${shellQuote(pitchfork)} logs ${daemonId(namespace, name)}`;
 		},
 	};
 }
 
-/**
- * The environment pitchfork runs in, which its supervisor passes on to every daemon: the caller's,
- * minus any `PITCHFORK_*` setting meant for a developer's own pitchfork, and with the PATH the
- * developer had before the launcher moved basepad onto mise's Node.
- */
 function supervisorEnv(dirs: Record<string, string>): NodeJS.ProcessEnv {
 	const env = Object.fromEntries(
 		Object.entries(process.env).filter(([key]) => !key.startsWith("PITCHFORK_")),
@@ -519,7 +408,6 @@ function supervisorEnv(dirs: Record<string, string>): NodeJS.ProcessEnv {
 	return { ...env, ...dirs };
 }
 
-/** pitchfork's user config without the `[namespaces.<namespace>]` table. */
 function withoutNamespace(text: string, namespace: string): string {
 	const headers = new Set([`[namespaces.${namespace}]`, `[namespaces."${namespace}"]`]);
 	const out: string[] = [];
@@ -532,7 +420,10 @@ function withoutNamespace(text: string, namespace: string): string {
 	return out.join("\n");
 }
 
-/** Whether the proxy has a route for `host`: its answer is anything but its own "No route". */
+/**
+ * Whether the proxy has a route for `host`: its answer is anything but its own "No route":
+ * https://github.com/jdx/pitchfork/blob/v2.34.0/src/proxy/server.rs#L4548
+ */
 function routed(port: number, host: string): Promise<boolean> {
 	return new Promise((resolve) => {
 		const req = httpsRequest(
@@ -552,7 +443,6 @@ function routed(port: number, host: string): Promise<boolean> {
 				res.on("end", () => resolve(!(res.statusCode === 404 && body.includes("No route for"))));
 			},
 		);
-		// A slow answer comes from the app, so the proxy did route it.
 		req.on("timeout", () => {
 			resolve(true);
 			req.destroy();
@@ -562,7 +452,10 @@ function routed(port: number, host: string): Promise<boolean> {
 	});
 }
 
-/** The name the probe asks the proxy for: any name under `localhost` gets a certificate. */
+/**
+ * The name the probe asks the proxy for: any name under `localhost` gets a certificate:
+ * https://pitchfork.jdx.dev/guides/port-management.html#per-hostname-certificates
+ */
 const PROBE_HOST = "basepad-probe.localhost";
 
 async function probeStandardPort(ca: string): Promise<StandardPort> {
@@ -589,7 +482,7 @@ async function probeStandardPort(ca: string): Promise<StandardPort> {
 
 /**
  * One of pitchfork's log lines, `MM-DD HH:MM:SS [<id>] message`; with a single id given, without
- * the `[<id>]`. `stamp` sorts lines by time.
+ * the `[<id>]`: https://github.com/jdx/pitchfork/blob/v2.34.0/src/cli/logs.rs#L483. `stamp` sorts lines by time.
  */
 function parseLogLine(text: string, ids: string[]): (LogEntry & { stamp: string }) | undefined {
 	const tagged =
@@ -609,7 +502,6 @@ function parseLogLine(text: string, ids: string[]): (LogEntry & { stamp: string 
 	return { id, time, text: message, stamp: `${day} ${time}` };
 }
 
-/** One entry of `pitchfork list --json`; only what basepad reads. */
 const Listed = z.looseObject({
 	id: z.string(),
 	namespace: z.string().optional(),
@@ -623,16 +515,8 @@ const Listed = z.looseObject({
 });
 type Listed = z.infer<typeof Listed>;
 
-/** pitchfork's statuses of a daemon that is up or on its way up. */
 const LIVE = new Set(["running", "waiting", "restarting"]);
 
-/**
- * A daemon with a port is running once something listens there; until then it is starting.
- * pitchfork's `active_port` says it saw the daemon listen, so it is running with no connection of
- * basepad's: a dev server logs each one, and mission control asks every second. pitchfork finds it
- * some time after the daemon is ready, so until then basepad asks the port it gave the daemon:
- * else an app that just answered its first request reads as starting.
- */
 async function stateOf(daemon: Listed): Promise<DaemonState> {
 	if (daemon.status === "running") {
 		if (daemon.active_port != null) return "running";
@@ -646,21 +530,10 @@ async function stateOf(daemon: Listed): Promise<DaemonState> {
 	return "stopped";
 }
 
-/** Whether a daemon listens on `port`, on either loopback address. */
 function listening(port: number): Promise<boolean> {
 	return answers(port, ["127.0.0.1", "::1"]);
 }
 
-/**
- * The definitions file. pitchfork's own `dir` key would make the proxy refuse a daemon that runs
- * outside the registered folder, so each daemon `cd`s into its folder itself.
- *
- * Each daemon is ready once it listens on its port, so the proxy, starting it on a first request,
- * forwards that request only once it can answer; a daemon with no port is ready at once. Never
- * pitchfork's delay readiness, the default: it asks whether the process is live as the delay
- * ends, which with no delay is mid-`exec` on macOS and can read as dead, and then `pitchfork start`
- * waits forever on a daemon that runs. basepad's own `start` waits on daemons itself.
- */
 function toml(daemons: Record<string, Daemon>): string {
 	return Object.entries(daemons)
 		.map(([name, daemon]) => {
@@ -684,10 +557,6 @@ function toml(daemons: Record<string, Daemon>): string {
 		.join("\n");
 }
 
-/**
- * A shell command that succeeds once the daemon listens on either loopback address: on `PORT`,
- * which pitchfork gives a daemon with a port, else on the port it `listens` on.
- */
 function readyCommand(daemon: Daemon): string {
 	const port = daemon.port !== undefined ? "$PORT" : daemon.listens;
 	if (port === undefined) return "true";
@@ -695,7 +564,7 @@ function readyCommand(daemon: Daemon): string {
 	return `bash -c '${probe}' 2>/dev/null`;
 }
 
-/** `YYYY-MM-DD HH:MM:SS` in local time, as `pitchfork logs --since` reads it. */
+/** `YYYY-MM-DD HH:MM:SS` in local time, as `pitchfork logs --since` reads it: https://pitchfork.jdx.dev/cli/logs.html */
 function localTime(date: Date): string {
 	const p = (n: number) => String(n).padStart(2, "0");
 	return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;

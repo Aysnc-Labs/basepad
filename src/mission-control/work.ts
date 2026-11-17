@@ -5,49 +5,27 @@ import { aliveAndOurs } from "../internal/processes.ts";
 import { checkedOutIn } from "../worktrees.ts";
 import type { Removal, Work } from "./model.ts";
 
-/**
- * A worktree's addition or removal from mission control, run as `basepad worktree add` or
- * `worktree rm` itself in a process of its own, which outlives the view: closing the view, or a
- * crash in it, stops nothing. Each one leaves files in `dir` (Layout's `workHome`): a record, its
- * shell's pid, its output, and once done, its exit code. So a view opened later shows it too.
- */
-
-/** What to run: an addition, or a worktree's removal. */
 export type WorkOrder = { kind: "add" } | Removal;
 
-/** Work under way as read from its files; an addition with the worktrees there before it began. */
 export type Running = Work & { before?: string[] };
 
-/** A record of work started, in `<id>.json`. */
 type Record =
 	| { kind: "add"; title: string; before?: string[] }
 	| {
 			kind: "remove";
 			title: string;
 			namespace: string;
-			/** Its `basepad worktree rm` arguments, so one stopped partway can say how to finish. */
 			args: string[];
 	  };
 
-/**
- * The shell that runs the command and writes its exit code, in `<id>.pid` once it has started:
- * its pid, and when it started as the system says (`startOf`), since a pid alone may be reused.
- */
 interface Shell {
 	pid: number;
 	start?: string;
 }
 
-/** How long a record waits for its command to start before it is given up as never started. */
 const STARTING_MS = 30_000;
-/** How old a file left without a record (a view gone partway) is when it is swept. */
 const LEFT_MS = 60_000;
 
-/**
- * Starts `command` (the `basepad` command, as argv) with `worktree add` or `worktree rm`, in `cwd`,
- * in a process group of its own that the view's Ctrl-C does not reach. Resolves once it runs.
- * `before`, for an addition: the worktrees there now, so a new one is known until it is ready.
- */
 export async function startWork(options: {
 	dir: string;
 	command: string[];
@@ -66,9 +44,7 @@ export async function startWork(options: {
 		order.kind === "add"
 			? { kind: "add", title: "Adding a worktree", ...(before ? { before } : {}) }
 			: { kind: "remove", title: `Removing ${order.suffix}`, namespace: order.namespace, args };
-	// The record first, and never written again: a fast job taken meanwhile is not made again.
 	await writeFile(`${base}.json`, JSON.stringify(record));
-	// The shell outlives the view with the command, and writes the exit code once it ends.
 	const child = spawn(
 		"sh",
 		["-c", '"$@" >"$0.log" 2>&1; echo $? >"$0.exit"', base, ...command, ...args],
@@ -88,11 +64,6 @@ export async function startWork(options: {
 	await writeFile(`${base}.pid`, JSON.stringify(shell));
 }
 
-/**
- * The work in `dir`: what runs, oldest first, with the last line each printed; and what has
- * finished, as what to tell the developer. Each finished one is told once: its files go as it is read.
- * Files a view left without a record are swept untold once a minute old.
- */
 export async function takeWork(dir: string): Promise<{ running: Running[]; finished: string[] }> {
 	const names = await readdir(dir).catch(() => [] as string[]);
 	const running: Running[] = [];
@@ -115,7 +86,6 @@ export async function takeWork(dir: string): Promise<{ running: Running[]; finis
 			() => undefined,
 		);
 		if (record === undefined) continue;
-		// The exit code before the output: once it is written, the output is whole.
 		const code = await exitOf(base);
 		if (code === "" && (await underWay(base))) {
 			const last = lines(await readFile(`${base}.log`, "utf8").catch(() => "")).at(-1);
@@ -126,7 +96,6 @@ export async function takeWork(dir: string): Promise<{ running: Running[]; finis
 			running.push({ ...work, ...(last === undefined ? {} : { line: last }) });
 			continue;
 		}
-		// Taken by renaming its record: of views reading at once, only the one that renames it tells it.
 		const taken = await rename(`${base}.json`, `${base}.taken`).then(
 			() => true,
 			() => false,
@@ -142,7 +111,6 @@ export async function takeWork(dir: string): Promise<{ running: Running[]; finis
 	return { running, finished };
 }
 
-/** A job's exit code; empty while it runs, or when it was killed. */
 function exitOf(base: string): Promise<string> {
 	return readFile(`${base}.exit`, "utf8").then(
 		(text) => text.trim(),
@@ -154,11 +122,6 @@ function lines(text: string): string[] {
 	return text.split("\n").filter((l) => l.trim() !== "");
 }
 
-/**
- * Whether a record's command still runs: its shell is there and started when `.pid` says, so a pid
- * reused by another process is not taken for it; where its start cannot be read, its pid is there.
- * A record whose command has not started yet is under way for a short while, then given up.
- */
 async function underWay(base: string): Promise<boolean> {
 	const shell = await readFile(`${base}.pid`, "utf8").then(
 		(text) => JSON.parse(text) as Shell,
@@ -177,11 +140,6 @@ async function underWay(base: string): Promise<boolean> {
 		: start === shell.start;
 }
 
-/**
- * How finished work ended, from its exit code (none when killed) and its output. One stopped
- * partway says how to clear what it left: a removal's own command, or the worktree an addition's
- * output says it checked out. With no such line, it made none, or none it can name.
- */
 function outcome(record: Record, code: string, output: string[]): string {
 	const what =
 		record.kind === "add" ? "add a worktree" : `remove ${record.title.slice("Removing ".length)}`;
@@ -191,7 +149,6 @@ function outcome(record: Record, code: string, output: string[]): string {
 		const said = last === "" ? "" : ` Its last line: ${last}`;
 		return `Could not ${what}: it stopped partway${clearing(record, output)}.${said}`;
 	}
-	// The command says why it failed last, after `basepad: `.
 	const from = output.findLastIndex((l) => l.startsWith("basepad: "));
 	const message =
 		from === -1
@@ -200,7 +157,6 @@ function outcome(record: Record, code: string, output: string[]): string {
 	return `Could not ${what}: ${firstAndLast(message)}`;
 }
 
-/** How to clear what work stopped partway left: finish a removal, or remove the worktree made. */
 function clearing(record: Record, output: string[]): string {
 	if (record.kind === "remove") return `; run \`basepad ${record.args.join(" ")}\` to finish it`;
 	const left = checkedOutIn(output);
@@ -209,14 +165,14 @@ function clearing(record: Record, output: string[]): string {
 		: `, leaving ${left}; run \`basepad worktree rm ${left}\` to remove it`;
 }
 
-/** Lines of a message as one: its first and last, which say what failed and what next. */
 function firstAndLast(lines: string[]): string {
 	return lines.length <= 2 ? lines.join(" ") : `${lines[0]} … ${lines.at(-1)}`;
 }
 
 /**
  * When process `pid` started, as a string to compare; none when it is gone. Linux's
- * `/proc/<pid>/stat` gives it in clock ticks since boot; elsewhere (macOS), `ps`.
+ * `/proc/<pid>/stat` gives it in clock ticks since boot; elsewhere (macOS), `ps`:
+ * https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html
  */
 async function startOf(pid: number): Promise<string | undefined> {
 	const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => undefined);

@@ -14,7 +14,6 @@ beforeEach(async () => {
 	dir = await mkdtemp(join(tmpdir(), "basepad-forward-"));
 	sock = join(dir, "sock");
 	await writeFile(sock, "");
-	// The proxy, as the forwarder sees it: answers each line with the line upper-cased.
 	echo = createServer((socket) =>
 		socket.on("data", (data) => socket.write(data.toString().toUpperCase())),
 	);
@@ -30,7 +29,6 @@ afterEach(async () => {
 
 const port = (server: Server) => (server.address() as AddressInfo).port;
 
-/** Sends `text` from `host` to the forwarder; resolves with what came back, or `closed` when refused. */
 function exchange(host: string, text: string): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const socket: Socket = connect({ host, port: forwarder?.port as number }, () =>
@@ -57,7 +55,6 @@ test("a connection from this machine reaches the proxy, both ways", async () => 
 	expect(await exchange("::1", "again")).toBe("AGAIN");
 });
 
-/** This machine's address on its network, as another device would reach it. */
 const lan = Object.values(networkInterfaces())
 	.flat()
 	.find((info) => info !== undefined && info.family === "IPv4" && !info.internal)?.address;

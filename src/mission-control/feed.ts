@@ -16,36 +16,18 @@ import { hasChanges, listWorktrees, mainBranch } from "../worktrees.ts";
 import type { EnvironmentView, LogLine, Part, Snapshot } from "./model.ts";
 import { type Running, takeWork } from "./work.ts";
 
-/**
- * Mission control's feed: the one adapter between the view and what runs. It reads environments
- * from git and their configs, states from the supervisor, and follows every part's output live.
- * It only reads: closing it, or a crash in it, stops nothing.
- */
 export interface Feed {
-	/** The latest of everything; cheap, called on every repaint. */
 	snapshot(): Snapshot;
-	/** Reads states again now, as after an action, rather than on the next tick. */
 	refresh(): void;
-	/** What finished work (a worktree added or removed) has to say since last asked, oldest first. */
 	notices(): string[];
 	close(): void;
 }
 
-/** How often states and worktrees are read again. */
 const REFRESH_MS = 1000;
-/** How often a change is passed on at most: a burst of output becomes one repaint. */
 const CHANGED_MS = 100;
-/** Lines of each part's output from before the view opened. */
 const HISTORY = 200;
-/** Lines kept per part, the scrollback; older ones are dropped. */
 const KEEP = 2000;
 
-/**
- * Opens the feed on `main`'s project and its worktrees, as served on `machine` (whose `portFree`
- * may change while it is open: the supervisor starts after the view does, while `up` launches)
- * is known), with the worktree work in `work` (`startWork`'s folder). Resolves once the first read
- * is done. `changed` is called when there is something new.
- */
 export async function openFeed(options: {
 	main: Project;
 	machine(): Machine;
@@ -55,7 +37,6 @@ export async function openFeed(options: {
 }): Promise<Feed> {
 	const { main, machine, supervisor, changed } = options;
 	const arrivals: number[] = [];
-	/** Each worktree's config by folder, read once: a config that does not load, as its reason. */
 	const configs = new Map<string, Project | string>();
 	let environments: EnvironmentView[] = [];
 	let dirty = false;
@@ -79,7 +60,6 @@ export async function openFeed(options: {
 	};
 
 	const refresh = async () => {
-		// First and alone: what finished is told once, whatever fails after.
 		const work = await takeWork(options.work);
 		running = work.running;
 		notices.push(...work.finished);
@@ -91,10 +71,8 @@ export async function openFeed(options: {
 		const byId = new Map(daemons.map((daemon) => [daemon.id, daemon]));
 		const here = machine();
 		const next = [await environmentOf(main, undefined, branch, main.root, byId, here)];
-		// A worktree being added shows once it is ready: until then, only those there before it began.
 		const adding = running.flatMap((w) => (w.before === undefined ? [] : [w.before]));
 		const shown = trees.filter((t) => t.present && adding.every((was) => was.includes(t.suffix)));
-		// A worktree removed and made again under its suffix reads its config again.
 		for (const root of configs.keys()) {
 			if (!shown.some((t) => t.root === root)) configs.delete(root);
 		}
@@ -119,7 +97,6 @@ export async function openFeed(options: {
 	const tick = async () => {
 		if (reading || closed) return;
 		reading = true;
-		// A failed read keeps the last snapshot; the next tick tries again.
 		await refresh().catch(() => {});
 		reading = false;
 	};
@@ -159,13 +136,6 @@ export async function openFeed(options: {
 	};
 }
 
-/**
- * Every shown part's output, followed live: the scrollback, by daemon id. `follow` sets the parts
- * shown. A part shown for the first time is followed from its last `history` lines; a part already
- * followed keeps its lines and their arrival numbers, so a paused stream stays where it is. A part
- * no longer shown loses its lines and is tailed no more. Each environment's parts are followed
- * together. `read` is told of each line.
- */
 export function logBook(
 	follow: Supervisor["follow"],
 	history: number,
@@ -176,20 +146,16 @@ export function logBook(
 	close(): void;
 } {
 	const logs = new Map<string, LogLine[]>();
-	/** One supervisor follower: the ids it was started for that are still its own. */
 	interface Follower {
 		ids: Set<string>;
 		stop(): void;
 	}
-	/** Which follower each shown id's lines are taken from. */
 	const owner = new Map<string, Follower>();
 	let seq = 0;
-	/** Starts following `ids`, from their last `lines` lines: their lines are taken from it. */
 	const start = (ids: string[], lines: number) => {
 		const follower: Follower = { ids: new Set(ids), stop: () => {} };
 		for (const id of ids) owner.set(id, follower);
 		follower.stop = follow(ids, lines, (entry) => {
-			// A part shown again has a follower of its own; an old one's copy is not taken.
 			if (owner.get(entry.id) !== follower) return;
 			const kept = logs.get(entry.id) ?? [];
 			kept.push({ seq: seq++, id: entry.id, time: entry.time, text: entry.text, at: Date.now() });
@@ -210,14 +176,10 @@ export function logBook(
 				follower.ids.delete(id);
 				shrunk.add(follower);
 			}
-			// A follower tails exactly what is shown: one that lost a part starts again on the rest,
-			// whose lines it already has.
 			for (const follower of shrunk) {
 				follower.stop();
 				if (follower.ids.size > 0) start([...follower.ids], 0);
 			}
-			// Each environment's new parts on a follower of their own, so a worktree removed stops
-			// exactly its own.
 			const added = Map.groupBy(
 				ids.filter((id) => !owner.has(id)),
 				(id) => ofDaemon(id).namespace,
@@ -231,7 +193,6 @@ export function logBook(
 	};
 }
 
-/** One environment's parts, with states from the supervisor and addresses from Layout. */
 async function environmentOf(
 	project: Project,
 	suffix: string | undefined,
@@ -269,13 +230,11 @@ async function environmentOf(
 	});
 	const services: Part[] = [];
 	for (const [key, service] of Object.entries(project.services) as [string, Service][]) {
-		// In main's namespace, or the worktree's for a server of its own.
 		const id = (lay.services[key] as ServicePlace).daemon;
 		const daemon = daemons.get(id);
 		services.push({
 			id,
 			name: key,
-			// A service is not started by a request of its own, so not running is stopped.
 			state: daemon === undefined || daemon.state === "idle" ? "stopped" : daemon.state,
 			address: await kindOf(service).address(service, placeOf(project, lay, machine, key)),
 			note: service.kind,
@@ -285,7 +244,6 @@ async function environmentOf(
 	return { namespace: lay.namespace, ...base, apps, services };
 }
 
-/** An environment whose parts cannot be shown, with why: a config that does not load, or names past their limits. */
 function troubled(
 	name: string,
 	suffix: string | undefined,
@@ -304,7 +262,6 @@ function troubled(
 	};
 }
 
-/** A folder as it is shown: under the home folder, from `~`. */
 function shortened(dir: string): string {
 	const home = homedir();
 	return dir === home || dir.startsWith(`${home}/`) ? `~${dir.slice(home.length)}` : dir;

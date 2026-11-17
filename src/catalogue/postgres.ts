@@ -4,24 +4,16 @@ import { copyFile, mkdir, open, readdir, readFile, rename, rm, writeFile } from 
 import { join } from "node:path";
 import { z } from "zod";
 import type { Kind, Place, Snapshot } from "../catalogue.ts";
-import { BasepadError, exec, must, shellQuote } from "../internal/exec.ts";
+import { BasepadError, must, shellQuote } from "../internal/exec.ts";
 import { freePort, waitFor } from "../internal/ports.ts";
 import { runningPort } from "../internal/processes.ts";
 import { serviceUser } from "../internal/service-user.ts";
 import { install, type Tool } from "../tools.ts";
 import { PGVECTOR_VERSIONS } from "../versions.ts";
 
-/**
- * A Postgres server of the environment's own: mise's Postgres with pgvector placed in it, its data
- * in the home, on loopback only, trust auth, no unix socket. Each database carries its owner
- * checkout's path as its comment, so a second checkout under the same name is refused.
- */
-
 const HOST = "127.0.0.1";
 const USER = "postgres";
-/** For client libraries that insist on a password; the server trusts loopback and ignores it. */
 const PASSWORD = "basepad";
-/** How long `up` waits for the server to answer before it gives up. */
 const READY_MS = 60_000;
 
 export type PostgresVersion = 17 | 18;
@@ -59,35 +51,16 @@ export interface PostgresOutputs {
 	database: string;
 }
 
-/** The names a Postgres service derives. */
 export interface PostgresNames {
-	/**
-	 * The environment's database: `<name>_<key>` in main, `<name>_<key>_<suffix>` in a worktree
-	 * (main's when the service is `shared`), hyphens made underscores.
-	 */
 	database: string;
-	/** Main's database, which a worktree's is made from. */
 	main: string;
-	/** The server's data folder, in the service's folder. */
 	data: string;
-	/** What every snapshot's database name starts with: `<database>@`. Unchecked: it names none. */
 	snapshots: string;
-	/**
-	 * Snapshot `label`'s database: `<database>@<label>`. No database basepad names has `@`, so a
-	 * snapshot is never taken for one, and main's (`<main>@…`) are never among its worktrees' data
-	 * (`<main>_<suffix>…`), while a worktree's are, stamped with its folder like its database.
-	 * Throws a `BasepadError`, with the room left for a label, when the name is past Postgres's limit.
-	 */
 	snapshot(label: string): string;
-	/**
-	 * Where the `db` commands make a database before it replaces the environment's or one of its
-	 * snapshots: `<database>~new`, never a snapshot (`@`) or a worktree's (`_`). Throws a
-	 * `BasepadError` when the name is past Postgres's limit.
-	 */
 	staging(): string;
 }
 
-/** Postgres silently truncates identifiers past this many bytes. */
+/** Postgres truncates identifiers past this many bytes: https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS */
 const IDENTIFIER_MAX = 63;
 
 export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames> = {
@@ -117,9 +90,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 				`service \`${key}\` makes a worktree's database name "${database}", which is ${bytes} bytes; Postgres allows ${IDENTIFIER_MAX}.`,
 			);
 		}
-		// Checked when used, not here: a label is the command's input, and a database that fits
-		// stays usable even when it leaves no room for these.
-		const named = (name: string, what: string, room: string) => {
+		const checkedName = (name: string, what: string, room: string) => {
 			const bytes = Buffer.byteLength(name);
 			if (bytes > IDENTIFIER_MAX) {
 				throw new BasepadError(
@@ -135,14 +106,14 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			snapshots: `${database}@`,
 			snapshot: (label) => {
 				const room = IDENTIFIER_MAX - Buffer.byteLength(`${database}@`);
-				return named(
+				return checkedName(
 					`${database}@${label}`,
 					`snapshot \`${label}\``,
 					`, which leaves ${room > 0 ? `${room} character${room === 1 ? "" : "s"}` : "no room"} for a label here.`,
 				);
 			},
 			staging: () =>
-				named(
+				checkedName(
 					`${database}~new`,
 					"A replacement",
 					". The `db` commands make a database there before it replaces another; shorten `name` or the service key.",
@@ -158,7 +129,8 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		await user.grant({ traverse: [pg.dir, place.dir], owned: [place.dir] });
 		const initialised = await readFile(join(data, "PG_VERSION"), "utf8").catch(() => undefined);
 		if (initialised === undefined) {
-			// A half-made folder from an initdb that failed; initdb refuses one that isn't empty.
+			// A half-made folder from an initdb that failed; initdb refuses one that isn't empty:
+			// https://www.postgresql.org/docs/current/creating-cluster.html
 			await rm(data, { recursive: true, force: true });
 			const argv = user.wrap([
 				pg.bin("initdb"),
@@ -167,7 +139,8 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 				"-U",
 				USER,
 				"--auth=trust",
-				// Pinned, or initdb takes the shell's locale and clusters differ between machines.
+				// Pinned, or initdb takes the shell's locale and clusters differ between machines:
+				// https://www.postgresql.org/docs/current/app-initdb.html
 				"--encoding=UTF8",
 				"--locale-provider=builtin",
 				"--locale=C.UTF-8",
@@ -187,14 +160,14 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			String(port),
 			"-c",
 			`listen_addresses=${HOST}`,
-			// No unix socket: its path limit and permissions only get in the way; clients use TCP.
 			"-c",
 			"unix_socket_directories=",
 		]);
 		return {
 			run: `exec ${server.map(shellQuote).join(" ")}`,
 			dir: place.dir,
-			// Fast shutdown: SIGTERM's smart shutdown would wait for every app's connections to close.
+			// Fast shutdown: SIGTERM's smart shutdown would wait for every app's connections to close:
+			// https://www.postgresql.org/docs/current/server-shutdown.html
 			stopSignal: "SIGINT",
 			listens: port,
 		};
@@ -224,11 +197,9 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			password: PASSWORD,
 			database: db,
 		};
-		// A shared worktree database is main's, which main provisions and stamps.
 		if (place.suffix !== undefined && service.worktree === "shared") return outputs;
 		const open = await sql(`select datallowconn from pg_database where datname = ${literal(db)}`);
 		const exists = open !== "";
-		// Left closed by a copy that was interrupted.
 		if (open === "f") await sql(`alter database ${identifier(db)} allow_connections true`);
 		if (!exists && place.suffix !== undefined && service.worktree === "copy") {
 			const start = performance.now();
@@ -238,7 +209,6 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		} else if (!exists) {
 			await sql(`create database ${identifier(db)}`);
 		}
-		// Creating and stamping are not atomic: an unstamped database is stamped by whoever comes next.
 		const stamp = () =>
 			sql(
 				`select coalesce(shobj_description(oid, 'pg_database'), '') from pg_database where datname = ${literal(db)}`,
@@ -250,7 +220,8 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			);
 		}
 		if (owner !== place.owner) {
-			// A comment on a database that has gone is only a warning, so the result is read back.
+			// A comment on a database that has gone is only a warning, so the result is read back:
+			// https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/comment.c#L46-L62
 			await sql(`comment on database ${identifier(db)} is ${literal(place.owner)}`);
 			if ((await stamp()) !== place.owner) {
 				throw new BasepadError(`Could not mark \`${db}\` as belonging to ${place.owner}.`);
@@ -278,7 +249,6 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 				})
 				.filter((data) => data.name !== place.main);
 			if (place.suffix === undefined) return all;
-			// By name only while unstamped: one stamped elsewhere is another checkout's worktree's.
 			return all.filter(
 				(data) => data.owner === place.owner || (data.owner === "" && data.name === place.database),
 			);
@@ -292,7 +262,6 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			if (port === undefined || names.length === 0) return;
 			const pg = await installPostgres(service.version, place.machine.home);
 			for (const name of names) {
-				// A worktree's app may still hold it open; its sessions end with it.
 				await query(pg, port, `drop database if exists ${identifier(name)} with (force)`);
 			}
 		},
@@ -307,7 +276,6 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		async save(service, place, label) {
 			const name = place.snapshot(label);
 			const { pg, port, sql } = await own(service, place);
-			// A label names one snapshot: one there is replaced, and kept should the copy fail.
 			const swap = {
 				target: name,
 				staging: place.staging(),
@@ -357,7 +325,6 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		async import(service, place, source, confirm) {
 			const { pg, port, sql } = await own(service, place);
 			const from = await sourceOf(source);
-			// Named before asking, so a name past the limit is refused first.
 			const swap = {
 				target: place.database,
 				staging: place.staging(),
@@ -369,8 +336,6 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 				await sql(`create database ${identifier(staging)}`);
 				await stamp(sql, staging, owner);
 				await restore(pg, port, staging, from);
-				// A source with no statement in it (a BOM, comments, an empty dump) runs cleanly, and
-				// would swap in an empty database.
 				if (!(await createdAnything(pg, port, staging))) {
 					throw new BasepadError("It created nothing in the database.");
 				}
@@ -388,7 +353,6 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			if (file === undefined) {
 				await toStdout(pg.bin("pg_dump"), args);
 			} else {
-				// Written beside and renamed, so a failed export never leaves half a dump at `file`.
 				const partial = `${file}.partial`;
 				try {
 					await must(pg.bin("pg_dump"), [...args, `--file=${partial}`], { env: clientEnv() });
@@ -403,15 +367,10 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 	},
 };
 
-/** A source `db import` reads: a dump file in either format, or another server's database. */
 type Source =
 	| { format: "custom" | "plain"; file: string; description: string }
 	| { format: "url"; url: string; password: string | undefined; description: string };
 
-/**
- * What `source` is: a `postgres://` URL, else a file, a custom-format dump when it starts with
- * `PGDMP`, else plain SQL. A URL's password is kept apart, out of argv and messages.
- */
 async function sourceOf(source: string): Promise<Source> {
 	if (/^postgres(ql)?:\/\//i.test(source)) {
 		let url: URL;
@@ -455,10 +414,6 @@ async function sourceOf(source: string): Promise<Source> {
 	}
 }
 
-/**
- * Whether database `name` holds anything a fresh one lacks: a relation, function, type or schema
- * outside the system's, or an extension. An untouched `public` schema counts as nothing.
- */
 async function createdAnything(pg: Tool, port: number, name: string): Promise<boolean> {
 	const user = (namespace: string) =>
 		`${namespace} not in (select oid from pg_namespace where nspname in ('pg_catalog', 'information_schema', 'pg_toast') or nspname like 'pg\\_%temp\\_%')`;
@@ -484,23 +439,23 @@ async function createdAnything(pg: Tool, port: number, name: string): Promise<bo
 	return out.trim() === "t";
 }
 
-/** Loads `from` into the empty database `to`, stopping at the first error. */
 async function restore(pg: Tool, port: number, to: string, from: Source): Promise<void> {
 	const into = connection(port, to);
-	// Owners and grants name roles this server lacks; everything here belongs to its superuser.
 	const pgRestore = [pg.bin("pg_restore"), "--no-owner", "--no-privileges", "--exit-on-error"];
 	if (from.format === "url") {
-		const env = { ...clientEnv(), ...(from.password ? { PGPASSWORD: from.password } : {}) };
-		// Not `must`: its message repeats the command, and the URL is the user's to show.
-		const out = await exec(
+		const env = {
+			...clientEnv(),
+			BASEPAD_SOURCE_URL: from.url,
+			...(from.password ? { PGPASSWORD: from.password } : {}),
+		};
+		await must(
 			"bash",
 			[
 				"-c",
-				`set -o pipefail; ${shellQuote(pg.bin("pg_dump"))} --format=custom --dbname=${shellQuote(from.url)} | ${[...pgRestore, ...into].map(shellQuote).join(" ")}`,
+				`set -o pipefail; ${shellQuote(pg.bin("pg_dump"))} --format=custom --dbname="$BASEPAD_SOURCE_URL" | ${[...pgRestore, ...into].map(shellQuote).join(" ")}`,
 			],
-			{ env },
+			{ env, label: "pg_dump | pg_restore" },
 		);
-		if (out.code !== 0) throw new BasepadError((out.stderr || out.stdout).trim());
 	} else if (from.format === "plain") {
 		try {
 			await must(pg.bin("psql"), [...into, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", from.file], {
@@ -519,12 +474,10 @@ async function restore(pg: Tool, port: number, to: string, from: Source): Promis
 	}
 }
 
-/** Client arguments for database `database` on the server at `port`. */
 function connection(port: number, database: string): string[] {
 	return ["-h", HOST, "-p", String(port), "-U", USER, "-d", database];
 }
 
-/** Runs a program with its standard output as basepad's own, for a dump piped elsewhere. */
 function toStdout(file: string, args: string[]): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(file, args, { env: clientEnv(), stdio: ["ignore", "inherit", "pipe"] });
@@ -541,10 +494,6 @@ function toStdout(file: string, args: string[]): Promise<void> {
 	});
 }
 
-/**
- * The running server's SQL, for a service whose database is the environment's own. A worktree's
- * `shared` service's is main's, which the worktree's commands never touch.
- */
 async function own(
 	service: PostgresService,
 	place: Place<PostgresNames>,
@@ -560,14 +509,13 @@ async function own(
 	return { pg, port, sql: (text) => query(pg, port, text) };
 }
 
-/** The environment's snapshots, found by name. */
 async function snapshotsOf(
 	sql: (text: string) => Promise<string>,
 	place: Place<PostgresNames>,
 ): Promise<Snapshot[]> {
 	const prefix = place.snapshots;
 	const rows = await sql(
-		// An invalid database (`datconnlimit` -2) is what an interrupted copy or drop leaves.
+		// `datconnlimit` -2 marks an invalid database: https://www.postgresql.org/docs/current/catalog-pg-database.html
 		`select datname || '|' || pg_database_size(oid) || '|' || (datconnlimit = -2) from pg_database where datname like ${literal(`${likeEscaped(prefix)}%`)} order by datname`,
 	);
 	return rows
@@ -593,16 +541,6 @@ function noSnapshot(
 	return `\`${place.key}\` has no snapshot \`${label}\`. ${found.length === 0 ? "It has none; make one with `basepad db save`." : `Its snapshots: ${labels}.`}`;
 }
 
-/**
- * Replaces database `target` with one `fill` makes at `staging`, beside it: the one way the `db`
- * commands replace a database. `fill` makes `staging` and stamps it with `owner` as soon as it
- * exists, so one an interrupted run leaves is found as that checkout's, and goes with its worktree;
- * once `fill` has finished, `replace` stamps it again whatever `fill` did. Only then is `target`
- * dropped, its sessions ended (`with (force)` keeps new ones out until it is gone), and the new one
- * renamed to it, open, its stamp with it. A `fill` that fails leaves `target` as it was, and
- * nothing beside it, and throws `failed` with its reason. Clients connect again by themselves, to
- * the new one.
- */
 async function replace(
 	sql: (text: string) => Promise<string>,
 	{
@@ -614,12 +552,10 @@ async function replace(
 	fill: (staging: string, owner: string) => Promise<unknown>,
 ): Promise<void> {
 	const dropStaging = () => sql(`drop database if exists ${identifier(staging)} with (force)`);
-	// Left by a replacement that was interrupted.
 	await dropStaging();
 	try {
 		await fill(staging, owner);
 	} catch (error) {
-		// Its cause is what the developer needs; one left is dropped by the next replacement.
 		await dropStaging().catch(() => {});
 		if (!(error instanceof BasepadError)) throw error;
 		throw new BasepadError(`${failed}\n${error.message}`);
@@ -629,7 +565,6 @@ async function replace(
 	await sql(`alter database ${identifier(staging)} rename to ${identifier(target)}`);
 }
 
-/** Marks database `name` as belonging to the checkout at `owner`, as `provision` does. */
 async function stamp(
 	sql: (text: string) => Promise<string>,
 	name: string,
@@ -638,19 +573,12 @@ async function stamp(
 	await sql(`comment on database ${identifier(name)} is ${literal(owner)}`);
 }
 
-/**
- * Installs Postgres through mise and places pgvector in it. mise's Postgres is conda-forge's, which
- * lacks pgvector, and Postgres 17 only finds extensions inside its own install, so pgvector's files
- * are copied in. A marker in the install says they are there; a reinstall drops it, and they are
- * copied again.
- */
 async function installPostgres(version: PostgresVersion, home: string): Promise<Tool> {
 	const pg = await install("postgres", String(version), home);
 	const pgvector = PGVECTOR_VERSIONS[version];
 	const marker = join(pg.dir, `.basepad-pgvector-${pgvector}`);
 	if (existsSync(marker)) return pg;
 	const from = (await install("conda:pgvector", pgvector, home)).dir;
-	// mise doesn't expose pg_config among the install's programs, so it is found in the install.
 	const pgConfig = join(pg.dir, "bin", "pg_config");
 	const config = (flag: string) => must(pgConfig, [flag]).then((out) => out.trim());
 	const libDir = await config("--pkglibdir");
@@ -666,7 +594,6 @@ async function installPostgres(version: PostgresVersion, home: string): Promise<
 		throw new BasepadError(`mise's conda:pgvector@${pgvector} in ${from} has no vector.control.`);
 	}
 	for (const [file, dir] of copies) {
-		// By temp file and rename, so a server loading the library never sees half of it.
 		const target = join(dir, file.slice(file.lastIndexOf("/") + 1));
 		const temp = `${target}.${process.pid}.tmp`;
 		await copyFile(file, temp);
@@ -676,21 +603,8 @@ async function installPostgres(version: PostgresVersion, home: string): Promise<
 	return pg;
 }
 
-/** How a database was copied, fastest first. */
 type Route = "file clone" | "template copy" | "dump and restore";
 
-/**
- * Makes `to` a copy of `from`, rows, schema and extensions, while `from`'s clients stay connected,
- * and says how. `to` is stamped as belonging to the checkout at `owner` as soon as it exists, so a
- * copy an interrupted run leaves is found as that checkout's. The one way basepad copies a database.
- *
- * A template copy needs `from` to have no other session, and only `allow_connections` keeps out a
- * superuser, so `from` is closed, its sessions ended, and opened again after: a pooled client
- * reconnects by itself. `provision` opens a database an interrupted copy left closed. The copy is a
- * file clone where the server offers one (Postgres 18; copy-on-write on APFS, btrfs, XFS), else a
- * plain template copy; Postgres never falls back by itself, so basepad does. Dump and restore,
- * with `from` open again, only when a template copy fails.
- */
 async function copyDatabase(
 	pg: Tool,
 	port: number,
@@ -702,10 +616,10 @@ async function copyDatabase(
 	const offered = await sql(
 		"select coalesce(enumvals::text, '') from pg_settings where name = 'file_copy_method'",
 	);
-	// File by file, not the default WAL_LOG: faster on a large database, and a clone needs it.
+	// File by file, not the default WAL_LOG: faster on a large database, and a clone needs it:
+	// https://www.postgresql.org/docs/current/sql-createdatabase.html#CREATE-DATABASE-STRATEGY
 	const create = `create database ${identifier(to)} template ${identifier(from)} strategy file_copy`;
 	const routes: [Route, string[]][] = [["template copy", [create]]];
-	// One session: the setting is the session's own.
 	if (offered.includes("clone")) {
 		routes.unshift(["file clone", ["set file_copy_method = clone", create]]);
 	}
@@ -750,15 +664,10 @@ async function copyDatabase(
 	return "dump and restore";
 }
 
-/** The port of the server running on `data`, from Postgres's own pid file. */
 function serverPort(data: string): Promise<number | undefined> {
 	return runningPort(join(data, "postmaster.pid"), 3);
 }
 
-/**
- * Runs SQL in the maintenance database as the superuser, each statement on its own in one session;
- * returns psql's unaligned output.
- */
 async function query(pg: Tool, port: number, sql: string | string[]): Promise<string> {
 	const out = await must(
 		pg.bin("psql"),
@@ -781,12 +690,10 @@ async function query(pg: Tool, port: number, sql: string | string[]): Promise<st
 	return out.trim();
 }
 
-/** `text` for a `like` pattern, its wildcards matched as themselves (backslash escapes). */
 function likeEscaped(text: string): string {
 	return text.replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
-/** The environment for Postgres's client programs, free of the developer's own `PG*` settings. */
 function clientEnv(): NodeJS.ProcessEnv {
 	const env = Object.fromEntries(
 		Object.entries(process.env).filter(([key]) => !key.startsWith("PG")),

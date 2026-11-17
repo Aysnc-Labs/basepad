@@ -4,14 +4,8 @@ import { BasepadError, exec, must } from "./exec.ts";
 
 const NAME = "basepad";
 
-/**
- * Who runs a server that refuses root. As a normal user, that's the user. As root (a cloud
- * container), it's an unprivileged system user, which basepad creates.
- */
 export interface ServiceUser {
-	/** Prefixes a command so it runs as the service user. */
 	wrap(argv: readonly string[]): string[];
-	/** Lets the service user reach these paths: traverse-only access on each ancestor, ownership of `owned`. */
 	grant(paths: { traverse: readonly string[]; owned: readonly string[] }): Promise<void>;
 }
 
@@ -26,7 +20,6 @@ export async function serviceUser(): Promise<ServiceUser> {
 	}
 	const exists = async () => (await exec("id", ["-u", NAME])).code === 0;
 	if (!(await exists())) {
-		// Another basepad, such as a second project's `up`, may create the user at the same time.
 		await must("useradd", [
 			"--system",
 			"--no-create-home",
@@ -41,7 +34,8 @@ export async function serviceUser(): Promise<ServiceUser> {
 	const gid = Number((await must("id", ["-g", NAME])).trim());
 	return {
 		// setpriv execs the program itself, so the supervisor's pid is the server's and its stop
-		// signal reaches the server directly; runuser would stay in between.
+		// signal reaches the server directly; runuser would stay in between:
+		// https://man7.org/linux/man-pages/man1/setpriv.1.html
 		wrap: (argv) => [
 			"setpriv",
 			`--reuid=${uid}`,
@@ -51,8 +45,6 @@ export async function serviceUser(): Promise<ServiceUser> {
 			...argv,
 		],
 		async grant({ traverse, owned }) {
-			// mise installs under /root (0700), so the service user can't even reach Postgres's binaries.
-			// o+x on each ancestor grants passing through, without listing or reading anything.
 			for (const path of traverse) {
 				for (let dir = path; dir !== dirname(dir); dir = dirname(dir)) {
 					const { mode } = await stat(dir);

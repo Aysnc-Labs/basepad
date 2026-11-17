@@ -43,7 +43,7 @@ const databases = async () =>
 		)
 	).split("\n");
 
-/** What Claude Code sends a command hook on standard input, from its hooks reference. */
+/** What Claude Code sends a command hook on standard input: https://code.claude.com/docs/en/hooks#common-input-fields */
 const hookInput = (event: string, fields: Record<string, string>) =>
 	JSON.stringify({
 		session_id: "abc123",
@@ -54,7 +54,6 @@ const hookInput = (event: string, fields: Record<string, string>) =>
 		...fields,
 	});
 
-/** Claude Code runs a hook in the session's folder; the input's `cwd` says which it is. */
 const create = (fields: Record<string, string>, ...flags: string[]) =>
 	box.basepadWith(
 		{ input: hookInput("WorktreeCreate", fields) },

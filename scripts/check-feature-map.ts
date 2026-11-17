@@ -1,7 +1,3 @@
-// Verifies docs/feature-map.md against the repository: every feature has exactly one Purpose, Entry
-// and Paths line, every listed path exists, every relative link resolves, and every module under the
-// coverage roots is listed by some feature. Modules come from git-tracked files, so untracked or
-// ignored files never count. Run: node scripts/check-feature-map.ts
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
@@ -11,16 +7,11 @@ const MAP_FILE = "docs/feature-map.md";
 
 type CoverageRoot = { dir: string; include: "directories" | "files" };
 
-// Each child of a root is a module that some feature must list. `directories` counts child
-// directories; `files` also counts child files (test files excepted). A child that is itself a
-// root is not a module.
-// ---- PER-PROJECT: setup sets these roots from the project layout. ----
 export const COVERAGE_ROOTS: readonly CoverageRoot[] = [
 	{ dir: "src", include: "files" },
 	{ dir: "src/catalogue", include: "files" },
 	{ dir: "src/internal", include: "files" },
 ];
-// ---- END PER-PROJECT ----
 
 const PATH_LINE = /^Paths:\s*(.+)$/;
 const REQUIRED_LABELS = ["Purpose", "Entry", "Paths"] as const;
@@ -32,7 +23,6 @@ export type Result = { errors: string[]; summary: string };
 
 const trimSlash = (path: string) => path.replace(/\/+$/, "");
 
-// Lines outside fenced code blocks and HTML comments: diagrams and guidance hold labels, not paths.
 function proseLines(markdown: string): { text: string; line: number }[] {
 	const lines: { text: string; line: number }[] = [];
 	let fenced = false;
@@ -73,7 +63,6 @@ function modulesOf(
 	return [...modules].filter((module) => !rootDirs.has(module)).sort();
 }
 
-// Each "### " feature holds exactly one line per required label.
 function checkEntries(lines: { text: string; line: number }[]): string[] {
 	const errors: string[] = [];
 	let feature: { name: string; line: number; seen: Set<string> } | undefined;

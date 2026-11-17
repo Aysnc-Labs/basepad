@@ -1,16 +1,8 @@
-/**
- * Env files: basepad sets exactly the keys the config names, and nothing else in the file changes.
- */
-
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { EnvFiles } from "./index.ts";
 
-/**
- * Copies each env file a worktree lacks from main's folder, so its other lines (secrets, settings)
- * come along before basepad sets its own keys. A file the worktree has is its own, and kept.
- */
 export async function copyEnvFiles(from: string, to: string, paths: string[]): Promise<void> {
 	for (const path of paths) {
 		const source = resolve(from, path);
@@ -21,10 +13,6 @@ export async function copyEnvFiles(from: string, to: string, paths: string[]): P
 	}
 }
 
-/**
- * Sets each file's keys, paths resolved from `root`, creating a file that is missing. A file whose
- * keys already read as wanted is not written. Returns the paths it changed.
- */
 export async function writeEnvFiles(root: string, files: EnvFiles): Promise<string[]> {
 	const changed: string[] = [];
 	for (const [path, keys] of Object.entries(files)) {
@@ -42,14 +30,8 @@ export async function writeEnvFiles(root: string, files: EnvFiles): Promise<stri
 	return changed;
 }
 
-/** One `KEY=value` assignment's start: optional `export`, the key, then `=`. */
 const ASSIGNMENT = /^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_.-]*)(\s*=\s*)/;
 
-/**
- * Sets `keys` in an env file's text: in place where a key is assigned (every assignment of it),
- * appended in the order given where it is not. Every other byte is kept. A key whose value already
- * reads as the wanted one is left as written, so setting the same keys twice changes nothing.
- */
 export function setKeys(text: string, keys: Record<string, string | number>): string {
 	const wanted = new Map(Object.entries(keys).map(([key, value]) => [key, String(value)]));
 	const found = new Set<string>();
@@ -64,7 +46,6 @@ export function setKeys(text: string, keys: Record<string, string | number>): st
 			continue;
 		}
 		found.add(key);
-		// A quoted value may run over several lines; take them all as this assignment.
 		let assignment = line;
 		while (opensQuote(assignment.slice(match[0].length)) && i + 1 < lines.length) {
 			i++;
@@ -86,14 +67,12 @@ export function setKeys(text: string, keys: Record<string, string | number>): st
 	return `${out.join("")}${gap}${missing.map(([key, value]) => `${key}=${quote(value)}${newline}`).join("")}`;
 }
 
-/** Whether a raw value starts a quoted string it does not close. */
 function opensQuote(raw: string): boolean {
 	const q = raw[0];
 	if (q !== '"' && q !== "'") return false;
 	return closing(raw, q) === -1;
 }
 
-/** The index of the quote closing a value that starts with `q`, or -1. */
 function closing(raw: string, q: string): number {
 	for (let i = 1; i < raw.length; i++) {
 		if (q === '"' && raw[i] === "\\") i++;
@@ -102,7 +81,6 @@ function closing(raw: string, q: string): number {
 	return -1;
 }
 
-/** What a raw value reads as: quoted literally or with escapes, or bare up to a ` #` comment. */
 function readValue(raw: string): string {
 	const q = raw[0];
 	if (q === "'" || q === '"') {
@@ -114,10 +92,6 @@ function readValue(raw: string): string {
 	return raw.replace(/\s+#.*$/, "").trim();
 }
 
-/**
- * A value as written: bare when that reads back the same in every common parser, else in single
- * quotes (literal, no expansion), else in double quotes with `\` and `"` escaped.
- */
 export function quote(value: string): string {
 	if (/^[A-Za-z0-9_@%+=:,./?&~-]*$/.test(value)) return value;
 	if (!value.includes("'") && !value.includes("\n")) return `'${value}'`;

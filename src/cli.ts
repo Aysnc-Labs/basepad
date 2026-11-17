@@ -2,9 +2,7 @@ import { readFileSync } from "node:fs";
 import { COMMANDS, type Command, type Flag } from "./commands.ts";
 import { BasepadError } from "./internal/exec.ts";
 
-/** Flags every command takes. */
 const HELP: Record<string, Flag> = { help: { short: "h", description: "Show this help" } };
-/** Flags `basepad` takes before a command. */
 const TOP_FLAGS: Record<string, Flag> = {
 	...HELP,
 	version: { short: "v", description: "Show basepad's version" },
@@ -25,13 +23,11 @@ async function main(argv: string[]): Promise<number> {
 		process.stdout.write(topHelp());
 		return 0;
 	}
-	// A group (`db`) with no command, or asking for help, lists its commands.
 	const verbs = Object.entries(COMMANDS).filter(([key]) => key.startsWith(`${first} `));
 	if (verbs.length > 0 && (rest[0] === undefined || ["-h", "--help"].includes(rest[0]))) {
 		process.stdout.write(groupHelp(first, verbs));
 		return rest[0] === undefined ? 1 : 0;
 	}
-	// A command is one word, or two for a group's (`worktree add`).
 	const pair = rest[0] === undefined ? undefined : `${first} ${rest[0]}`;
 	const name = pair !== undefined && pair in COMMANDS ? pair : first;
 	const command = COMMANDS[name];
@@ -65,11 +61,6 @@ async function main(argv: string[]): Promise<number> {
 	return 0;
 }
 
-/**
- * Reads flags by long or short name: a switch, or a flag with a value, which takes the next
- * argument. Other words are the positional arguments; any other flag is an error naming the
- * nearest.
- */
 function parseFlags(
 	args: string[],
 	known: Record<string, Flag>,
@@ -113,19 +104,17 @@ function parseFlags(
 	return { flags, positional };
 }
 
-/** The candidate with the fewest edits from `word`. */
 function nearest(word: string, candidates: string[]): string {
 	let best = candidates[0] ?? "";
 	let bestDistance = Number.POSITIVE_INFINITY;
 	for (const candidate of candidates) {
-		const d = distance(word, candidate);
+		const d = levenshtein(word, candidate);
 		if (d < bestDistance) [best, bestDistance] = [candidate, d];
 	}
 	return best;
 }
 
-/** Levenshtein distance. */
-function distance(a: string, b: string): number {
+function levenshtein(a: string, b: string): number {
 	let row = Array.from({ length: b.length + 1 }, (_, i) => i);
 	for (let i = 1; i <= a.length; i++) {
 		const next = [i];
@@ -177,7 +166,6 @@ function commandHelp(name: string, command: Command): string {
 	].join("\n");
 }
 
-/** A command's arguments for its usage line: `<name> `, or `[<name>] ` for an optional one. */
 function usageArgs(args: string[]): string {
 	return args.map((arg) => (arg.endsWith("?") ? `[<${arg.slice(0, -1)}>] ` : `<${arg}> `)).join("");
 }

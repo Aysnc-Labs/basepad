@@ -13,34 +13,18 @@ import {
 	type View,
 } from "./model.ts";
 
-/**
- * Mission control's frame: a pure function from the snapshot, the view and the terminal's size to
- * one screen, as an Ink element. Layout A: environments down the left; the selected one's apps and
- * services top right; one merged, colour-coded log stream below. A header with counts above, an
- * alert line for each failed app anywhere, and the keys below. No hooks, so `renderToString` draws
- * it exactly as the live view does.
- */
 export interface FrameInput {
 	snapshot: Snapshot;
 	view: View;
 	cols: number;
 	rows: number;
-	/** The clock, `HH:MM:SS`. */
 	now: string;
-	/** How to colour it: `none` for `NO_COLOR`; meaning never rests on colour alone. */
 	color: Colors;
-	/** The time in milliseconds, for motion: what started, changed or arrived how long ago. */
 	clock?: number;
-	/** When each part last changed state, by id, in the clock's milliseconds. */
 	changed?: ReadonlyMap<string, number>;
-	/** How long the notice has shown, in milliseconds: it fades after a few seconds. */
 	noticeAge?: number;
 }
 
-/**
- * The colours a frame is drawn in: `rgb`, the palette, which chalk fits to a terminal of 256
- * colours; `16`, the terminal's own named colours, which its theme keeps legible; or `none`.
- */
 export type Colors = "none" | "16" | "rgb";
 
 /**
@@ -52,10 +36,8 @@ export function colorsFor(noColor: string | undefined, level: number): Colors {
 	return level >= 2 ? "rgb" : level === 1 ? "16" : "none";
 }
 
-/** The smallest terminal the layout fits; below it the frame asks for more room. */
 export const MIN_COLS = 72;
 export const MIN_ROWS = 16;
-/** Below this many rows the frame is compact: no blank rows, tighter keys, fewer alert lines. */
 const SHORT_ROWS = 24;
 
 export function frame(input: FrameInput): ReactElement {
@@ -102,11 +84,6 @@ export function frame(input: FrameInput): ReactElement {
 	);
 }
 
-/**
- * Where the frame's pieces go: the rows above the body (header, alerts) and below it (work under
- * way, the notice or a question, the keys), the body's height, the two columns' widths and the
- * parts panel's height.
- */
 function arrange(
 	snapshot: Snapshot,
 	view: View,
@@ -132,10 +109,8 @@ function arrange(
 	const body = rows - top.length - bottom.length;
 	const side = Math.min(34, Math.max(24, Math.floor(cols * 0.2)));
 	const right = cols - side - 1;
-	// The stream keeps at least a third of the body, so a long parts list never hides the logs.
 	const keep = Math.max(short ? 4 : 6, Math.floor(body / 3));
 	const most = Math.max(short ? 3 : 6, body - keep);
-	// As many rows as the parts that fit take, so none is left blank (see `partsShown`).
 	const table =
 		env.problem !== undefined
 			? Math.min(6, most)
@@ -145,7 +120,6 @@ function arrange(
 	return { top, bottom, body, side, right, table, short };
 }
 
-/** How many log lines the stream shows: what a page up or down moves by. */
 export function pageOf(snapshot: Snapshot, view: View, cols: number, rows: number): number {
 	const env = selectedOf(snapshot, view);
 	if (env === undefined || cols < MIN_COLS || rows < MIN_ROWS) return 10;
@@ -153,11 +127,8 @@ export function pageOf(snapshot: Snapshot, view: View, cols: number, rows: numbe
 	return Math.max(1, body - table - 2);
 }
 
-// ── colour ────────────────────────────────────────────────────────────────────────────────────
-
 type Color = string | undefined;
 export interface Palette {
-	/** The moment it is drawn at, where anything moves. */
 	motion?: Motion;
 	frame: Color;
 	focus: Color;
@@ -170,14 +141,9 @@ export interface Palette {
 	bad: Color;
 	accent: Color;
 	keyBg: Color;
-	/** Each part's own colour, never red, amber or green, so its lines are found in a merged stream. */
 	parts: Color[];
 }
 
-/**
- * Colour carries meaning: green runs, amber is on its way or warns, red failed, grey is idle.
- * Without colour every one is undefined, and glyphs and words carry the meaning.
- */
 const COLORS: Palette = {
 	frame: "#2f344d",
 	focus: "#7aa2f7",
@@ -193,10 +159,6 @@ const COLORS: Palette = {
 	parts: ["#7aa2f7", "#bb9af7", "#7dcfff", "#ff9e64", "#9d7cd8", "#73daca"],
 };
 
-/**
- * The terminal's own named colours, for one of 16: its theme sets them, so each is legible on its
- * background, dark or light. Text keeps the terminal's own foreground.
- */
 const NAMED: Palette = {
 	frame: "gray",
 	focus: "cyan",
@@ -235,22 +197,14 @@ function partColor(env: EnvironmentView, id: string, c: Palette): string | undef
 	return c.parts[Math.max(0, i) % c.parts.length];
 }
 
-// ── motion ────────────────────────────────────────────────────────────────────────────────────
-
-/** A starting part's dot breathes: amber, toward dim, and back, once in this long. */
 const BREATH_MS = 1400;
-/** How long a part that changed state stays lit, fading. */
 const FLASH_MS = 1200;
-/** How long a new log line takes to settle to its colour. */
 const FADE_IN_MS = 350;
-/** How long a notice shows before it fades, and how long it fades. */
 export const NOTICE_MS = 4000;
 export const NOTICE_FADE_MS = 1000;
-/** The background a lit row fades to: the palette's own. */
 const BACKGROUND = "#1a1b26";
 
 interface Motion {
-	/** Fades, glows and breaths, which need every colour: without, nothing moves. */
 	rgb: boolean;
 	clock: number;
 	changed: ReadonlyMap<string, number>;
@@ -266,7 +220,6 @@ function motionOf({ clock = 0, changed = new Map(), noticeAge, color }: FrameInp
 	};
 }
 
-/** Whether anything in the frame moves now: the view repaints fast only while it does. */
 export function animating({
 	snapshot,
 	clock,
@@ -285,7 +238,6 @@ export function animating({
 	);
 }
 
-/** `from` moved toward `to` by `t` (0 to 1): two `#rrggbb` colours. */
 function mix(from: string, to: string, t: number): string {
 	const k = Math.max(0, Math.min(1, t));
 	const channel = (hex: string, i: number) => Number.parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16);
@@ -295,7 +247,6 @@ function mix(from: string, to: string, t: number): string {
 		.join("")}`;
 }
 
-/** A starting part's colour, breathing; its own where colours are few. */
 function breathe(color: string | undefined, c: Palette): string | undefined {
 	const m = c.motion;
 	if (m === undefined || !m.rgb || color === undefined || c.dim === undefined) return color;
@@ -303,7 +254,6 @@ function breathe(color: string | undefined, c: Palette): string | undefined {
 	return mix(color, c.dim, t * 0.8);
 }
 
-/** The background of a part's row: lit in its new state's colour just after it changed. */
 function glow(id: string, color: string | undefined, c: Palette): string | undefined {
 	const m = c.motion;
 	const at = m?.changed.get(id);
@@ -313,7 +263,6 @@ function glow(id: string, color: string | undefined, c: Palette): string | undef
 	return mix(mix(color, BACKGROUND, 0.6), BACKGROUND, age / FLASH_MS);
 }
 
-/** A log line's colour: dim as it arrives, settling to its own. */
 function settled(line: LogLine, color: string | undefined, c: Palette): string | undefined {
 	const m = c.motion;
 	if (
@@ -328,7 +277,6 @@ function settled(line: LogLine, color: string | undefined, c: Palette): string |
 	return age >= FADE_IN_MS ? color : mix(c.dim, color, Math.max(0, age) / FADE_IN_MS);
 }
 
-/** The notice's colour: its own, then fading to dim after a few seconds. */
 function fading(color: string | undefined, c: Palette): string | undefined {
 	const age = c.motion?.noticeAge;
 	if (!c.motion?.rgb || age === undefined || color === undefined || c.dim === undefined)
@@ -336,15 +284,11 @@ function fading(color: string | undefined, c: Palette): string | undefined {
 	return age <= NOTICE_MS ? color : mix(color, c.dim, (age - NOTICE_MS) / NOTICE_FADE_MS);
 }
 
-// ── text runs ─────────────────────────────────────────────────────────────────────────────────
-
-/** A piece of a row: its text and how it is drawn. */
 interface Run {
 	text: string;
 	color?: string | undefined;
 	bg?: string | undefined;
 	bold?: boolean;
-	/** Drawn in reverse: a search's matches, which needs no colour. */
 	inverse?: boolean;
 }
 
@@ -356,7 +300,6 @@ const run = (text: string, color?: string, more: Omit<Run, "text" | "color"> = {
 
 const widthOf = (runs: Run[]) => runs.reduce((n, r) => n + [...r.text].length, 0);
 
-/** One row of runs, cut at `width` with `…`: only log lines and chrome are ever cut, never names. */
 function line(key: string, width: number, runs: Run[]): ReactElement {
 	return h(
 		Box,
@@ -377,13 +320,8 @@ function line(key: string, width: number, runs: Run[]): ReactElement {
 
 const gap = (key: string) => h(Box, { key, height: 1, width: 1, flexShrink: 0 });
 
-/** `text` padded to `n` columns; longer text is kept whole. */
 const pad = (text: string, n: number) => text + " ".repeat(Math.max(0, n - [...text].length));
 
-/**
- * `text` in pieces of at most `width` columns, so a long name wraps instead of being cut: after a
- * `/`, `-`, `.` or space where one is near the end of a piece, else at the width.
- */
 function wrap(text: string, width: number): string[] {
 	const out: string[] = [];
 	let rest = [...text];
@@ -398,10 +336,6 @@ function wrap(text: string, width: number): string[] {
 	return out;
 }
 
-/**
- * `runs` in rows of at most `width` columns, broken between words, so a question or a notice is
- * read whole rather than cut. A word longer than a row is broken within it.
- */
 function flow(runs: Run[], width: number): Run[][] {
 	const rows: Run[][] = [[]];
 	let used = 0;
@@ -434,14 +368,8 @@ function centred(cols: number, rows: number, color: string | undefined, text: st
 	);
 }
 
-/** The columns a panel `width` wide has for its title: its border's corners and a space each side take 6. */
 const titleRoom = (width: number) => width - 6;
 
-/**
- * A rounded panel with its title set in the top border, `╭─ title ──── right ─╮`: Ink draws no
- * titles, so the top line is drawn here. Its content gets `width - 4` columns, `height - 2` rows;
- * its title, `titleRoom(width)`.
- */
 function panel(
 	key: string,
 	width: number,
@@ -451,7 +379,6 @@ function panel(
 	right: Run[],
 	children: ReactNode[],
 ): ReactElement {
-	// The title is cut inside the border, so its corner always draws.
 	const t = title.length > 0 ? clip([run(" "), ...title, run(" ")], titleRoom(width) + 2) : [];
 	let r = right.length > 0 ? [run(" "), ...right, run(" ")] : [];
 	if (widthOf(t) + widthOf(r) > width - 4) r = [];
@@ -478,9 +405,6 @@ function panel(
 	);
 }
 
-// ── what the snapshot says ────────────────────────────────────────────────────────────────────
-
-/** An environment's state at a glance: failed beats starting beats running; none running is idle. */
 function rollup(env: EnvironmentView): { state: PartState | "problem"; note: string } {
 	if (env.problem !== undefined) return { state: "problem", note: "config does not load" };
 	const { apps } = env;
@@ -505,27 +429,24 @@ function lookOf(state: PartState | "problem", c: Palette) {
 	};
 }
 
-/** How a log line reads: an error, a warning, or plain. */
 function tone(text: string, c: Palette): string | undefined {
 	if (/\b(ERROR|FATAL|PANIC)\b|Error\b|^\s+at |exception|^Node\.js v/.test(text)) return c.bad;
 	if (/\bWARN(ING)?\b/.test(text)) return c.warn;
 	return c.text;
 }
 
-/** A line without the date, zone and pid a server stamps on it itself (Postgres does). */
+/**
+ * A line without the date, zone and pid a server stamps on it itself (Postgres does):
+ * https://www.postgresql.org/docs/current/runtime-config-logging.html#GUC-LOG-LINE-PREFIX
+ */
 const clean = (text: string) =>
 	text.replace(
 		/^\s*\[?\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(?:[.,]\d+)?(?:Z|[+-]\d\d:?\d\d| [A-Z]{2,5})?\]?\s+(?:\[\d+\]\s+)?/,
 		"",
 	);
 
-/** How far back a failed part's output is searched for the line that names its error. */
 const LAST_OUTPUT = 20;
 
-/**
- * A failed part's last output: of its last lines, the newest that names an error, else its last
- * line that is not blank, whatever it says. Empty only when it printed nothing.
- */
 function lastError(lines: readonly LogLine[] = []): string {
 	const recent = lines
 		.slice(-LAST_OUTPUT)
@@ -534,14 +455,11 @@ function lastError(lines: readonly LogLine[] = []): string {
 	return recent.findLast((text) => /Error\b|ERROR|FATAL/.test(text)) ?? recent.at(-1) ?? "";
 }
 
-/** The newest `n` lines of the given parts, merged in arrival order. */
 function merged(logs: Snapshot["logs"], ids: string[], n: number): LogLine[] {
 	const all: LogLine[] = [];
 	for (const id of ids) all.push(...(logs.get(id) ?? []).filter(printed).slice(-n));
 	return all.sort((a, b) => a.seq - b.seq).slice(-n);
 }
-
-// ── the pieces ────────────────────────────────────────────────────────────────────────────────
 
 function header(snapshot: Snapshot, cols: number, now: string, c: Palette): ReactElement {
 	const apps = snapshot.environments.flatMap((env) => env.apps);
@@ -561,7 +479,6 @@ function header(snapshot: Snapshot, cols: number, now: string, c: Palette): Reac
 		run("● ", c.ok),
 		run(`${count("running")} running   `, c.soft),
 		...(failed > 0 ? [run("✖ ", c.bad), run(`${failed} failed   `, c.bad, { bold: true })] : []),
-		// Idle and stopped only where there are any: what runs or failed is always said.
 		...(count("idle") > 0 ? [run("○ ", c.dim), run(`${count("idle")} idle   `, c.soft)] : []),
 		...(count("stopped") > 0
 			? [run("– ", c.dim), run(`${count("stopped")} stopped   `, c.soft)]
@@ -575,10 +492,6 @@ function header(snapshot: Snapshot, cols: number, now: string, c: Palette): Reac
 	return line("header", cols, [...left, run(" ".repeat(fill)), ...right]);
 }
 
-/**
- * A line for each failed app in any environment, so a crash is seen whatever is selected: at most
- * `most`, the last of which counts the rest.
- */
 function alertLines(snapshot: Snapshot, cols: number, most: number, c: Palette): ReactElement[] {
 	const failed = snapshot.environments.flatMap((env) =>
 		env.apps.filter((a) => a.state === "failed").map((a) => ({ env, a })),
@@ -597,10 +510,6 @@ function alertLines(snapshot: Snapshot, cols: number, most: number, c: Palette):
 	});
 }
 
-/**
- * The rows above the keys: each worktree being added or removed with its command's last line, then
- * a removal's question, or what the last key did. Questions and notices wrap rather than cut.
- */
 function status(
 	snapshot: Snapshot,
 	view: View,
@@ -625,7 +534,6 @@ function status(
 			run(confirm.suffix, c.bad, { bold: true }),
 			run("? Its apps, databases and git worktree go; its branch stays.  ", c.text),
 			run("y", c.bad, { bold: true }),
-			// Kept together, so a row never starts with a lone "it".
 			run(" remove · any other key keeps\u00a0it", c.mute),
 		];
 	} else if (confirm?.step === "discard") {
@@ -645,7 +553,6 @@ function status(
 	return [...work, ...rows.map((runs, i) => line(`said ${i}`, cols, [run(" "), ...runs]))];
 }
 
-/** The keys used most, below the view: the rest are under `?` (`HELP`). */
 function keysOf(environments: number): [string, string][] {
 	return [
 		["↑↓", "select"],
@@ -659,7 +566,6 @@ function keysOf(environments: number): [string, string][] {
 	];
 }
 
-/** Every key, with what it does: what `?` shows in place of the logs. */
 const HELP: [string, string][] = [
 	["↑↓", "select an app or service; above the first, all of them"],
 	["tab ⇧tab", "next or previous environment (← → too)"],
@@ -677,7 +583,6 @@ const HELP: [string, string][] = [
 	["q", "close mission control; everything keeps running"],
 ];
 
-/** The keys, in rows: each key's label stays with its key. Short, they sit closer together. */
 function footer(cols: number, short: boolean, environments: number, c: Palette): ReactElement[] {
 	const rows: Run[][] = [[run(" ")]];
 	const space = short ? "  " : "   ";
@@ -691,7 +596,6 @@ function footer(cols: number, short: boolean, environments: number, c: Palette):
 		}
 		last.push(...item);
 	}
-	// A row's trailing gap would push it past the edge and cut it with `…`.
 	return rows.map((runs, i) => {
 		const end = runs[runs.length - 1] as Run;
 		const trimmed = [...runs.slice(0, -1), { ...end, text: end.text.trimEnd() }];
@@ -699,11 +603,6 @@ function footer(cols: number, short: boolean, environments: number, c: Palette):
 	});
 }
 
-/**
- * Environments down the left: state glyph and name, the branch whole, the state in words. When
- * they do not all fit, a window of them that holds the selected one, with how many more above and
- * below.
- */
 function sidebar(
 	snapshot: Snapshot,
 	selected: EnvironmentView,
@@ -714,7 +613,6 @@ function sidebar(
 ): ReactElement {
 	const inner = width - 4;
 	const removing = new Set((snapshot.work ?? []).map((w) => w.namespace));
-	// Each is numbered, as `1`–`9` select it; the rows below its name line up past the number.
 	const digits = String(snapshot.environments.length).length;
 	const indent = run(" ".repeat(digits + 3));
 	const blocks = snapshot.environments.map((env, i) => {
@@ -731,12 +629,10 @@ function sidebar(
 				run(`${look.glyph} `, look.color),
 				run(env.label, on ? c.text : c.soft, { bold: on }),
 			]),
-			// Its branch, where it is not its name already (main on main).
 			...(branch === env.label ? [] : wrap(branch, inner - indent.text.length - 1)).map(
 				(piece, j) =>
 					line(`${k} branch ${j}`, inner, [bar, indent, run(piece, on ? c.soft : c.mute)]),
 			),
-			// Its state, where it is not simply running: the header counts those.
 			...(removing.has(k)
 				? [line(`${k} note`, inner, [bar, indent, run("being removed…", c.warn)])]
 				: s.state === "running"
@@ -761,10 +657,6 @@ function sidebar(
 	);
 }
 
-/**
- * Blocks of rows (an environment, a part) in `room` rows: all when they fit, else a window that
- * holds block `at`, and a row above and below, made by `mark`, saying how many more there are.
- */
 function windowed<T>(
 	blocks: T[][],
 	at: number,
@@ -774,7 +666,6 @@ function windowed<T>(
 	const size = (from: number, to: number) =>
 		blocks.slice(from, to + 1).reduce((n, b) => n + b.length, 0);
 	const marks = (from: number, to: number) => (from > 0 ? 1 : 0) + (to < blocks.length - 1 ? 1 : 0);
-	// From the first block, moved down until block `at` fits; then down as far as room allows.
 	let from = 0;
 	while (from < at && size(from, at) + marks(from, at) > room) from++;
 	let to = Math.max(at, 0);
@@ -786,10 +677,6 @@ function windowed<T>(
 	];
 }
 
-/**
- * The rows of an environment's parts that show in `room` rows: all of them; else without their
- * headings; else a window that holds the focused part.
- */
 function partsShown(
 	env: EnvironmentView,
 	inner: number,
@@ -809,17 +696,11 @@ function partsShown(
 	}));
 }
 
-/** One row of the parts panel: its runs, none for a blank row. */
 interface Row {
 	key: string;
 	runs: Run[];
 }
 
-/**
- * An environment's parts, a block of rows each, `inner` columns wide: apps, then services, each
- * group under a heading unless `short`. A part's address is never cut: where it does not fit
- * beside its name, it goes on rows of its own below it, wrapped where it must be.
- */
 function partBlocks(
 	env: EnvironmentView,
 	inner: number,
@@ -828,12 +709,9 @@ function partBlocks(
 	snapshot?: Snapshot,
 	c: Palette = palette("none"),
 ): Row[][] {
-	// Narrow, names are not lined up past their own width, and the state word gives way, so an
-	// address fits beside its name; the glyph still says the state.
 	const nameWidth =
 		Math.max(inner < 60 ? 0 : 8, ...partsOf(env).map((p) => [...p.name].length)) + 2;
 	const words = inner >= 96;
-	// A part that just changed state is lit for a moment in its new state's colour.
 	const block = (part: Part): Row[] => {
 		const bg = glow(part.id, lookOf(part.state, c).color, c);
 		const rows = plainBlock(part);
@@ -855,7 +733,6 @@ function partBlocks(
 			return [{ key: part.id, runs: [...lead, ...error] }];
 		}
 		const color = part.state === "running" ? c.text : c.soft;
-		// Its port and pid only matter on a closer look: they show when it is selected.
 		const detail =
 			part.state === "idle"
 				? run("   starts on its first request", c.dim)
@@ -863,7 +740,6 @@ function partBlocks(
 		const address = part.address ?? "";
 		const whole = [...lead, run(address, color)];
 		if (widthOf(whole) <= inner) {
-			// The detail shows where it fits whole.
 			const fits = widthOf(whole) + widthOf([detail]) <= inner;
 			return [{ key: part.id, runs: fits ? [...whole, detail] : whole }];
 		}
@@ -884,7 +760,6 @@ function partBlocks(
 	return [...group("APPS", env.apps), ...group("SERVICES", env.services)];
 }
 
-/** The selected environment's apps and services: state, address, and a detail. */
 function partsPanel(
 	env: EnvironmentView,
 	view: View,
@@ -915,7 +790,6 @@ function partsPanel(
 		width,
 		height,
 		c.frame,
-		// The branch, a name, shows whole or not at all: the sidebar has it whole.
 		[
 			run(env.label, c.text, { bold: true }),
 			...(branch !== env.label && widthOf([run(`${env.label}  · ${branch}`)]) <= width - 6
@@ -927,16 +801,10 @@ function partsPanel(
 	);
 }
 
-/**
- * The search in the stream's title: the query being typed, or the one found, then how to go on,
- * which gives way first (`HINT`).
- */
 function searchTitle(view: View, c: Palette): Piece[] {
 	const { search } = view;
 	if (search === undefined) return [];
 	if (search.typing) {
-		// The developer's own input outranks every hint and the mode; too long, its end shows, as in
-		// an input field.
 		const typed = (text: string) => [
 			run("  / ", c.accent, { bold: true }),
 			run(`${text}▏`, c.text, { bold: true }),
@@ -956,23 +824,18 @@ function searchTitle(view: View, c: Palette): Piece[] {
 	];
 }
 
-/** A piece of a title, left out whole where the title can't fit it: those with the least `gives` first. */
 interface Piece {
 	runs: Run[];
-	/** Never left out when none. */
 	gives?: number;
-	/** The piece in at most `cols` columns, where the title can't fit it whole once the rest gave way. */
 	shrink?: (cols: number) => Run[];
 }
 
-/** In the stream's title, the order pieces give way in: hints, then names, never cut; a query found. */
 const NEWER = 1;
 const HINT = 2;
 const LIVE_HINT = 3;
 const NAME = 4;
 const QUERY = 5;
 
-/** `pieces` as runs in at most `room` columns: those that give way first are left out first. */
 function fitted(pieces: Piece[], room: number): Run[] {
 	let kept = pieces;
 	const order = pieces
@@ -988,7 +851,6 @@ function fitted(pieces: Piece[], room: number): Run[] {
 	);
 }
 
-/** `text` with each match of `query` (ignoring case) drawn in reverse. */
 function marked(text: string, query: string, color: string | undefined): Run[] {
 	if (query === "") return [run(text, color)];
 	const runs: Run[] = [];
@@ -1006,7 +868,6 @@ function marked(text: string, query: string, color: string | undefined): Run[] {
 	return runs;
 }
 
-/** `runs` cut to at most `width` columns with `…`. */
 function clip(runs: Run[], width: number): Run[] {
 	const out: Run[] = [];
 	let left = width;
@@ -1017,14 +878,12 @@ function clip(runs: Run[], width: number): Run[] {
 			left -= chars.length;
 			continue;
 		}
-		// A run that starts at the limit is left out, not cut to a lone `…`.
 		if (left > 0) out.push({ ...r, text: `${chars.slice(0, left - 1).join("")}…` });
 		return out;
 	}
 	return out;
 }
 
-/** One merged, colour-coded stream of the environment's parts, or of the focused one alone. */
 function stream(
 	env: EnvironmentView,
 	view: View,
@@ -1039,8 +898,6 @@ function stream(
 	const inner = width - 4;
 	const n = Math.max(0, height - 2);
 	const nameWidth = Math.max(...parts.map((p) => [...p.name].length), 3) + 2;
-	// Live, only the newest lines of each part are merged; paused, all of them, up to its line.
-	// Paused, the page ends at its line, or fills with the lines after it near the oldest.
 	const paused = view.until;
 	const all = paused === undefined ? [] : streamLines(snapshot, view);
 	const end = Math.max(
@@ -1072,14 +929,12 @@ function stream(
 			]),
 		);
 	}
-	// The focused part's name may be left out: the parts panel above marks it, and the border's colour.
 	const mode: Piece = {
 		runs: [
 			run(focused === undefined ? "  all" : `  ${focused.name} only`, focused ? c.accent : c.soft),
 		],
 		gives: NAME,
 	};
-	// Paused, the title says how to go live.
 	const live: Piece[] =
 		paused === undefined
 			? []
@@ -1095,7 +950,6 @@ function stream(
 	return panel("stream", width, height, focused === undefined ? c.frame : c.focus, title, [], rows);
 }
 
-/** Every key with what it does, in place of the logs while `?` is on. */
 function help(width: number, height: number, c: Palette): ReactElement {
 	const inner = width - 4;
 	const keyWidth = Math.max(...HELP.map(([k]) => [...k].length)) + 3;

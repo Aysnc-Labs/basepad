@@ -23,7 +23,6 @@ const config = configFile(`{
 
 let box: Sandbox;
 let main: string;
-/** The worktree `worktree add` made. */
 let tree: string;
 
 const git = async (cwd: string, ...args: string[]) => {
@@ -40,7 +39,6 @@ const git = async (cwd: string, ...args: string[]) => {
 	return stdout.trim();
 };
 
-/** `redis-cli` against `url`, its reply trimmed; fails the test on any error. */
 async function redisCli(url: string, ...args: string[]): Promise<string> {
 	const out = await box.redis(url, ...args);
 	expect(out.stderr).toBe("");
@@ -48,7 +46,6 @@ async function redisCli(url: string, ...args: string[]): Promise<string> {
 	return out.stdout.trim();
 }
 
-/** Whether a Redis answers at `url`. */
 async function answers(url: string): Promise<boolean> {
 	const out = await box.redis(url, "PING");
 	return out.code === 0 && out.stdout.trim() === "PONG";
@@ -56,7 +53,6 @@ async function answers(url: string): Promise<boolean> {
 
 const env = (dir: string) => readEnv(dir, ".env.local");
 
-/** The proxy's URL for `host`, with its port. */
 const url = (host: string) => `https://${host}:${box.proxyPort}`;
 
 beforeAll(async () => {
@@ -99,14 +95,11 @@ test("a worktree's Redis is its own and empty, started with the worktree; a shar
 	expect(own.REDIS_URL).toMatch(/^redis:\/\/127\.0\.0\.1:\d+$/);
 	expect(own.REDIS_URL).not.toBe(mains.REDIS_URL);
 	expect(own.REF_URL).toBe(mains.REF_URL);
-	// Made, not started: its Redis waits for the worktree.
 	expect(await answers(own.REDIS_URL as string)).toBe(false);
 	const idle = await box.basepad(tree, "status");
 	expect(idle.stdout).toMatch(new RegExp(`^cache +${own.REDIS_URL} +stopped$`, "m"));
 	expect(idle.stdout).toMatch(new RegExp(`^ref +${mains.REF_URL} +running$`, "m"));
 
-	// The first request to its app starts the app and, before it, its Redis. The proxy may not
-	// route a worktree's domain for a moment after it is made.
 	for (const until = Date.now() + 15_000; ; ) {
 		try {
 			await box.get(url("web.worktree-1.t24cache.localhost"));

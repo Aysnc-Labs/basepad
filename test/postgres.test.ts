@@ -8,7 +8,6 @@ let box: Sandbox;
 let shop: string;
 let firstUp: Result;
 
-/** Each Postgres test file has its own name, so their derived ports differ. */
 const config = configFile(`{
 	name: "pg-shop",
 	services: { db: postgres() },

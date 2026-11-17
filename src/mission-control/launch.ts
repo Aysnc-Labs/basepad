@@ -2,33 +2,20 @@ import { Box, render, Text } from "ink";
 import { createElement as h, type ReactElement } from "react";
 import { type Colors, type Palette, palette } from "./frame.ts";
 
-/**
- * The launch and the landing, drawn on a terminal. The launch is `setup`'s: its plan as a checklist
- * beside a rocket on its pad, which lifts off once every step is done; a failed step is no-go, and
- * the rocket stays down. The landing is `down`'s: a capsule splashing down as everything stops.
- * Pure frames, and the live views that animate them.
- */
 export interface Check {
 	name: string;
 	state: "waiting" | "active" | "go" | "nogo";
 }
 
 export interface LaunchInput {
-	/** What launches: `SETUP` beside `BASEPAD`. */
 	title: string;
-	/** Under the title: the machine, or the project and environment. */
 	subtitle: string;
 	checks: Check[];
-	/** The animation's beat, a tenth of a second each: the flame flickers, the beacon blinks. */
 	tick: number;
-	/** How far the rocket has risen, in pixels; 0 on the pad. */
 	lift: number;
-	/** Seconds since the launch began; none, no clock. */
 	elapsed?: number;
-	/** The last thing a step said, such as a database being copied. */
 	note?: string;
 	cols: number;
-	/** The rows it has; the rocket shows only where it fits. */
 	rows?: number;
 	color: Colors;
 }
@@ -36,7 +23,6 @@ export interface LaunchInput {
 const withArt = ({ cols, rows, color }: LaunchInput) =>
 	color === "rgb" && cols >= ART_COLS && (rows ?? Number.POSITIVE_INFINITY) >= MIN_ART_ROWS + 2;
 
-/** The rows the art takes in `rows` with its padding: the whole sky where it fits, less above. */
 const artRows = (rows: number) => Math.min(ART_ROWS, rows - 2);
 
 export function launchFrame(input: LaunchInput): ReactElement {
@@ -64,7 +50,6 @@ export function launchFrame(input: LaunchInput): ReactElement {
 	);
 }
 
-/** The art, if any, with the checklist to its right. */
 function beside(art: ReactElement[], list: ReactElement): ReactElement {
 	return h(
 		Box,
@@ -82,23 +67,17 @@ function launchStatus({ checks, lift }: LaunchInput, c: Palette): Said {
 	return ["PRE-LAUNCH CHECKS", c.warn];
 }
 
-// ── the checklist ─────────────────────────────────────────────────────────────────────────────
-
-/** The art needs this many columns beside the checklist, this many rows, and a colour per pixel. */
 const ART_COLS = 70;
 const ART_ROWS = 18;
-/** The least it shows: the rocket, its tower and pad, with the sky above cut. */
 const MIN_ART_ROWS = 13;
 const WIDTH = 34;
 
-/** A line of status: its words and their colour. */
 type Said = [string, string | undefined];
 
 interface List {
 	title: string;
 	subtitle: string;
 	checks: Check[];
-	/** What a check that went well says. */
 	lamp: string;
 	status: Said;
 	clock?: string;
@@ -107,7 +86,6 @@ interface List {
 
 function checklist(list: List, c: Palette): ReactElement {
 	const rule = h(Text, { color: c.dim }, "─".repeat(WIDTH));
-	// Dark type on a lit lamp; without colour, the terminal's own.
 	const onLamp = c.keyBg === undefined ? undefined : "#1a1b26";
 	const lit = (text: string, bg: string | undefined) =>
 		h(Text, { color: onLamp, backgroundColor: bg, bold: true }, ` ${text} `);
@@ -155,9 +133,6 @@ function checklist(list: List, c: Palette): ReactElement {
 	);
 }
 
-// ── the rocket ────────────────────────────────────────────────────────────────────────────────
-
-/** A Saturn-style rocket, a character per pixel: each letter a colour (`colours`), `.` none. */
 const ROCKET = [
 	"....S....",
 	"....S....",
@@ -204,7 +179,6 @@ const STARS: [number, number][] = [
 	[17, 0],
 ];
 
-/** A blank sky, `put` to draw a pixel into it, and `stamp` to draw rows of them. */
 function canvas() {
 	const px = Array.from({ length: TALL }, () => Array<string>(WIDE).fill("."));
 	const put = (x: number, y: number, ch: string) => {
@@ -219,13 +193,10 @@ function canvas() {
 }
 
 const TOWER_TOP = ROCKET_TOP - 2;
-/** Where the tower's beacon blinks. */
 const BEACON: [number, number] = [5, TOWER_TOP - 2];
 
-/** The stars, the tower (its beacon dark, its arms away from the rocket) and the pad. */
 function ground(put: (x: number, y: number, ch: string) => void, armsIn: boolean) {
 	for (const [x, y] of STARS) put(x, y, "*");
-	// The umbilical tower: two legs and a lattice.
 	for (let y = TOWER_TOP; y < PAD; y++) {
 		put(3, y, "T");
 		put(7, y, "T");
@@ -233,14 +204,12 @@ function ground(put: (x: number, y: number, ch: string) => void, armsIn: boolean
 	}
 	put(5, TOWER_TOP - 1, "T");
 	put(...BEACON, "t");
-	// Its arms hold the rocket until it is cleared to go.
 	for (const y of [ROCKET_TOP + 4, ROCKET_TOP + 10, ROCKET_TOP + 16])
 		for (let x = 8; x < (armsIn ? ROCKET_X + 2 : 10); x++) put(x, y, "T");
 	for (let x = 0; x < WIDE; x++) put(x, PAD, "D");
 	for (let x = 1; x < WIDE - 1; x++) put(x, PAD + 1, x > 10 && x < 22 ? "K" : "D");
 }
 
-/** The pad as pixels, a row of letters each: the tower, the rocket risen `lift`, its flame. */
 function scene({ checks, tick, lift }: LaunchInput): string[] {
 	const { rows, put, stamp } = canvas();
 	const go = checks.every((check) => check.state === "go");
@@ -253,11 +222,6 @@ function scene({ checks, tick, lift }: LaunchInput): string[] {
 	return rows();
 }
 
-/**
- * The art in layers, for drawing it elsewhere (the README's rocket, `scripts/rocket-svg.ts`): the
- * ground with the tower's arms away, the rocket and its flames as stamped at `x`, `top`, and each
- * letter's colour.
- */
 export function rocketArt() {
 	const { rows, put } = canvas();
 	ground(put, false);
@@ -293,7 +257,6 @@ function colours(c: Palette): Record<string, string | undefined> {
 	};
 }
 
-/** Two pixel rows to a line of text: `▀` in the top one's colour, on the bottom one's. */
 function pixels(rows: string[], c: Palette): ReactElement[] {
 	const colour = colours(c);
 	const out: ReactElement[] = [];
@@ -317,22 +280,13 @@ function pixels(rows: string[], c: Palette): ReactElement[] {
 	return out;
 }
 
-// ── the landing ───────────────────────────────────────────────────────────────────────────────
-
-/**
- * The landing: what `down` shows on a terminal while it stops an environment. Its apps and services
- * listed beside a capsule coming down under its parachute, which splashes down once they stop.
- */
 export interface LandingInput {
 	project: string;
 	environment: string;
-	/** What stops: the apps, and the services that are the environment's own. */
 	parts: string[];
-	/** Services that run on main's servers, which keep running: a worktree's, mostly. */
 	kept?: string[];
 	state: "stopping" | "stopped" | "failed";
 	tick: number;
-	/** How far the capsule has come down, in pixels. */
 	drop: number;
 	cols: number;
 	color: Colors;
@@ -374,7 +328,6 @@ export function landingFrame(input: LandingInput): ReactElement {
 	);
 }
 
-/** The capsule's parachute, its gores red and white. */
 const CHUTE = [
 	"......RRWWRR......",
 	"...RRWWRRWWRRWW...",
@@ -385,7 +338,6 @@ const CHUTE = [
 ];
 const CAPSULE = ["...W...", "..WWw..", ".WWWWw.", "WWWWWww", "DDDDDDD"];
 
-/** The sky and sea as pixels: the capsule under its chute `drop` down, swaying, then splashed. */
 function capsule({ tick, drop, state }: LandingInput): string[] {
 	const px = Array.from({ length: TALL }, () => Array<string>(WIDE).fill("."));
 	const put = (x: number, y: number, ch: string) => {
@@ -399,14 +351,12 @@ function capsule({ tick, drop, state }: LandingInput): string[] {
 	for (const [x, y] of STARS) put(x, y, "*");
 	const sea = TALL - 4;
 	const down = state === "stopped";
-	// The lowest it comes before landing, and where it floats after.
 	const lowest = sea - CAPSULE.length - CHUTE.length - 7;
 	const y = down ? sea - CAPSULE.length - CHUTE.length - 5 : Math.min(lowest, drop);
 	const sway = down ? 0 : tick % 20 < 10 ? 0 : 1;
 	const x = 4 + sway;
 	if (!down) {
 		stamp(CHUTE, x, y);
-		// Shroud lines from the chute's edge and middle to the capsule's top.
 		for (let i = 1; i <= 5; i++) {
 			const row = y + CHUTE.length - 1 + i;
 			put(x + 1 + Math.round((i * 7) / 5), row, "t");
@@ -416,29 +366,21 @@ function capsule({ tick, drop, state }: LandingInput): string[] {
 	}
 	const capsuleY = down ? sea - CAPSULE.length + 1 : y + CHUTE.length + 5;
 	stamp(CAPSULE, x + 6, capsuleY);
-	// The sea, its waves rolling with the beat; a splash once it is down.
 	for (let row = sea; row < TALL; row++)
 		for (let col = 0; col < WIDE; col++) put(col, row, (col + tick + row) % 4 === 0 ? "w" : "B");
 	if (down) for (const dx of [-1, 7, -2, 8]) put(x + 6 + dx, sea - 1 - (Math.abs(dx) % 2), "w");
 	return px.map((row) => row.join(""));
 }
 
-// ── the live view ─────────────────────────────────────────────────────────────────────────────
-
-/** A beat of the animation. */
 const BEAT_MS = 100;
 
-/** How long the splashdown shows before `down` returns. */
 const SPLASH_MS = 300;
 
 export interface Landing {
-	/** Everything stopped: it splashes down; settles once shown, with the view closed. */
 	land(): Promise<void>;
-	/** The stop failed: its lamps stay no-go on the terminal. */
 	fail(): void;
 }
 
-/** Draws the landing on the terminal, in place, until it lands or fails. */
 export function landing(options: {
 	project: string;
 	environment: string;
@@ -479,13 +421,8 @@ export function landing(options: {
 	};
 }
 
-/** How long setup's lift-off plays. */
 const SETUP_LIFT_OFF_MS = 1500;
 
-/**
- * Plays the lift-off on the terminal, in place, then leaves the empty pad: setup's last moment,
- * once every step is done.
- */
 export async function liftOff(input: Omit<LaunchInput, "tick" | "lift">): Promise<void> {
 	let tick = 0;
 	const draw = () => launchFrame({ ...input, tick, lift: Math.floor(tick ** 2 / 4) });

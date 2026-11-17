@@ -8,17 +8,8 @@ import { recordRunning, runningPort } from "../internal/processes.ts";
 import { install } from "../tools.ts";
 import { MAILPIT_VERSION } from "../versions.ts";
 
-/**
- * Mailpit: one inbox per project, which catches every message the project's environments send.
- * Its inbox is its domain; its SMTP server is on loopback. Main and every worktree share it, and
- * each sends as its own SMTP user, which Mailpit tags each message with. Its messages are kept in
- * the service's folder, so they survive a restart.
- */
-
 const HOST = "127.0.0.1";
-/** Mailpit accepts any password, but some mailers authenticate only with one. */
 const PASSWORD = "basepad";
-/** How long `up` waits for its SMTP server to answer before it gives up. */
 const READY_MS = 30_000;
 
 /** A Mailpit of the project's own, shared by its worktrees. */
@@ -48,13 +39,9 @@ export interface MailpitOutputs {
 	inbox: string;
 }
 
-/** The names a Mailpit service derives. */
 export interface MailpitNames {
-	/** The environment's SMTP user: `main`, or a worktree's suffix. */
 	user: string;
-	/** Mailpit's database of messages, in the service's folder. */
 	data: string;
-	/** Where the running Mailpit's process id and SMTP port are written as it starts. */
 	pid: string;
 }
 
@@ -77,7 +64,6 @@ export const mailpitKind: Kind<MailpitService, MailpitOutputs, MailpitNames> = {
 			`${HOST}:${smtp}`,
 			"--database",
 			place.data,
-			// Any user and password, over plain SMTP on loopback: the user becomes the message's tag.
 			"--smtp-auth-accept-any",
 			"--smtp-auth-allow-insecure",
 			"--tags-username",

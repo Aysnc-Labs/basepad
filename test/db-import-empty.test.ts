@@ -3,8 +3,6 @@ import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
 
-/** A source that creates nothing (an empty file, a failed download) never replaces the database. */
-
 let box: Sandbox;
 let main: string;
 
@@ -28,11 +26,10 @@ beforeAll(async () => {
 }, 300_000);
 afterAll(() => box?.dispose());
 
-// Each one has no statement in it: empty, blank, a BOM, comments, bare `;`, NUL bytes.
 for (const [name, body] of [
 	["empty.sql", ""],
 	["blank.sql", "\n  \t\n"],
-	["bom.sql", Buffer.from([0xef, 0xbb, 0xbf])], // an "empty" file saved as UTF-8 with BOM
+	["bom.sql", Buffer.from([0xef, 0xbb, 0xbf])],
 	["bom-newline.sql", Buffer.from([0xef, 0xbb, 0xbf, 0x0a])],
 	["comments.sql", "-- nothing here\n/* nor here */\n"],
 	["semicolons.sql", ";\n;\n"],

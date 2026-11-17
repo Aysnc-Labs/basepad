@@ -23,7 +23,6 @@ const full = config(
 	`db: postgres(), ref: postgres({ worktree: "shared" }), old: postgres()`,
 	"db, ref, old",
 );
-/** Main's config once `old` is taken out of it. */
 const withoutOld = config(`db: postgres(), ref: postgres({ worktree: "shared" })`, "db, ref");
 
 let box: Sandbox;
@@ -52,21 +51,15 @@ async function sql(at: string, query: string): Promise<string> {
 	return out.stdout.trim();
 }
 
-/** The databases on a service's server. */
 const databases = async (key: string) =>
 	(await sql(urls[key] as string, "select datname from pg_database order by 1")).split("\n");
 
-/** Main's rows are all still there. */
 async function mainIntact(): Promise<void> {
 	for (const key of ["db", "ref"]) {
 		expect(await sql(urls[key] as string, "select name from items")).toBe("from main");
 	}
 }
 
-/**
- * `basepad` on a terminal of its own, typing `input` once it asks. Input stays open until basepad
- * exits. On macOS, Python's `pty`: macOS's `script` fails on Node's stdin, a socket there.
- */
 function onTerminal(cwd: string, input: string, ...args: string[]): Promise<Result> {
 	const command = [process.execPath, join(import.meta.dirname, "../dist/launcher.js"), ...args]
 		.map((arg) => `'${arg}'`)
@@ -173,7 +166,6 @@ test("rm stops the worktree's apps, drops its databases, unregisters it and keep
 		expect(await databases(key)).not.toContain(`t18shop_${key}_worktree_1`);
 	}
 	expect(existsSync(join(box.root, "home/environments/t18shop.worktree-1.toml"))).toBe(false);
-	// The shared database is main's, and stays; main's app keeps answering.
 	await mainIntact();
 	expect((await box.get<{ cwd: string }>(url("web.t18shop.localhost"))).cwd).toBe(main);
 });
@@ -222,7 +214,6 @@ test("rm works from inside a worktree with no config at all", async () => {
 });
 
 test("rm keeps a database with the worktree's name that another checkout's worktree owns", async () => {
-	// Another clone under the same name: its worktree `other` has this name on the same server.
 	const other = join(box.root, "other");
 	await git(main, "worktree", "add", "--quiet", "-b", "other", other);
 	await sql(urls.db as string, "create database t18shop_db_other");
@@ -236,7 +227,6 @@ test("rm keeps a database with the worktree's name that another checkout's workt
 });
 
 test("rm and prune clean up worktrees whose names main's config has since made too long", async () => {
-	// 48 characters: room for `db` and `old` beside it, not for a service key of 10.
 	const suffixes = ["x", "y"].map((end) => `my-long-feature-${end.repeat(32)}`);
 	const [kept, gone] = suffixes.map((suffix) => join(box.root, suffix)) as [string, string];
 	const named = (key: string, suffix: string) => `t18shop_${key}_${suffix.replaceAll("-", "_")}`;
@@ -310,13 +300,11 @@ test("prune --yes removes the leftovers of gone worktrees, and keeps a removed s
 
 test("prune deletes a removed service's data only when asked on a terminal", async () => {
 	const no = await onTerminal(main, "n\n", "prune");
-	// The whole result, so a failure shows what basepad printed.
 	expect(no).toMatchObject({ code: 0, stderr: "" });
 	expect(existsSync(join(box.root, "home/services/t18shop/old"))).toBe(true);
 	const yes = await onTerminal(main, "y\n", "prune");
 	expect(yes).toMatchObject({ code: 0, stdout: expect.stringContaining("Deleted") });
 	expect(existsSync(join(box.root, "home/services/t18shop/old"))).toBe(false);
-	// No server is left running on the deleted data.
 	const ps = await box.run("ps", ["-eo", "args"]);
 	expect(ps.stdout).not.toContain(join(box.root, "home/services/t18shop/old"));
 	await mainIntact();
