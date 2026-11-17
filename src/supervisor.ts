@@ -116,6 +116,8 @@ export async function openSupervisor(
 
 	const running = () => existsSync(join(dirs.PITCHFORK_STATE_DIR, "sock"));
 	const { ca } = paths;
+	const generatesExistingCa = (step: string) =>
+		step.startsWith("generate the pitchfork CA") && existsSync(ca);
 
 	const applySettings = async () => {
 		const current = z
@@ -150,6 +152,27 @@ export async function openSupervisor(
 		if (running.length > 0) await run("stop", ...running.map((d) => d.id));
 	};
 
+	const ownHistory = async (id: string, lines: number) => {
+		if (lines === 0) return [];
+		const out = await run("logs", id, "-n", String(lines), "--no-pager").catch(() => "");
+		return out
+			.split("\n")
+			.map((text) => parseLogLine(text, [id]))
+			.filter((entry) => entry !== undefined);
+	};
+
+	const startIdle = async (
+		namespace: string,
+		idle: string[],
+	): Promise<{ error: unknown } | undefined> => {
+		if (idle.length === 0) return undefined;
+		const ids = idle.map((name) => daemonId(namespace, name));
+		return run("start", ...ids, ...READY_AT_ONCE).then(
+			() => undefined,
+			(error: unknown) => ({ error }),
+		);
+	};
+
 	const hold = async (namespace: string, names: string[]) => {
 		for (const daemon of await list(namespace)) {
 			if (names.includes(daemon.name) && !daemon.disabled) await run("disable", daemon.id);
@@ -177,14 +200,13 @@ export async function openSupervisor(
 		}
 	};
 
+	const waitForProxy = () => pollUntil(() => listening(machine.proxyPort), 5000, 100);
+
 	const serve = async () => {
 		await applySettings();
 		if (!running()) {
 			await run("supervisor", "start");
-			const until = Date.now() + 5000;
-			while (!(await listening(machine.proxyPort)) && Date.now() < until) {
-				await new Promise((resolve) => setTimeout(resolve, 100));
-			}
+			await waitForProxy();
 		}
 		if (machine.forwards443) await forward443();
 	};
@@ -199,10 +221,7 @@ export async function openSupervisor(
 			detached: true,
 			stdio: "ignore",
 		}).unref();
-		const until = Date.now() + 2000;
-		while ((await probeStandardPort(ca)) === "closed" && Date.now() < until) {
-			await new Promise((resolve) => setTimeout(resolve, 100));
-		}
+		await pollUntil(async () => (await probeStandardPort(ca)) !== "closed", 2000, 100);
 	};
 
 	return {
@@ -217,7 +236,7 @@ export async function openSupervisor(
 				.split("\n")
 				.map((line) => line.trim())
 				.filter((line) => line !== "" && !line.endsWith("following:"))
-				.filter((line) => !(line.startsWith("generate the pitchfork CA") && existsSync(ca)));
+				.filter((line) => !generatesExistingCa(line));
 		},
 
 		proxySetup: () =>
@@ -275,29 +294,19 @@ export async function openSupervisor(
 			const idle = names.filter(
 				(name) => !listed.some((d) => d.name === name && LIVE.has(d.status)),
 			);
-			let refused: unknown;
-			if (idle.length > 0) {
-				await run("start", ...idle.map((name) => daemonId(namespace, name)), "--cmd", "true").catch(
-					(error: unknown) => {
-						refused = error;
-					},
-				);
-			}
+			const refusal = await startIdle(namespace, idle);
 			const until = Date.now() + waitMs;
 			for (;;) {
 				const now = await states(namespace);
 				const settled = names.every((name) => now[name] !== "starting");
 				if (settled || Date.now() >= until) {
-					if (refused !== undefined && !idle.some((name) => now[name] === "failed")) {
-						throw refused;
-					}
+					const anIdleOneFailed = idle.some((name) => now[name] === "failed");
+					if (refusal !== undefined && !anIdleOneFailed) throw refusal.error;
 					// The proxy re-reads its routes every 2 s, so a new daemon's domain can lag:
 					// https://github.com/jdx/pitchfork/blob/v2.34.0/src/proxy/server.rs#L126-L127
 					for (const [name, host] of Object.entries(hosts)) {
 						if (now[name] !== "running") continue;
-						while (!(await routed(machine.proxyPort, host)) && Date.now() < until + 3000) {
-							await new Promise((resolve) => setTimeout(resolve, 200));
-						}
+						await pollUntil(() => routed(machine.proxyPort, host), until + 3000 - Date.now(), 200);
 					}
 					return now;
 				}
@@ -363,21 +372,7 @@ export async function openSupervisor(
 				if (replayed) line(entry);
 				else live.push(entry);
 			});
-			Promise.all(
-				ids.map((id) =>
-					(history === 0
-						? Promise.resolve("")
-						: run("logs", id, "-n", String(history), "--no-pager")
-					).then(
-						(out) =>
-							out
-								.split("\n")
-								.map((text) => parseLogLine(text, [id]))
-								.filter((entry) => entry !== undefined),
-						() => [],
-					),
-				),
-			).then((lists) => {
+			Promise.all(ids.map((id) => ownHistory(id, history))).then((lists) => {
 				if (stopped) return;
 				const past = lists.flat().sort((a, b) => a.stamp.localeCompare(b.stamp));
 				const key = (e: { id: string; stamp: string; text: string }) =>
@@ -515,19 +510,30 @@ const Listed = z.looseObject({
 });
 type Listed = z.infer<typeof Listed>;
 
+const READY_AT_ONCE = ["--cmd", "true"];
+
+async function pollUntil(done: () => Promise<boolean>, ms: number, everyMs: number): Promise<void> {
+	const until = Date.now() + ms;
+	while (!(await done()) && Date.now() < until) {
+		await new Promise((resolve) => setTimeout(resolve, everyMs));
+	}
+}
+
 const LIVE = new Set(["running", "waiting", "restarting"]);
 
 async function stateOf(daemon: Listed): Promise<DaemonState> {
-	if (daemon.status === "running") {
-		if (daemon.active_port != null) return "running";
-		const port = daemon.port?.[0];
-		return port === undefined || (await listening(port)) ? "running" : "starting";
-	}
+	if (daemon.status === "running") return (await listensYet(daemon)) ? "running" : "starting";
 	if (LIVE.has(daemon.status)) return "starting";
 	if (daemon.status === "errored" || daemon.status === "failed" || daemon.status === "completed") {
 		return "failed";
 	}
 	return "stopped";
+}
+
+async function listensYet(daemon: Listed): Promise<boolean> {
+	if (daemon.active_port != null) return true;
+	const given = daemon.port?.[0];
+	return given === undefined || listening(given);
 }
 
 function listening(port: number): Promise<boolean> {
@@ -539,7 +545,7 @@ function toml(daemons: Record<string, Daemon>): string {
 		.map(([name, daemon]) => {
 			const lines = [
 				`[daemons.${name}]`,
-				`run = ${JSON.stringify(`cd ${shellQuote(daemon.dir)} && ${daemon.run}`)}`,
+				`run = ${JSON.stringify(runInFolder(daemon))}`,
 				`ready_cmd = ${JSON.stringify(readyCommand(daemon))}`,
 			];
 			if (daemon.depends !== undefined && daemon.depends.length > 0) {
@@ -555,6 +561,10 @@ function toml(daemons: Record<string, Daemon>): string {
 			return `${lines.join("\n")}\n`;
 		})
 		.join("\n");
+}
+
+function runInFolder(daemon: Daemon): string {
+	return `cd ${shellQuote(daemon.dir)} && ${daemon.run}`;
 }
 
 function readyCommand(daemon: Daemon): string {

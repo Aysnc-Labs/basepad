@@ -8,15 +8,17 @@ export interface Tool {
 	bin(program: string): string;
 }
 
-export async function install(tool: string, version: string, cwd: string): Promise<Tool> {
+export async function install(tool: string, version: string, basepadHome: string): Promise<Tool> {
 	const spec = `${tool}@${version}`;
-	await mkdir(cwd, { recursive: true });
+	await mkdir(basepadHome, { recursive: true });
 	await must("mise", ["install", "--quiet", spec], {
-		cwd,
+		cwd: basepadHome,
 		env: { ...process.env, MISE_SKILLS_FETCH: "false" },
 	});
-	const dir = (await must("mise", ["where", spec], { cwd })).trim();
-	const paths = (await must("mise", ["bin-paths", spec], { cwd })).split("\n").filter(Boolean);
+	const dir = (await must("mise", ["where", spec], { cwd: basepadHome })).trim();
+	const paths = (await must("mise", ["bin-paths", spec], { cwd: basepadHome }))
+		.split("\n")
+		.filter(Boolean);
 	return {
 		dir,
 		bin(program) {
