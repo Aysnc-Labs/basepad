@@ -4,7 +4,7 @@ import { BasepadError, must } from "./exec.ts";
 
 const NAME = "basepad";
 const LOCK_DIR = "/run/basepad";
-const CREATE_LOCK = `${LOCK_DIR}/service-user.lock`;
+export const SERVICE_USER_LOCK = `${LOCK_DIR}/service-user.lock`;
 
 export interface ServiceUser {
 	wrap(argv: readonly string[]): string[];
@@ -22,7 +22,7 @@ export async function serviceUser(name = NAME): Promise<ServiceUser> {
 	}
 	await rootOnlyDir(LOCK_DIR);
 	await must("flock", [
-		CREATE_LOCK,
+		SERVICE_USER_LOCK,
 		"sh",
 		"-c",
 		`id -u ${name} >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin ${name}`,
@@ -53,12 +53,17 @@ export async function serviceUser(name = NAME): Promise<ServiceUser> {
 	};
 }
 
-async function rootOnlyDir(path: string): Promise<void> {
-	await mkdir(path, { recursive: true, mode: 0o700 });
+export async function rootOnlyDir(path: string): Promise<void> {
+	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+	await mkdir(path, { mode: 0o700 }).catch(ignoreExisting);
 	const dir = await lstat(path);
 	if (!dir.isDirectory() || dir.uid !== 0 || (dir.mode & 0o077) !== 0) {
 		throw new BasepadError(
 			`${path} must be a directory only root can enter (owner root, mode 0700). Remove it and run basepad again.`,
 		);
 	}
+}
+
+function ignoreExisting(error: NodeJS.ErrnoException): void {
+	if (error.code !== "EEXIST") throw error;
 }
