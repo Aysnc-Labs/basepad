@@ -327,6 +327,6 @@ test("a key that is the name of a service's extra daemon is refused, naming both
 	);
 });
 
-test("the extra daemons services could have left are each Kind's extras by key, not every <key>-… name", () => {
+test("a service named like another's extra daemon (db-x beside db) is not an orphan candidate", () => {
 	expect(extraDaemonNames(["db", "db-x"])).toEqual(["db-neon-proxy", "db-x-neon-proxy"]);
 });
