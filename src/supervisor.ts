@@ -583,9 +583,8 @@ function localTime(date: Date): string {
 
 const FIRST_DISTROS_WITH_GLIBC: Record<string, string> = { "2.39": "Ubuntu 24.04, Debian 13" };
 
-/** What `up` says of a daemon that exited on start, from its last log lines. */
 export function startFailure(name: string, lines: string[], logsCommand: string): string {
-	const glibc = lines.join("\n").match(/version `GLIBC_([\d.]+)' not found/)?.[1];
+	const glibc = glibcFloor(lines);
 	const distros = glibc === undefined ? undefined : FIRST_DISTROS_WITH_GLIBC[glibc];
 	const why =
 		glibc === undefined
@@ -596,4 +595,10 @@ export function startFailure(name: string, lines: string[], logsCommand: string)
 		...(lines.length > 0 ? lines : ["(none)"]).map((line) => `  ${line}`),
 		`For more, run: ${logsCommand}`,
 	].join("\n");
+}
+
+function glibcFloor(lines: string[]): string | undefined {
+	return [...lines.join("\n").matchAll(/version `GLIBC_([\d.]+)' not found/g)]
+		.map(([, version]) => version as string)
+		.sort((a, b) => b.localeCompare(a, "en", { numeric: true }))[0];
 }

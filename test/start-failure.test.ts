@@ -19,3 +19,12 @@ test("a program too new for the system's glibc says which glibc it needs", () =>
 		`\`db-neon-proxy\` needs glibc 2.39 or newer (Ubuntu 24.04, Debian 13), and this system's is older. Its last output:\n  ${loader}\nFor more, run: ${LOGS}`,
 	);
 });
+
+test("a program missing several glibc versions names the highest", () => {
+	const missing = (version: string) =>
+		`/opt/neon-proxy: /lib/x86_64-linux-gnu/libc.so.6: version \`GLIBC_${version}' not found (required by /opt/neon-proxy)`;
+	const lines = ["2.34", "2.39", "2.4", "2.38"].map(missing);
+	expect(startFailure("db-neon-proxy", lines, LOGS)).toMatch(
+		/^`db-neon-proxy` needs glibc 2\.39 or newer \(Ubuntu 24\.04, Debian 13\), and this system's is older\./,
+	);
+});
