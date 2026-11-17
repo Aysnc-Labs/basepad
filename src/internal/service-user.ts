@@ -1,9 +1,10 @@
-import { chmod, chown, stat } from "node:fs/promises";
+import { chmod, chown, lstat, mkdir, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { BasepadError, must } from "./exec.ts";
 
 const NAME = "basepad";
-const CREATE_LOCK = "/tmp/basepad-service-user.lock";
+const LOCK_DIR = "/run/basepad";
+const CREATE_LOCK = `${LOCK_DIR}/service-user.lock`;
 
 export interface ServiceUser {
 	wrap(argv: readonly string[]): string[];
@@ -19,6 +20,7 @@ export async function serviceUser(name = NAME): Promise<ServiceUser> {
 			"As root, basepad runs services as a system user, which it supports on Linux only.",
 		);
 	}
+	await rootOnlyDir(LOCK_DIR);
 	await must("flock", [
 		CREATE_LOCK,
 		"sh",
@@ -49,4 +51,14 @@ export async function serviceUser(name = NAME): Promise<ServiceUser> {
 			for (const path of owned) await chown(path, uid, gid);
 		},
 	};
+}
+
+async function rootOnlyDir(path: string): Promise<void> {
+	await mkdir(path, { recursive: true, mode: 0o700 });
+	const dir = await lstat(path);
+	if (!dir.isDirectory() || dir.uid !== 0 || (dir.mode & 0o077) !== 0) {
+		throw new BasepadError(
+			`${path} must be a directory only root can enter (owner root, mode 0700). Remove it and run basepad again.`,
+		);
+	}
 }
