@@ -6,9 +6,11 @@ export type {
 	PostgresOutputs,
 	PostgresService,
 	PostgresVersion,
+	PostgresWithNeonProxyOutputs,
+	PostgresWithNeonProxyService,
 	PostgresWorktree,
 } from "./catalogue/postgres.ts";
-export { postgres } from "./catalogue/postgres.ts";
+export { postgres, postgresWithNeonProxy } from "./catalogue/postgres.ts";
 export type { RedisOutputs, RedisService, RedisWorktree } from "./catalogue/redis.ts";
 export { redis } from "./catalogue/redis.ts";
 export type { Service };

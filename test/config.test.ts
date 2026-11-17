@@ -52,6 +52,21 @@ test("gives one plain description, apps' folders resolved from the config", asyn
 	});
 });
 
+test("takes postgresWithNeonProxy() as a service, with postgres()'s options", async () => {
+	const dir = await scratch({
+		"basepad.config.ts": configFile(`{
+			name: "shop",
+			services: { db: postgresWithNeonProxy({ version: 17, worktree: "empty" }) },
+		}`),
+	});
+	const project = await loadProject(dir);
+	expect(project.services.db).toEqual({
+		kind: "postgresWithNeonProxy",
+		version: 17,
+		worktree: "empty",
+	});
+});
+
 test("worktrees default to the prefix `worktree`; a set `dir` resolves from the config", async () => {
 	const plain = await loadProject(await scratch({ "basepad.config.ts": twoApps }));
 	expect(plain.worktrees).toEqual({ prefix: "worktree", clone: [], setup: [] });

@@ -590,6 +590,11 @@ async function stateTables(
 			const place = placeOf(project, lay, here, key);
 			const address = await kindOf(service).address(service, place);
 			rows.push([key, address, states[ofDaemon(place.daemon).name] ?? "stopped"]);
+			for (const [extra, { daemon }] of Object.entries(place.extraDaemons)) {
+				const name = ofDaemon(daemon).name;
+				const extraAddress = (await kindOf(service).extraAddress?.(service, place, extra)) ?? "";
+				rows.push([name, extraAddress, states[name] ?? "stopped"]);
+			}
 		}
 		tables.push(table([["SERVICE", "ADDRESS", "STATE"], ...rows]));
 	}
