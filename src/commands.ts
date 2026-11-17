@@ -24,6 +24,7 @@ import {
 	daemonId,
 	daemonsOf,
 	definitionsFile,
+	extraDaemonNames,
 	isRootOnLinux,
 	type Layout,
 	layout,
@@ -382,12 +383,12 @@ async function stopOrphans(
 	namespace: string,
 	defined: string[],
 ): Promise<void> {
-	const keys = [
+	const extras = extraDaemonNames([
 		...Object.keys(project.services),
 		...(await removedServices(project, here)).map(([key]) => key),
-	];
+	]);
 	const orphans = Object.keys(await supervisor.status(namespace)).filter(
-		(name) => !defined.includes(name) && keys.some((key) => name.startsWith(`${key}-`)),
+		(name) => !defined.includes(name) && extras.includes(name),
 	);
 	if (orphans.length > 0) await supervisor.stop(namespace, orphans);
 }

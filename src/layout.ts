@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+	EXTRA_DAEMONS,
 	type ExtraDaemon,
 	type Kind,
 	kindOf,
@@ -146,8 +147,8 @@ export function layout(
 		}
 		const runsIn = kind.perEnvironment?.(service) ? namespace : name;
 		const extraDaemons: Record<string, ExtraDaemon> = {};
-		for (const extra of kind.extraDaemons?.(service) ?? []) {
-			const daemon = `${key}-${extra}`;
+		for (const extra of kind.extraDaemons ?? []) {
+			const daemon = extraDaemonName(key, extra);
 			if (daemon in project.apps || daemon in project.services) {
 				fail(
 					`service \`${key}\` runs a daemon named \`${daemon}\`, which is ${daemon in project.apps ? "app" : "service"} \`${daemon}\`'s name. Rename one.`,
@@ -156,6 +157,7 @@ export function layout(
 			extraDaemons[extra] = {
 				daemon: daemonId(runsIn, daemon),
 				port: servicePort(`${runsIn}.${key}.${extra}`),
+				pid: join(dir, `${extra}.pid`),
 			};
 		}
 		services[key] = {
@@ -207,6 +209,14 @@ export function ownServers(lay: Pick<Layout, "namespace" | "services">): string[
 	return Object.entries(lay.services)
 		.filter(([, place]) => ofDaemon(place.daemon).namespace === lay.namespace)
 		.map(([key]) => key);
+}
+
+function extraDaemonName(key: string, extra: string): string {
+	return `${key}-${extra}`;
+}
+
+export function extraDaemonNames(keys: string[]): string[] {
+	return keys.flatMap((key) => EXTRA_DAEMONS.map((extra) => extraDaemonName(key, extra)));
 }
 
 export function daemonsOf(place: Pick<ServicePlace, "daemon" | "extraDaemons">): string[] {

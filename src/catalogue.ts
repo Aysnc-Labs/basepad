@@ -38,6 +38,7 @@ export interface Web {
 export interface ExtraDaemon {
 	daemon: string;
 	port: number;
+	pid: string;
 }
 
 export interface WorktreeData {
@@ -48,7 +49,7 @@ export interface WorktreeData {
 export interface Kind<S extends ServiceBase, O, N> {
 	schema: z.ZodType<S>;
 	web?: true;
-	extraDaemons?(service: S): string[];
+	extraDaemons?: readonly string[];
 	perEnvironment?(service: S): boolean;
 	names(service: S, input: NameInput): N;
 	prepare(service: S, place: Place<N>): Promise<Record<string, Daemon>>;
@@ -118,6 +119,14 @@ export type NamesOf<S extends Service> = ReturnType<Catalogue[S["kind"]]["names"
 export function kindOf<S extends Service>(service: S): Kind<S, OutputsOf<S>, NamesOf<S>> {
 	return CATALOGUE[service.kind] as unknown as Kind<S, OutputsOf<S>, NamesOf<S>>;
 }
+
+export const EXTRA_DAEMONS: readonly string[] = [
+	...new Set(
+		Object.values(CATALOGUE).flatMap(
+			(kind: { extraDaemons?: readonly string[] }) => kind.extraDaemons ?? [],
+		),
+	),
+];
 
 export const SCHEMAS: z.ZodType<Service>[] = Object.values(CATALOGUE).map((kind) => kind.schema);
 

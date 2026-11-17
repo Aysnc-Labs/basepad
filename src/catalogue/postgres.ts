@@ -318,7 +318,7 @@ export const postgresWithNeonProxyKind: Kind<
 	...server,
 	schema: schemaOf("postgresWithNeonProxy"),
 
-	extraDaemons: () => [NEON_PROXY],
+	extraDaemons: [NEON_PROXY],
 
 	async prepare(service, place) {
 		const { port, daemon } = await prepareServer(service, place);
@@ -328,7 +328,7 @@ export const postgresWithNeonProxyKind: Kind<
 			place.machine.home,
 		);
 		const extra = neonProxyOf(place);
-		const file = neonProxyPidFile(place);
+		const file = extra.pid;
 		const running = await runningPort(file);
 		const proxyPort = running ?? (await freePort(extra.port));
 		const againstOldPostgres = running !== undefined && (await runningPort(file, 2)) !== port;
@@ -381,12 +381,8 @@ function neonProxyOf(place: Place<PostgresNames>): ExtraDaemon {
 	return place.extraDaemons[NEON_PROXY] as ExtraDaemon;
 }
 
-function neonProxyPidFile(place: Place<PostgresNames>): string {
-	return join(place.dir, `${NEON_PROXY}.pid`);
-}
-
 async function neonProxyPort(place: Place<PostgresNames>): Promise<number> {
-	return (await runningPort(neonProxyPidFile(place))) ?? neonProxyOf(place).port;
+	return (await runningPort(neonProxyOf(place).pid)) ?? neonProxyOf(place).port;
 }
 
 async function prepareServer(

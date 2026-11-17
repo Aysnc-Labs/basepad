@@ -5,6 +5,7 @@ import { mailpit, postgres, redis } from "../src/index.ts";
 import {
 	daemonId,
 	daemonsOf,
+	extraDaemonNames,
 	type Layout,
 	layout as layoutOf,
 	machine,
@@ -290,9 +291,7 @@ test("a service with a domain is served at <key>.<name>.localhost in main and ev
 });
 
 const withSidecar = (service: Service) =>
-	service.kind === "redis"
-		? { ...kindOf(service), extraDaemons: () => ["sidecar"] }
-		: kindOf(service);
+	service.kind === "redis" ? { ...kindOf(service), extraDaemons: ["sidecar"] } : kindOf(service);
 
 test("a Kind's extra daemon runs beside its service, as <key>-<daemon>, on a port of its own", () => {
 	const services = { cache: redis(), ref: redis({ worktree: "shared" }) };
@@ -301,6 +300,7 @@ test("a Kind's extra daemon runs beside its service, as <key>-<daemon>, on a por
 	expect(main.cache?.extraDaemons.sidecar?.daemon).toBe("shop/cache-sidecar");
 	expect(tree.cache?.extraDaemons.sidecar?.daemon).toBe("shop.worktree-1/cache-sidecar");
 	expect(tree.ref?.extraDaemons.sidecar?.daemon).toBe("shop/ref-sidecar");
+	expect(main.cache?.extraDaemons.sidecar?.pid).toBe("/h/services/shop/cache/sidecar.pid");
 	const port = main.cache?.extraDaemons.sidecar?.port as number;
 	expect(port).toBeGreaterThanOrEqual(15000);
 	expect(port).toBeLessThan(20000);
@@ -325,4 +325,8 @@ test("a key that is the name of a service's extra daemon is refused, naming both
 	expect(() => layoutOf(service, here, undefined, withSidecar)).toThrow(
 		"/p/basepad.config.ts: service `cache` runs a daemon named `cache-sidecar`, which is service `cache-sidecar`'s name. Rename one.",
 	);
+});
+
+test("the extra daemons services could have left are each Kind's extras by key, not every <key>-… name", () => {
+	expect(extraDaemonNames(["db", "db-x"])).toEqual(["db-neon-proxy", "db-x-neon-proxy"]);
 });
