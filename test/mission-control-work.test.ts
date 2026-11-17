@@ -8,9 +8,11 @@ import {
 	utimesSync,
 	writeFileSync,
 } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
+import { writeWhole } from "../src/internal/files.ts";
 import { startWork, takeWork } from "../src/mission-control/work.ts";
 
 const dirs: string[] = [];
@@ -279,5 +281,24 @@ test("work killed before it printed anything says no last line", async () => {
 	await startWork({ dir, command: silent, cwd: tmpdir(), order });
 	expect((await until(dir, (w) => w.finished.length > 0)).finished).toEqual([
 		"Could not remove shop-2: it stopped partway; run `basepad worktree rm shop-2` to finish it.",
+	]);
+});
+
+test("work read while its files are half written shows as starting", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "basepad-work-"));
+	dirs.push(dir);
+	const seen: Awaited<ReturnType<typeof takeWork>>[] = [];
+	await writeWhole(join(dir, "1-1-a.json"), async (partial) => {
+		await writeFile(partial, '{"kind":');
+		seen.push(await takeWork(dir));
+		await writeFile(partial, JSON.stringify({ kind: "add", title: "Adding a worktree" }));
+	});
+	await writeWhole(join(dir, "1-1-a.pid"), async (partial) => {
+		await writeFile(partial, '{"pid":');
+		seen.push(await takeWork(dir));
+	});
+	expect(seen.map((work) => work.running.map((running) => running.title))).toEqual([
+		[],
+		["Adding a worktree"],
 	]);
 });
