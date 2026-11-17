@@ -12,6 +12,8 @@ const node = (script: string) => `exec '${process.execPath}' '${script}'`;
 
 const ENV_LOCAL = "# my secrets\nSECRET=hunter2\nWEB_URL=http://stale\n\nTRAILING=1\n";
 
+const TWO_SUPERVISOR_RESTARTS_MS = 240_000;
+
 let box: Sandbox;
 let shop: string;
 let firstUp: Result;
@@ -203,7 +205,7 @@ test("an app that exits on start is reported with its output, and up fails", asy
 	await box.basepad(dir, "down");
 });
 
-test("an app that exits at once is reported the same way, by every up", async () => {
+test("an app that exits at once is reported the same way by every up, though later ups find its start refused", async () => {
 	const dir = await box.project("sudden", {
 		"basepad.config.ts": configFile(`{
 			name: "sudden",
@@ -248,13 +250,17 @@ test("down stops the project's apps and deletes nothing", async () => {
 	expect(status.stdout).toContain(`cms  ${url("cms")}  stopped`);
 });
 
-test("up says so before a settings change restarts the supervisor, and only then", async () => {
-	expect(firstUp.stdout).not.toContain(RESTART_WARNING);
-	const other = String(await freePort());
-	const out = await box.basepadWith({ env: { BASEPAD_PROXY_PORT: other } }, shop, "up");
-	expect(out.stderr).toBe("");
-	expect(out.code).toBe(0);
-	expect(out.stdout.indexOf(RESTART_WARNING)).toBe(0);
-	expect(out.stdout).toContain(`web  https://web.shop.localhost:${other}  running`);
-	expect((await box.basepad(shop, "down")).code).toBe(0);
-}, 240_000);
+test(
+	"up says so before a settings change restarts the supervisor, and only then",
+	async () => {
+		expect(firstUp.stdout).not.toContain(RESTART_WARNING);
+		const other = String(await freePort());
+		const out = await box.basepadWith({ env: { BASEPAD_PROXY_PORT: other } }, shop, "up");
+		expect(out.stderr).toBe("");
+		expect(out.code).toBe(0);
+		expect(out.stdout.indexOf(RESTART_WARNING)).toBe(0);
+		expect(out.stdout).toContain(`web  https://web.shop.localhost:${other}  running`);
+		expect((await box.basepad(shop, "down")).code).toBe(0);
+	},
+	TWO_SUPERVISOR_RESTARTS_MS,
+);

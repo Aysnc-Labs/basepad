@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { configFile, type Result, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
+import { configFile, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
 
 let box: Sandbox;
 let main: string;
@@ -64,29 +64,6 @@ async function ok(dir: string, ...args: string[]): Promise<string> {
 	expect(result.stderr).toBe("");
 	expect(result.code).toBe(0);
 	return result.stdout;
-}
-
-function onTerminal(cwd: string, input: string, ...args: string[]): Promise<Result> {
-	const command = [process.execPath, cli, ...args].map((arg) => `'${arg}'`).join(" ");
-	const shell = `cd '${cwd}' && ${command}`;
-	const [file, argv] =
-		process.platform === "darwin"
-			? [
-					"python3",
-					["-c", "import pty, sys; sys.exit(pty.spawn(sys.argv[1:]) >> 8)", "sh", "-c", shell],
-				]
-			: ["script", ["-qec", shell, "/dev/null"]];
-	return new Promise((resolve) => {
-		const child = execFile(file, argv, { env: box.env }, (error, stdout, stderr) =>
-			resolve({ code: error ? Number(error.code ?? 1) : 0, stdout, stderr }),
-		);
-		let typed = false;
-		child.stdout?.on("data", (chunk: Buffer) => {
-			if (typed || !chunk.toString().includes("[y/N]")) return;
-			typed = true;
-			child.stdin?.write(input);
-		});
-	});
 }
 
 async function sqlFile(name: string, ...names: string[]): Promise<string> {
@@ -152,7 +129,7 @@ test("with no file, export writes a custom-format dump to standard output, and a
 	await ok(main, "db", "import", file, "--yes");
 	expect(await rows(main)).toBe("p1,p2");
 
-	const onScreen = await onTerminal(main, "", "db", "export");
+	const onScreen = await box.onTerminal(main, "", "db", "export");
 	expect(onScreen.code).toBe(1);
 	expect(onScreen.stdout).toContain("which is a terminal here. Name a file, or redirect it");
 }, 120_000);
@@ -168,12 +145,12 @@ test("import asks first, naming the database, and changes nothing unless told ye
 	);
 	expect(await rows(main)).toBe(before);
 
-	const no = await onTerminal(main, "n\n", "db", "import", file);
+	const no = await box.onTerminal(main, "n\n", "db", "import", file);
 	expect(no.stdout).toContain("Replace `db`'s database t27io_db? Its data is lost. [y/N]");
 	expect(no.code).toBe(1);
 	expect(await rows(main)).toBe(before);
 
-	const yes = await onTerminal(main, "y\n", "db", "import", file);
+	const yes = await box.onTerminal(main, "y\n", "db", "import", file);
 	expect(yes.code).toBe(0);
 	expect(await rows(main)).toBe("asked");
 }, 120_000);
@@ -199,7 +176,7 @@ test("an import that fails leaves the database as it was, and nothing beside it"
 test("inside a worktree, import and export act on its database and leave main's unchanged", async () => {
 	const mainRows = await rows(main);
 	const file = await sqlFile("tree.sql", "tree-only");
-	const no = await onTerminal(tree, "n\n", "db", "import", file);
+	const no = await box.onTerminal(tree, "n\n", "db", "import", file);
 	expect(no.stdout).toContain("Replace `db`'s database t27io_db_worktree_1?");
 	await ok(tree, "db", "import", file, "--yes");
 	expect(await rows(tree)).toBe("tree-only");

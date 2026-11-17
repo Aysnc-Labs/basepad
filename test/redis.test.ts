@@ -100,14 +100,7 @@ test("a worktree's Redis is its own and empty, started with the worktree; a shar
 	expect(idle.stdout).toMatch(new RegExp(`^cache +${own.REDIS_URL} +stopped$`, "m"));
 	expect(idle.stdout).toMatch(new RegExp(`^ref +${mains.REF_URL} +running$`, "m"));
 
-	for (const until = Date.now() + 15_000; ; ) {
-		try {
-			await box.get(url("web.worktree-1.t24cache.localhost"));
-			break;
-		} catch (error) {
-			if (Date.now() > until) throw error;
-		}
-	}
+	await box.getOnceRouted(url("web.worktree-1.t24cache.localhost"), 15_000);
 	expect(await redisCli(own.REDIS_URL as string, "EXISTS", "who")).toBe("0");
 	expect(await redisCli(own.REF_URL as string, "GET", "who")).toBe("main");
 });

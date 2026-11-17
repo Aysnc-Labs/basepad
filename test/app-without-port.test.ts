@@ -62,14 +62,7 @@ test("in a worktree, it starts with the first request to one of the worktree's d
 	const tree = join(box.root, "jobs.worktrees/worktree-1");
 	expect(existsSync(join(tree, "worker.json"))).toBe(false);
 	const web = `https://web.worktree-1.jobs.localhost:${box.proxyPort}`;
-	for (const until = Date.now() + 10_000; ; ) {
-		try {
-			await box.get(web);
-			break;
-		} catch (error) {
-			if (Date.now() > until) throw error;
-		}
-	}
+	await box.getOnceRouted(web);
 	expect((await box.basepad(tree, "status")).stdout).toMatch(/^queue +running$/m);
 	expect(existsSync(join(tree, "worker.json"))).toBe(true);
 });

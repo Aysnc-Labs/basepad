@@ -30,6 +30,8 @@ export interface Sandbox {
 	redis(url: string, ...args: string[]): Promise<Result>;
 	sql(project: string, sql: string): Promise<Result>;
 	get<T = unknown>(url: string): Promise<T>;
+	getOnceRouted<T = unknown>(url: string, withinMs?: number): Promise<T>;
+	onTerminal(cwd: string, input: string, ...args: string[]): Promise<Result>;
 	basepadWith(
 		options: { env?: NodeJS.ProcessEnv; via?: string[]; input?: string },
 		cwd: string,
@@ -80,8 +82,7 @@ export async function sandbox(): Promise<Sandbox> {
 			const stdout = e.stdout ?? "";
 			const stderr = e.stderr ?? "";
 			if (e.signal) {
-				const code = 128 + (constants.signals[e.signal] ?? 0);
-				return { code, stdout, stderr: `${stderr}[killed by ${e.signal}]` };
+				return { code: shellStatus(e.signal), stdout, stderr: `${stderr}[killed by ${e.signal}]` };
 			}
 			return { code: e.code ?? 1, stdout, stderr };
 		}
@@ -93,7 +94,7 @@ export async function sandbox(): Promise<Sandbox> {
 			PGCONNECT_TIMEOUT: "5",
 		});
 
-	return {
+	const box: Sandbox = {
 		root,
 		env,
 		proxyPort,
@@ -154,6 +155,37 @@ export async function sandbox(): Promise<Sandbox> {
 				req.end();
 			});
 		},
+		async getOnceRouted<T>(url: string, withinMs = 10_000): Promise<T> {
+			for (const until = Date.now() + withinMs; ; ) {
+				try {
+					return await box.get<T>(url);
+				} catch (error) {
+					if (Date.now() > until) throw error;
+				}
+			}
+		},
+		onTerminal(cwd, input, ...args) {
+			const command = [process.execPath, cli, ...args].map((arg) => `'${arg}'`).join(" ");
+			const shell = `cd '${cwd}' && ${command}`;
+			const [file, argv] =
+				process.platform === "darwin"
+					? [
+							"python3",
+							["-c", "import pty, sys; sys.exit(pty.spawn(sys.argv[1:]) >> 8)", "sh", "-c", shell],
+						]
+					: ["script", ["-qec", shell, "/dev/null"]];
+			return new Promise((resolve) => {
+				const child = execFile(file, argv, { env }, (error, stdout, stderr) =>
+					resolve({ code: error ? Number(error.code ?? 1) : 0, stdout, stderr }),
+				);
+				let typed = false;
+				child.stdout?.on("data", (chunk: Buffer) => {
+					if (typed || !chunk.toString().includes("[y/N]")) return;
+					typed = true;
+					child.stdin?.write(input);
+				});
+			});
+		},
 		basepadWith: (options, cwd, ...args) => {
 			const [file, ...via] = options.via ?? [process.execPath];
 			return exec(file as string, [...via, cli, ...args], cwd, options.env, options.input);
@@ -177,6 +209,7 @@ export async function sandbox(): Promise<Sandbox> {
 			await rm(root, { recursive: true, force: true });
 		},
 	};
+	return box;
 }
 
 export function freePort(): Promise<number> {
@@ -262,4 +295,8 @@ export async function sendMail(
 	} finally {
 		socket.destroy();
 	}
+}
+
+function shellStatus(signal: NodeJS.Signals): number {
+	return 128 + (constants.signals[signal] ?? 0);
 }

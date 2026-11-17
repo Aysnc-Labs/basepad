@@ -4,7 +4,7 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { configFile, type Result, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
+import { configFile, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
 
 const echo = join(import.meta.dirname, "apps/echo.mjs");
 const node = (script: string) => `exec '${process.execPath}' '${script}'`;
@@ -58,31 +58,6 @@ async function mainIntact(): Promise<void> {
 	for (const key of ["db", "ref"]) {
 		expect(await sql(urls[key] as string, "select name from items")).toBe("from main");
 	}
-}
-
-function onTerminal(cwd: string, input: string, ...args: string[]): Promise<Result> {
-	const command = [process.execPath, join(import.meta.dirname, "../dist/launcher.js"), ...args]
-		.map((arg) => `'${arg}'`)
-		.join(" ");
-	const shell = `cd '${cwd}' && ${command}`;
-	const [file, argv] =
-		process.platform === "darwin"
-			? [
-					"python3",
-					["-c", "import pty, sys; sys.exit(pty.spawn(sys.argv[1:]) >> 8)", "sh", "-c", shell],
-				]
-			: ["script", ["-qec", shell, "/dev/null"]];
-	return new Promise((resolve) => {
-		const child = execFile(file, argv, { env: box.env }, (error, stdout, stderr) =>
-			resolve({ code: error ? Number(error.code ?? 1) : 0, stdout, stderr }),
-		);
-		let typed = false;
-		child.stdout?.on("data", (chunk: Buffer) => {
-			if (typed || !chunk.toString().includes("[y/N]")) return;
-			typed = true;
-			child.stdin?.write(input);
-		});
-	});
 }
 
 beforeAll(async () => {
@@ -299,10 +274,10 @@ test("prune --yes removes the leftovers of gone worktrees, and keeps a removed s
 });
 
 test("prune deletes a removed service's data only when asked on a terminal", async () => {
-	const no = await onTerminal(main, "n\n", "prune");
+	const no = await box.onTerminal(main, "n\n", "prune");
 	expect(no).toMatchObject({ code: 0, stderr: "" });
 	expect(existsSync(join(box.root, "home/services/t18shop/old"))).toBe(true);
-	const yes = await onTerminal(main, "y\n", "prune");
+	const yes = await box.onTerminal(main, "y\n", "prune");
 	expect(yes).toMatchObject({ code: 0, stdout: expect.stringContaining("Deleted") });
 	expect(existsSync(join(box.root, "home/services/t18shop/old"))).toBe(false);
 	const ps = await box.run("ps", ["-eo", "args"]);
