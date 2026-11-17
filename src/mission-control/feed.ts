@@ -2,15 +2,7 @@ import { homedir } from "node:os";
 import { kindOf, type Service } from "../catalogue.ts";
 import { loadProject, type Project } from "../config.ts";
 import { BasepadError } from "../internal/exec.ts";
-import {
-	daemonId,
-	layout,
-	type Machine,
-	namespaceOf,
-	ofDaemon,
-	placeOf,
-	type ServicePlace,
-} from "../layout.ts";
+import { daemonId, layout, type Machine, namespaceOf, ofDaemon, placeOf } from "../layout.ts";
 import type { DaemonInfo, Supervisor } from "../supervisor.ts";
 import { hasChanges, listWorktrees, mainBranch } from "../worktrees.ts";
 import type { EnvironmentView, LogLine, Part, Snapshot } from "./model.ts";
@@ -193,7 +185,7 @@ export function logBook(
 	};
 }
 
-async function environmentOf(
+export async function environmentOf(
 	project: Project,
 	suffix: string | undefined,
 	branch: string | undefined,
@@ -229,17 +221,37 @@ async function environmentOf(
 		};
 	});
 	const services: Part[] = [];
+	const stateOf = (daemon: DaemonInfo | undefined) =>
+		daemon === undefined || daemon.state === "idle" ? "stopped" : daemon.state;
+	const errorOf = (daemon: DaemonInfo | undefined) =>
+		daemon?.error === undefined ? {} : { error: daemon.error };
 	for (const [key, service] of Object.entries(project.services) as [string, Service][]) {
-		const id = (lay.services[key] as ServicePlace).daemon;
-		const daemon = daemons.get(id);
+		const place = placeOf(project, lay, machine, key);
+		const kind = kindOf(service);
+		const daemon = daemons.get(place.daemon);
+		const extras = Object.entries(place.extraDaemons);
 		services.push({
-			id,
+			id: place.daemon,
 			name: key,
-			state: daemon === undefined || daemon.state === "idle" ? "stopped" : daemon.state,
-			address: await kindOf(service).address(service, placeOf(project, lay, machine, key)),
+			state: stateOf(daemon),
+			address: await kind.address(service, place),
 			note: service.kind,
-			...(daemon?.error === undefined ? {} : { error: daemon.error }),
+			...(extras.length === 0
+				? {}
+				: { extraDaemons: extras.map(([, extra]) => ofDaemon(extra.daemon).name) }),
+			...errorOf(daemon),
 		});
+		for (const [extra, { daemon: id }] of extras) {
+			const address = await kind.extraAddress?.(service, place, extra);
+			services.push({
+				id,
+				name: ofDaemon(id).name,
+				state: stateOf(daemons.get(id)),
+				...(address === undefined ? {} : { address }),
+				note: `with ${key}`,
+				...errorOf(daemons.get(id)),
+			});
+		}
 	}
 	return { namespace: lay.namespace, ...base, apps, services };
 }
