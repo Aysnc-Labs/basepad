@@ -311,6 +311,7 @@ async function ready(
 		definitions: ports.definitions,
 		daemons,
 	});
+	await stopOrphans(supervisor, project, here, ports.namespace, Object.keys(daemons));
 	if (suffix === undefined && isRootOnLinux()) {
 		for (const line of await trustAsRoot(supervisor)) print(line);
 	}
@@ -370,6 +371,23 @@ async function ready(
 	if (main !== undefined) await copyEnvFiles(main.root, project.root, Object.keys(files));
 	await writeEnvFiles(project.root, files);
 	return lay;
+}
+
+async function stopOrphans(
+	supervisor: Supervisor,
+	project: Project,
+	here: Machine,
+	namespace: string,
+	defined: string[],
+): Promise<void> {
+	const keys = [
+		...Object.keys(project.services),
+		...(await removedServices(project, here)).map(([key]) => key),
+	];
+	const orphans = Object.keys(await supervisor.status(namespace)).filter(
+		(name) => !defined.includes(name) && keys.some((key) => name.startsWith(`${key}-`)),
+	);
+	if (orphans.length > 0) await supervisor.stop(namespace, orphans);
 }
 
 async function open(
