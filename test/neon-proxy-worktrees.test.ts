@@ -238,18 +238,21 @@ test("when Postgres comes back on another port, up restarts the proxy against it
 
 test("a worktree's up follows main's proxy to its new port", async () => {
 	const before = (await env(main)).DB_WS as string;
+	const stale = (await env(tree)).DB_WS as string;
+	const ports = new Set([before, stale].map((ws) => Number(new URL(`ws://${ws}`).port)));
 	await ok(main, "down");
-	const squatter = await squat(Number(new URL(`ws://${before}`).port));
+	const squatters = await Promise.all([...ports].map(squat));
 	try {
 		await ok(main, "up");
 		const moved = (await env(main)).DB_WS as string;
 		expect(moved).not.toBe(before);
+		expect((await env(tree)).DB_WS).not.toBe(moved);
 		await ok(tree, "up");
 		expect((await env(tree)).DB_WS).toBe(moved);
 		expect(await rowsThroughProxy(tree, "db", "select body from notes")).toEqual([
 			{ body: "from the worktree" },
 		]);
 	} finally {
-		await new Promise((resolve) => squatter.close(resolve));
+		for (const squatter of squatters) await new Promise((resolve) => squatter.close(resolve));
 	}
 }, 120_000);
