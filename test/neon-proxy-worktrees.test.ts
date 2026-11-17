@@ -189,3 +189,18 @@ test("db save, db load and a worktree copy succeed while a Pool holds connection
 	await ok(main, "worktree", "add");
 	expect(await pool.ask(notes)).toEqual({ rows: [{ body: "from main" }] });
 }, 120_000);
+
+test("switching a service from postgres() to postgresWithNeonProxy() keeps its data and its worktree's", async () => {
+	await direct(
+		(await env(tree)).PLAIN_URL as string,
+		"update notes set body = 'from the worktree'",
+	);
+	const switched = config("postgresWithNeonProxy()");
+	await writeFile(join(main, "basepad.config.ts"), switched);
+	await writeFile(join(tree, "basepad.config.ts"), switched);
+	await ok(main, "up");
+	await ok(tree, "up");
+	const note = "select body from notes";
+	expect(await rowsThroughProxy(main, "plain", note)).toEqual([{ body: "from main" }]);
+	expect(await rowsThroughProxy(tree, "plain", note)).toEqual([{ body: "from the worktree" }]);
+}, 120_000);
