@@ -34,7 +34,6 @@ const snapshot: Snapshot = {
 	rate: 0,
 };
 
-/** The keys pressed in turn: the last view, and the intent of the last key. */
 function press(keys: string[], from: View = initialView("shop")) {
 	let step = { view: from } as ReturnType<typeof reduce>;
 	for (const key of keys) step = reduce(step.view, key, snapshot);
@@ -146,7 +145,6 @@ test("? shows every key and hides them again; escape hides them too", () => {
 	expect(press(["?", "escape"]).view.help).toBeUndefined();
 });
 
-/** A main whose web printed `line 0` to `line 99`, and api `api 0` to `api 9` among them. */
 function chatty(): Snapshot {
 	const web = Array.from({ length: 100 }, (_, i) => ({
 		seq: i * 2,
@@ -173,9 +171,8 @@ const scroll = (keys: Press[], from: View = initialView("shop"), logs = chatty()
 	keys.reduce((view, key) => reduce(view, key, logs, 10).view, from);
 
 test("page up pauses the stream a page back from the newest line; page down and end go back to live", () => {
-	// 110 lines, the newest web's line 99 (seq 198); ten lines older is web's line 90 (seq 180).
 	expect(scroll(["pageup"]).until).toBe(180);
-	expect(scroll(["pageup", "pageup"]).until).toBe(161); // api 8
+	expect(scroll(["pageup", "pageup"]).until).toBe(161);
 	expect(scroll(["pageup", "pageup", "pagedown"]).until).toBe(180);
 	expect(scroll(["pageup", "pagedown"]).until).toBeUndefined();
 	expect(scroll(["pageup", "pageup", "end"]).until).toBeUndefined();
@@ -185,13 +182,11 @@ test("page up pauses the stream a page back from the newest line; page down and 
 test("scrolling stops at the oldest page, and home goes there", () => {
 	const top = scroll(Array(30).fill("pageup"));
 	expect(top.until).toBe(scroll(["home"]).until);
-	// The oldest page ends at the tenth line: line 0, api 0, then lines 1 to 8 (seq 16).
 	expect(top.until).toBe(16);
 });
 
 test("narrowed to one part, scrolling moves through its lines alone", () => {
-	expect(scroll(["down", "pageup"]).until).toBe(178); // web's line 89
-	// api has fewer lines than a page: they all show already, so it stays live.
+	expect(scroll(["down", "pageup"]).until).toBe(178);
 	expect(scroll(["down", "down", "pageup"]).until).toBeUndefined();
 });
 
@@ -200,8 +195,8 @@ const type = (text: string) => ["/", ...text];
 test("/ starts a search; enter jumps to the newest matching line, n to older ones and N back", () => {
 	const found = scroll([...type("Line 4"), "return"]);
 	expect(found.search).toEqual({ query: "Line 4", typing: false });
-	expect(found.until).toBe(98); // line 49: matching ignores case
-	expect(scroll([...type("line 4"), "return", "n"]).until).toBe(96); // line 48
+	expect(found.until).toBe(98);
+	expect(scroll([...type("line 4"), "return", "n"]).until).toBe(96);
 	expect(scroll([...type("line 4"), "return", "n", "n", "N"]).until).toBe(96);
 });
 
@@ -215,7 +210,6 @@ test("while typing, keys are text: q does not close, backspace deletes, escape c
 
 test("text pasted into a search is its query; elsewhere a paste presses no key", () => {
 	expect(scroll(["/", { paste: "line 4" }]).search).toEqual({ query: "line 4", typing: true });
-	// Control characters (a newline, a tab, an escape, delete) are left out: a query is one line.
 	expect(scroll(["/", { paste: "line\n4\r\t\u001b\u007f" }]).search).toEqual({
 		query: "line4",
 		typing: true,

@@ -1,6 +1,3 @@
-// A dev server for the up tests. Over HTTP it answers with its folder, PORT, pid and how many
-// connections it has had; a WebSocket
-// upgrade (as a hot-reload client makes) is accepted and sent one text frame with its folder.
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 

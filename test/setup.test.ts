@@ -1,12 +1,10 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { nssStores } from "../src/setup.ts";
 import { configFile, type Sandbox, sandbox } from "./sandbox.ts";
 
-// The privileged steps never run on a desktop: only `--dry-run` and the refusal without consent
-// are exercised there. As root on Linux (the CI container) basepad needs no consent: the proxy
-// takes port 443 itself (BASEPAD_PROXY_PORT unset), so only this file may run it there.
 const rootOnLinux = process.platform === "linux" && process.getuid?.() === 0;
 const env = rootOnLinux ? { BASEPAD_PROXY_PORT: "" } : {};
 const suffix = () => (rootOnLinux ? "" : `:${box.proxyPort}`);
@@ -27,7 +25,6 @@ test.skipIf(rootOnLinux)(
 		expect(out.code).toBe(0);
 		expect(out.stdout).toContain("basepad setup will:");
 		if (process.platform === "darwin") {
-			// pf, which would redirect port 443, turns off iCloud Private Relay: basepad never uses it.
 			expect(out.stdout).toMatch(/trust basepad's CA at .*ca\.pem in your login keychain/);
 			expect(out.stdout).not.toMatch(/\bpf\b|sudo/);
 		} else {
@@ -92,4 +89,18 @@ test("one app fetches another by its HTTPS domain from server-side code", async 
 
 	const status = await basepad(dir, "status");
 	expect(status.stdout).toContain(`web  https://web.pair.localhost${suffix()}  running`);
+});
+
+test("Chrome's NSS store is ~/.pki/nssdb when it exists, else ~/.local/share/pki/nssdb", async () => {
+	const home = await mkdtemp(join(box.root, "nss-"));
+	const store = async (dir: string) => {
+		await mkdir(join(home, dir), { recursive: true });
+		await writeFile(join(home, dir, "cert9.db"), "");
+		return join(home, dir);
+	};
+	expect(await nssStores(home)).toEqual([]);
+	const shared = await store(".local/share/pki/nssdb");
+	expect(await nssStores(home)).toEqual([shared]);
+	const legacy = await store(".pki/nssdb");
+	expect(await nssStores(home)).toEqual([legacy]);
 });

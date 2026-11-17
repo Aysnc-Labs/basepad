@@ -1,5 +1,3 @@
-// An app that calls another from server-side code: on each request it reads API_URL from the .env
-// file in its folder, fetches it, and answers with the URL and what came back (or the error).
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 

@@ -4,8 +4,6 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
 
-/** Copying main's database while main's app holds it open, by the fastest route the server has. */
-
 let box: Sandbox;
 
 const git = async (cwd: string, ...args: string[]) => {
@@ -21,7 +19,6 @@ const git = async (cwd: string, ...args: string[]) => {
 	});
 };
 
-/** A main checkout under git with one Postgres service of `version`, up. */
 async function project(name: string, version: 17 | 18): Promise<string> {
 	const dir = await box.project(name, {
 		"basepad.config.ts": configFile(`{
@@ -47,7 +44,6 @@ async function sql(dir: string, query: string): Promise<string> {
 	return out.stdout.trim();
 }
 
-/** A client that connects to `dir`'s database and stays connected, as an app's pool does. */
 async function holdOpen(dir: string): Promise<ChildProcess> {
 	const db = await url(dir);
 	const client = spawn("mise", ["exec", "postgres@18", "--", "psql", db, "-tAX"], {
@@ -90,7 +86,6 @@ test("worktree add copies main's database while a client holds it open, and main
 	expect(await sql(tree, "select string_agg(name, ',' order by name) from items")).toBe(
 		"first,just now",
 	);
-	// A pool's next connection is a new one; it must be let in.
 	expect(await sql(main, "select count(*) from items")).toBe("2");
 }, 120_000);
 
@@ -132,7 +127,6 @@ test("a database left closed by an interrupted copy is opened again by the next 
 	expect(await sql(main, "select count(*) from items")).toBe("2");
 }, 120_000);
 
-// The budget is provisional: a human sets it from the times measured on a Mac.
 const MACOS_BUDGET_S = 1.5;
 
 test.runIf(process.platform === "darwin")(
@@ -154,7 +148,6 @@ test.runIf(process.platform === "darwin")(
 		clients.push(await holdOpen(big));
 		const added = await box.basepad(big, "worktree", "add");
 		expect(added.code).toBe(0);
-		// The copy's own time, from its route line: not the checkout, clone paths or setup.
 		const took = added.stdout.match(/Copied main's `db` by file clone in ([\d.]+) s\./)?.[1];
 		expect(took).toBeDefined();
 		expect(Number(took)).toBeLessThan(MACOS_BUDGET_S);

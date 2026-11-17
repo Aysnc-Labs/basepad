@@ -1,13 +1,7 @@
-/**
- * What a project's `basepad.config.ts` imports: `defineConfig` and the service kinds. ADR 0001: the
- * config is the only way a project talks to basepad.
- */
-
 import type { OutputsOf, Service } from "./catalogue.ts";
 
 export type { MailpitOutputs, MailpitService } from "./catalogue/mailpit.ts";
 export { mailpit } from "./catalogue/mailpit.ts";
-// Each service kind's factory and types, from its module in the catalogue.
 export type {
 	PostgresOutputs,
 	PostgresService,

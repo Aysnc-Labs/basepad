@@ -11,9 +11,6 @@ import {
 	type Snapshot,
 } from "../src/mission-control/model.ts";
 
-// Motion says something is happening, and only then: a part starting turns, one that just changed
-// lights up and fades, a new log line settles in, a notice fades away.
-
 const level = chalk.level;
 beforeEach(() => {
 	chalk.level = 3;
@@ -52,8 +49,7 @@ function draw(input: Partial<FrameInput> & { snapshot: Snapshot }, color: Colors
 }
 
 const plain = stripVTControlCharacters;
-/** The truecolour foreground code for a hex colour, as chalk writes it. */
-const fg = (hex: string) =>
+const truecolorFg = (hex: string) =>
 	`38;2;${[1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16)).join(";")}m`;
 const rowOf = (out: string, text: string) =>
 	out.split("\n").find((row) => plain(row).includes(text)) ?? "";
@@ -62,10 +58,9 @@ test("a part starting breathes: its dot fades from amber to dim and back, and ho
 	const starting = snap([part("web", { state: "starting" })]);
 	const at = (clock: number, color: Colors = "rgb") =>
 		rowOf(draw({ snapshot: starting, clock }, color), "https://web");
-	expect(at(0)).toContain(fg("#e0af68"));
-	expect(at(700)).not.toContain(fg("#e0af68"));
-	expect(at(1400)).toContain(fg("#e0af68"));
-	// One glyph, in a range every font has, whatever the colours: never a different shape.
+	expect(at(0)).toContain(truecolorFg("#e0af68"));
+	expect(at(700)).not.toContain(truecolorFg("#e0af68"));
+	expect(at(1400)).toContain(truecolorFg("#e0af68"));
 	for (const clock of [0, 350, 700]) expect(plain(at(clock, "none"))).toMatch(/◉ web/);
 });
 
@@ -76,7 +71,6 @@ test("a part that just changed state is lit for a moment, then plain again", () 
 	expect(lit).toMatch(/48;2;/);
 	const after = rowOf(draw({ snapshot: s, clock: 3000, changed }), "https://web");
 	expect(after).not.toMatch(/48;2;/);
-	// Without full colour nothing is lit, and the row reads the same.
 	expect(rowOf(draw({ snapshot: s, clock: 1100, changed }, "16"), "https://web")).not.toMatch(
 		/48;/,
 	);
@@ -85,16 +79,20 @@ test("a part that just changed state is lit for a moment, then plain again", () 
 test("a new log line comes in dim and settles to its colour", () => {
 	const fresh: LogLine = { seq: 1, id: "shop/web", time: "10:00:04", text: "GET / 200", at: 1000 };
 	const s = snap([part("web")], [fresh]);
-	expect(rowOf(draw({ snapshot: s, clock: 1000 }), "GET / 200")).not.toContain(fg("#c0caf5"));
-	expect(rowOf(draw({ snapshot: s, clock: 2000 }), "GET / 200")).toContain(fg("#c0caf5"));
+	expect(rowOf(draw({ snapshot: s, clock: 1000 }), "GET / 200")).not.toContain(
+		truecolorFg("#c0caf5"),
+	);
+	expect(rowOf(draw({ snapshot: s, clock: 2000 }), "GET / 200")).toContain(truecolorFg("#c0caf5"));
 });
 
 test("a notice fades out after a few seconds", () => {
 	const s = snap([part("web")]);
 	const view = { ...initialView("shop"), notice: "Restarting web…" };
-	expect(rowOf(draw({ snapshot: s, view, noticeAge: 0 }), "Restarting")).toContain(fg("#7aa2f7"));
+	expect(rowOf(draw({ snapshot: s, view, noticeAge: 0 }), "Restarting")).toContain(
+		truecolorFg("#7aa2f7"),
+	);
 	const fading = rowOf(draw({ snapshot: s, view, noticeAge: 4600 }), "Restarting");
-	expect(fading).not.toContain(fg("#7aa2f7"));
+	expect(fading).not.toContain(truecolorFg("#7aa2f7"));
 	expect(plain(fading)).toContain("Restarting web…");
 });
 

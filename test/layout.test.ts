@@ -12,7 +12,8 @@ import {
 	worktreeFolder,
 } from "../src/layout.ts";
 
-/** Layout, its services read as Postgres's, which every service here is unless a test says. */
+const LINUX_EPHEMERAL_START = 32768;
+
 const layout = (...args: Parameters<typeof layoutOf>) =>
 	layoutOf(...args) as Layout & { services: Record<string, PostgresNames> };
 
@@ -70,7 +71,6 @@ test("a service's data lives in the home, under the name and the key", () => {
 });
 
 test("a database name of exactly 63 bytes is kept whole", () => {
-	// Shared, so no worktree database needs room beside it.
 	const name = "a".repeat(60);
 	const shared = { ...project(name), services: { db: postgres({ worktree: "shared" }) } };
 	expect(layout(shared, here).services.db?.database).toBe(`${name}_db`);
@@ -115,7 +115,7 @@ test("each app starts from its own port, the same every time, below the ephemera
 	expect(ports("blog")).not.toEqual(shop);
 	for (const port of [...shop, ...ports("blog")]) {
 		expect(port).toBeGreaterThanOrEqual(20000);
-		expect(port).toBeLessThan(32768);
+		expect(port).toBeLessThan(LINUX_EPHEMERAL_START);
 	}
 });
 
@@ -244,10 +244,12 @@ test("a worktree's folder is <suffix> in <name>.worktrees beside the repository,
 });
 
 test("a name that leaves no room for a worktree's database is rejected at load, in main", () => {
-	// 50 + "_db_worktree_999" is 66 bytes, though main's own 53 fit.
 	const name = "a".repeat(50);
+	const worktreeDatabase = `${name}_db_worktree_999`;
+	expect(Buffer.byteLength(`${name}_db`)).toBeLessThanOrEqual(63);
+	expect(Buffer.byteLength(worktreeDatabase)).toBe(66);
 	expect(() => layout(project(name, [], ["db"]), here)).toThrow(
-		`/p/basepad.config.ts: worktree suffixes like "worktree-999" leave too little room: service \`db\` makes a worktree's database name "${name}_db_worktree_999", which is 66 bytes; Postgres allows 63. Shorten \`name\`, the service key or \`worktrees.prefix\`.`,
+		`/p/basepad.config.ts: worktree suffixes like "worktree-999" leave too little room: service \`db\` makes a worktree's database name "${worktreeDatabase}", which is 66 bytes; Postgres allows 63. Shorten \`name\`, the service key or \`worktrees.prefix\`.`,
 	);
 });
 

@@ -1,15 +1,8 @@
 import { lookup } from "node:dns/promises";
 import { access, constants, readFile, writeFile } from "node:fs/promises";
 
-/**
- * Name resolution for server-side code. Browsers and curl resolve `*.localhost` themselves, and so
- * do macOS and Linux with systemd's resolver; glibc without it (a container) and musl do not. There
- * basepad adds the project's domains to the hosts file, or says which lines to add.
- */
-
 const HOSTS_FILE = "/etc/hosts";
 
-/** `text` with the project's block of domains set: replaced where it is, else appended. Pure. */
 export function withHosts(text: string, name: string, hosts: string[]): string {
 	const start = `# >>> basepad ${name}\n`;
 	const end = `# <<< basepad ${name}\n`;
@@ -23,7 +16,6 @@ export function withHosts(text: string, name: string, hosts: string[]): string {
 	return `${text}${gap}${block}`;
 }
 
-/** `text` without the project's block of domains. Pure. */
 export function withoutHosts(text: string, name: string): string {
 	const start = `# >>> basepad ${name}\n`;
 	const end = `# <<< basepad ${name}\n`;
@@ -33,19 +25,13 @@ export function withoutHosts(text: string, name: string): string {
 	return text.slice(0, at) + text.slice(until + end.length);
 }
 
-/** Takes the project's block out of the hosts file, when it is there and writable. */
 export async function dropHosts(name: string): Promise<void> {
 	const current = await readFile(HOSTS_FILE, "utf8").catch(() => undefined);
 	if (current === undefined) return;
 	const text = withoutHosts(current, name);
-	if (text !== current && (await writable(HOSTS_FILE))) await writeFile(HOSTS_FILE, text);
+	if (text !== current) await writeHostsInPlace(text);
 }
 
-/**
- * Makes the project's domains resolve: nothing when they already do (and no block of ours is
- * there to keep current), else writes its block when the file is writable, else returns the lines
- * for the developer to add. Returns what to tell them.
- */
 export async function syncHosts(name: string, hosts: string[]): Promise<string[]> {
 	if (hosts.length === 0) return [];
 	const current = await readFile(HOSTS_FILE, "utf8").catch(() => undefined);
@@ -58,15 +44,11 @@ export async function syncHosts(name: string, hosts: string[]): Promise<string[]
 	}
 	const text = withHosts(current, name, hosts);
 	if (text === current) return [];
-	if (!(await writable(HOSTS_FILE))) {
-		return [
-			`This system does not resolve ${name}'s domains for server-side code. Add to ${HOSTS_FILE}:`,
-			...hosts.map((host) => `  127.0.0.1 ${host}`),
-		];
-	}
-	// In place, not by rename: in a container the hosts file is a bind mount.
-	await writeFile(HOSTS_FILE, text);
-	return [`Added ${name}'s domains to ${HOSTS_FILE}.`];
+	if (await writeHostsInPlace(text)) return [`Added ${name}'s domains to ${HOSTS_FILE}.`];
+	return [
+		`This system does not resolve ${name}'s domains for server-side code. Add to ${HOSTS_FILE}:`,
+		...hosts.map((host) => `  127.0.0.1 ${host}`),
+	];
 }
 
 async function resolves(host: string): Promise<boolean> {
@@ -76,9 +58,11 @@ async function resolves(host: string): Promise<boolean> {
 	);
 }
 
-async function writable(file: string): Promise<boolean> {
-	return access(file, constants.W_OK).then(
+async function writeHostsInPlace(text: string): Promise<boolean> {
+	const writable = await access(HOSTS_FILE, constants.W_OK).then(
 		() => true,
 		() => false,
 	);
+	if (writable) await writeFile(HOSTS_FILE, text);
+	return writable;
 }

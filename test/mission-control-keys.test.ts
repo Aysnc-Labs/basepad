@@ -68,7 +68,6 @@ test("a selected environment that is gone moves from the first", () => {
 });
 
 test("text that arrives at once is a paste, a newline in it too; a character or a named key is a press", () => {
-	// Ink names a key by its flags; a paste is all its text in one input, with no flag set.
 	const key = (flags: Partial<Key> = {}) => flags as Key;
 	expect(pressOf("worktree-2\r", key())).toEqual({ paste: "worktree-2\r" });
 	expect(pressOf("d", key())).toBe("d");

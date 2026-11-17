@@ -1,8 +1,5 @@
 name: Release
 
-# On every push to main: open or update the "Version Packages" PR while changesets are pending;
-# once it is merged, publish the new version to npm, tag it and make a GitHub release.
-
 on:
   push:
     branches: [main]
@@ -20,10 +17,8 @@ jobs:
       mode: ${{ steps.mode.outputs.mode }}
     steps:
       - uses: actions/checkout@v7
-      # Installs mise and the tools in mise.toml (node, pnpm).
       - uses: jdx/mise-action@v5
         with:
-          # No cache in a release workflow: a restored cache could put someone else's files in the release.
           cache: false
       - run: pnpm install --frozen-lockfile
       - id: mode
@@ -53,16 +48,14 @@ jobs:
     if: needs.mode.outputs.mode == 'publish'
     runs-on: ubuntu-24.04
     permissions:
-      # Tags and GitHub releases.
       contents: write
-      # npm trusted publishing (OIDC); also signs provenance.
+      # npm trusted publishing (OIDC); also signs provenance: https://docs.npmjs.com/trusted-publishers
       id-token: write
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
         with:
           cache: false
-      # `prepare` builds dist.
       - run: pnpm install --frozen-lockfile
       - uses: changesets/action/publish@v2
         with:

@@ -25,22 +25,12 @@ import {
 } from "./model.ts";
 import { startWork } from "./work.ts";
 
-/**
- * Mission control on the developer's terminal: full screen, redrawn as the feed changes, keys
- * through the reducer. The one adapter to terminal input and output. Resolves once the developer
- * closes it, with the terminal restored; it only ever read, so everything keeps running, a
- * worktree being added or removed too.
- */
 export async function missionControl(options: {
 	main: Project;
-	/** The machine as served now: whether URLs are port-free is known once the supervisor runs. */
 	machine(): Machine;
 	supervisor: Supervisor;
-	/** What went wrong readying the environment meanwhile, if anything yet: told once, as a notice. */
 	failure?: () => string | undefined;
-	/** The namespace of the environment to open on: the one `up` ran in. */
 	selected: string;
-	/** The `basepad` command, as argv: what adds and removes a worktree, in a process of its own. */
 	basepad: string[];
 }): Promise<void> {
 	const { main, basepad } = options;
@@ -53,7 +43,6 @@ export async function missionControl(options: {
 			for (const listener of listeners) listener();
 		},
 	});
-	// From main, as `basepad worktree add` and `rm` there.
 	const worktrees: Hands["worktrees"] = (order) =>
 		startWork({
 			dir: work,
@@ -80,7 +69,6 @@ export async function missionControl(options: {
 		}),
 		{
 			alternateScreen: true,
-			// Ctrl-C goes through the reducer, as `q` does.
 			exitOnCtrlC: false,
 			maxFps: 20,
 			incrementalRendering: true,
@@ -93,7 +81,6 @@ export async function missionControl(options: {
 	}
 }
 
-/** The live view's one component: the frame for the feed's latest snapshot and the view. */
 function App(props: {
 	feed: Feed;
 	hands: Hands;
@@ -106,14 +93,12 @@ function App(props: {
 	const { exit } = useApp();
 	const { columns, rows } = useWindowSize();
 	const [view, setView] = useState(() => initialView(props.selected));
-	// The latest view, so keys that arrive before a repaint each build on it.
 	const latest = useRef(view);
 	latest.current = view;
 	const [, setTick] = useState(0);
 	const motion = useRef(motionBook());
 	useEffect(() => {
 		const repaint = () => {
-			// How a worktree's addition or removal ended, even one started before the view opened.
 			const told = feed.notices();
 			const failed = failure?.();
 			if (failed !== undefined) told.push(failed);
@@ -121,7 +106,6 @@ function App(props: {
 			setTick((n) => n + 1);
 		};
 		listeners.add(repaint);
-		// Fast while anything moves; else each second, for the clock. A notice goes once faded.
 		let second = Math.floor(Date.now() / 1000);
 		const timer = setInterval(() => {
 			const now = Date.now();
@@ -151,7 +135,6 @@ function App(props: {
 	const snapshot = feed.snapshot();
 	const now = Date.now();
 	motion.current.see(snapshot, now);
-	/** Does an intent in the background, so the view stays live; its outcome shows when known. */
 	const act = (intent: Intent) => {
 		perform(intent, hands).then((notice) => {
 			feed.refresh();
@@ -183,13 +166,8 @@ function App(props: {
 	});
 }
 
-/** A frame's time while anything moves: about twelve a second. */
 const FRAME_MS = 80;
 
-/**
- * What the view's motion remembers between frames: when each part last changed state (the first
- * read is where they start, not a change), and when the notice now shown first showed.
- */
 function motionBook() {
 	const states = new Map<string, PartState>();
 	const changed = new Map<string, number>();
@@ -212,7 +190,6 @@ function motionBook() {
 	};
 }
 
-/** A key press as the reducer names it; text that arrives at once is a paste. */
 export function pressOf(input: string, key: Key): Press {
 	if (key.ctrl && input === "c") return "ctrl-c";
 	if (key.tab) return key.shift ? "shift-tab" : "tab";
@@ -231,7 +208,6 @@ export function pressOf(input: string, key: Key): Press {
 	return [...input].length > 1 ? { paste: input } : input;
 }
 
-/** The time, `HH:MM:SS`. */
 function clock(): string {
 	return new Date().toTimeString().slice(0, 8);
 }

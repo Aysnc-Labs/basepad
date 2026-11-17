@@ -9,12 +9,6 @@ import { isRootOnLinux, type Machine, machine } from "./layout.ts";
 import type { Check } from "./mission-control/launch.ts";
 import { openSupervisor, type Supervisor } from "./supervisor.ts";
 
-/**
- * Machine setup: trust basepad's certificate authority and make app URLs port-free, once per
- * machine. It wraps pitchfork's own proxy setup, run against basepad's isolated pitchfork, and adds
- * the browsers' own stores on Linux. Nothing privileged happens without consent; as root on Linux
- * nothing needs it, and `up` does the same itself (`trustAsRoot`).
- */
 export async function setup({ flags, print }: Invocation): Promise<void> {
 	const here = machine(process.env);
 	const supervisor = await openSupervisor(here, print);
@@ -38,7 +32,6 @@ export async function setup({ flags, print }: Invocation): Promise<void> {
 		: (macPlan?.steps ?? (await supervisor.proxySetupPlan()));
 	if (stores.length > 0) plan.push(await nssStep(stores));
 	if (plan.length === 0) {
-		// On a terminal, what is already done stands go, and the rocket lifts off when all is.
 		if (process.stdout.isTTY) {
 			const pad = await launchPad(["trust basepad's CA", "port 443 reaches basepad's proxy"], mac);
 			pad.go(0);
@@ -51,7 +44,6 @@ export async function setup({ flags, print }: Invocation): Promise<void> {
 		print("basepad setup: nothing to do; basepad's CA is already trusted.");
 		return;
 	}
-	// On a terminal, the plan stands as a checklist beside the rocket on its pad.
 	const pad = process.stdout.isTTY ? await launchPad(plan, mac) : undefined;
 	pad?.show(print);
 	print("basepad setup will:");
@@ -79,7 +71,6 @@ export async function setup({ flags, print }: Invocation): Promise<void> {
 					throw new BasepadError(`pitchfork's proxy setup --undo failed (exit ${code}).`);
 				pad?.go(0);
 			}
-			// Undo takes the CA's trust away too.
 			if (!macPlan.trusted || macPlan.removeRedirect) await supervisor.trust();
 		} else {
 			const code = await supervisor.proxySetup();
@@ -98,7 +89,6 @@ export async function setup({ flags, print }: Invocation): Promise<void> {
 	} else print(portKept(mac, here));
 }
 
-/** Why URLs keep the proxy's port. */
 function portKept(mac: boolean, here: Machine): string {
 	return mac
 		? here.forwards443
@@ -107,20 +97,14 @@ function portKept(mac: boolean, here: Machine): string {
 		: `Port 443 does not reach basepad's proxy yet, so URLs keep :${here.proxyPort}. Run \`basepad setup\` again.`;
 }
 
-/** Setup's launch on a terminal: the plan's checklist beside the rocket. */
 interface Pad {
-	/** Prints the checklist as it stands. */
 	show(print: (line: string) => void): void;
-	/** Step `i` of the plan is done. */
 	go(i: number): void;
-	/** Applying failed: what was not done is no-go, the rocket stays on its pad. */
 	fail(print: (line: string) => void): void;
-	/** Every step done: the rocket lifts off when URLs are port-free, else stands, all go. */
 	liftOff(portFree: boolean, print: (line: string) => void): Promise<void>;
 }
 
 async function launchPad(plan: string[], mac: boolean): Promise<Pad> {
-	// Loaded only on a terminal, so piped runs never load the terminal UI.
 	const [{ launchFrame, liftOff }, { colorsFor }, { default: chalk }, { renderToString }] =
 		await Promise.all([
 			import("./mission-control/launch.ts"),
@@ -158,7 +142,6 @@ async function launchPad(plan: string[], mac: boolean): Promise<Pad> {
 	};
 }
 
-/** A step of the plan as the checklist names it, by what it does. */
 function checkOf(step: string, i: number): string {
 	if (/pf redirect/.test(step)) return "REMOVE PF REDIRECT";
 	if (/Chrome and Firefox/.test(step)) return "BROWSERS";
@@ -167,7 +150,6 @@ function checkOf(step: string, i: number): string {
 	return `STEP ${i + 1}`;
 }
 
-/** Asks on the terminal; with none to ask, refuses. */
 async function consent(): Promise<boolean> {
 	if (!process.stdin.isTTY) {
 		throw new BasepadError(
@@ -184,10 +166,6 @@ async function consent(): Promise<boolean> {
 	return false;
 }
 
-/**
- * Root on Linux: trusts the CA system-wide and in any browser store, with no prompt. Returns what
- * to tell the developer when it could not; apps still get the CA as `NODE_EXTRA_CA_CERTS`.
- */
 export async function trustAsRoot(supervisor: Supervisor): Promise<string[]> {
 	try {
 		await supervisor.trust();
@@ -202,10 +180,10 @@ export async function trustAsRoot(supervisor: Supervisor): Promise<string[]> {
 
 /**
  * A setup of a developer's own pitchfork that basepad's would overwrite: on Linux pitchfork writes
- * one CA file, whichever pitchfork runs it. Returns why, or nothing.
+ * one CA file, whichever pitchfork runs it:
+ * https://github.com/jdx/pitchfork/blob/v2.34.0/src/proxy/trust.rs#L13. Returns why, or nothing.
  */
 async function ownPitchforkSetup(supervisor: Supervisor): Promise<string | undefined> {
-	// On macOS basepad writes no pf rule, so it replaces nothing of a pitchfork of the developer's.
 	if (process.platform === "darwin") return undefined;
 	const ours = await readFile(supervisor.ca, "utf8").catch(() => "");
 	for (const dir of LINUX_CA_DIRS) {
@@ -219,14 +197,8 @@ async function ownPitchforkSetup(supervisor: Supervisor): Promise<string | undef
 	return undefined;
 }
 
-/** pitchfork's pf rule on macOS, which redirects port 443. */
 const PF_ANCHOR = "/etc/pf.anchors/pitchfork";
 
-/**
- * macOS: trust the CA in the login keychain, nothing else. Port 443 is the forwarder's
- * (src/forward.ts), not pf's: pf turns off iCloud Private Relay. A pf redirect an earlier basepad
- * setup added (to basepad's proxy port) is removed.
- */
 async function planForMac(
 	here: Machine,
 	supervisor: Supervisor,
@@ -251,7 +223,6 @@ async function planForMac(
 	return { steps, trusted, removeRedirect };
 }
 
-/** Where pitchfork puts its CA on each Linux family. */
 const LINUX_CA_DIRS = [
 	"/usr/local/share/ca-certificates",
 	"/etc/pki/ca-trust/source/anchors",
@@ -259,10 +230,16 @@ const LINUX_CA_DIRS = [
 	"/etc/pki/trust/anchors",
 ];
 
-/** The NSS databases Chrome and Firefox read on Linux; pitchfork's trust does not reach them. */
-async function nssStores(): Promise<string[]> {
-	const home = process.env.HOME || homedir();
-	const stores = [join(home, ".pki/nssdb")].filter((dir) => existsSync(join(dir, "cert9.db")));
+/**
+ * The NSS databases Chrome and Firefox read on Linux; pitchfork's trust does not reach them.
+ * Chrome reads ~/.pki/nssdb when it exists, else ~/.local/share/pki/nssdb (since M146):
+ * https://chromium.googlesource.com/chromium/src/+/main/docs/linux/cert_management.md
+ */
+export async function nssStores(home = process.env.HOME || homedir()): Promise<string[]> {
+	const chrome = [".pki/nssdb", ".local/share/pki/nssdb"]
+		.map((dir) => join(home, dir))
+		.find((dir) => existsSync(join(dir, "cert9.db")));
+	const stores = chrome === undefined ? [] : [chrome];
 	for (const firefox of [".mozilla/firefox", "snap/firefox/common/.mozilla/firefox"]) {
 		const dir = join(home, firefox);
 		const profiles = await readdir(dir).catch(() => []);
@@ -286,7 +263,6 @@ async function certutil(): Promise<string | undefined> {
 	return undefined;
 }
 
-/** Adds the CA to each NSS store under basepad's nickname, replacing an older one. */
 async function trustInBrowsers(ca: string, stores: string[]): Promise<string[]> {
 	const program = await certutil();
 	if (!program || stores.length === 0) return [];

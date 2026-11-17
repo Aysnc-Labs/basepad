@@ -49,7 +49,7 @@ Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 Purpose: runs basepad on mise's Node 24 whatever the project's Node, checks the mise floor, and dispatches commands and help from one table.
 Entry: `basepad`, `basepad <command> --help`
-Paths: src/launcher.ts, src/cli.ts, src/versions.ts, src/internal/exec.ts, src/internal/table.ts
+Paths: src/launcher.ts, src/cli.ts, src/versions.ts, src/internal/exec.ts, src/internal/files.ts, src/internal/table.ts
 
 ### `basepad init`
 

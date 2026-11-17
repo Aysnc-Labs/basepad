@@ -2,7 +2,6 @@ import { expect, test } from "vitest";
 import { type Hands, perform } from "../src/mission-control/act.ts";
 import type { DaemonState } from "../src/supervisor.ts";
 
-/** A supervisor that records what it is asked and answers `start` with the given states. */
 function fake(states: Record<string, DaemonState> = {}) {
 	const calls: string[] = [];
 	const hands: Hands = {

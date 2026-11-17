@@ -121,7 +121,6 @@ test("a flag that takes a value says so when it has none", async () => {
 
 test("a command's arguments are in its usage, and a missing one shows it", async () => {
 	const help = await box.basepad(dir, "worktree", "rm", "--help");
-	// Optional, as `--claude` takes the worktree from its input.
 	expect(help.stdout).toContain("Usage: basepad worktree rm [<worktree>] [flags]\n");
 	const missing = await box.basepad(dir, "worktree", "rm", "--force");
 	expect(missing.code).toBe(1);
@@ -144,7 +143,6 @@ test("a mistyped flag names the nearest and exits non-zero", async () => {
 	);
 });
 
-/** A fake `mise` alone on PATH, printing `version`. */
 async function fakeMise(version: string): Promise<string> {
 	const bin = join(box.root, `mise-${version}`);
 	await mkdir(bin, { recursive: true });

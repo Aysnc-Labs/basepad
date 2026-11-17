@@ -10,9 +10,6 @@ import {
 	type View,
 } from "../src/mission-control/model.ts";
 
-// Mission control says each thing once: what repeats, and what only matters on a closer look,
-// stays out of the way.
-
 const app = (ns: string, name: string, over: Partial<Part> = {}): Part => ({
 	id: `${ns}/${name}`,
 	name,
@@ -72,9 +69,7 @@ test("the sidebar numbers each environment and names it once: its branch only wh
 	expect(out).toMatch(/│ ▌1 ● main +│/);
 	expect(out).toMatch(/│ {2}2 ✖ worktree-1 +│/);
 	expect(out).toMatch(/│ {6}feature\/cart +│/);
-	// Once in the sidebar and once as the panel's title: never again as its own branch.
 	expect(out.match(/\bmain\b/g)?.length).toBe(2);
-	// All running says nothing more; a failure says which.
 	expect(out).not.toContain("apps running");
 	expect(out).toMatch(/│ {6}web failed +│/);
 });

@@ -6,7 +6,6 @@ test("postgres() defaults to version 18", () => {
 	expect(postgres({ version: 17 })).toEqual({ kind: "postgres", version: 17, worktree: "copy" });
 });
 
-// `tsc --noEmit` checks the rest: `env` is typed by the config's own services and apps.
 test("defineConfig types env's outputs from the config's services and apps", () => {
 	const config = defineConfig({
 		name: "shop",

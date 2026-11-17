@@ -1,9 +1,4 @@
 #!/usr/bin/env node
-/**
- * The `basepad` bin. It runs on whatever Node the project has, so it is kept to syntax and APIs
- * that Node 18 understands: it checks mise, then runs basepad here when this Node is new enough,
- * or again on a Node that mise provides.
- */
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { MISE_MIN_VERSION, NODE_MAJOR } from "./versions.ts";
@@ -15,7 +10,6 @@ function fail(message: string): never {
 	process.exit(1);
 }
 
-/** `2026.10.24` as comparable numbers. */
 function calver(version: string): number[] {
 	return version.split(".").map((part) => Number.parseInt(part, 10) || 0);
 }
@@ -57,7 +51,6 @@ if (major >= NODE_MAJOR) {
 	const child = spawnSync(
 		"mise",
 		["exec", `node@${NODE_MAJOR}`, "--", "node", cli].concat(process.argv.slice(2)),
-		// The PATH before mise puts its Node first, for the apps basepad's supervisor starts.
 		{ stdio: "inherit", env: Object.assign({}, process.env, { BASEPAD_PATH: process.env.PATH }) },
 	);
 	if (child.error)

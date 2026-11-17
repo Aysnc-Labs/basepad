@@ -4,28 +4,17 @@ import { dirname, join } from "node:path";
 import { must } from "./internal/exec.ts";
 import { waitFor } from "./internal/ports.ts";
 
-/** Days a new certificate lasts: under the 398 browsers accept. */
-const DAYS = 365;
-/** A certificate with less left than this is made again. */
+const CERTIFICATE_DAYS = 365;
 const RENEW_MS = 30 * 24 * 60 * 60 * 1000;
-/** How long a lock another basepad holds is waited on before it is taken as abandoned. */
 const STALE_LOCK_MS = 30_000;
 
 export interface CertificatePaths {
-	/** The CA and its key. */
 	ca: string;
 	caKey: string;
-	/** Where the certificate and its key are written. */
 	cert: string;
 	key: string;
 }
 
-/**
- * Makes the certificate for `localhost` that apps with no domain serve HTTPS with, signed by the
- * proxy's CA, unless one it signed, with time left, is already there. Waits up to `waitMs` for the
- * CA, which the proxy writes as it starts. Two basepads at once take turns, and each file is
- * replaced whole, so an app never reads a key and a certificate that do not match.
- */
 export async function ensureLocalhostCertificate(
 	paths: CertificatePaths,
 	waitMs = 10_000,
@@ -42,7 +31,6 @@ export async function ensureLocalhostCertificate(
 	await waitFor(() => takeLock(lock), `${lock} is held by another basepad.`, STALE_LOCK_MS * 2);
 	const scratch = await mkdtemp(join(dir, ".new-"));
 	try {
-		// Another basepad may have made it while this one waited.
 		if (await current(paths.cert, ca)) return;
 		const key = join(scratch, "key.pem");
 		const cert = join(scratch, "cert.pem");
@@ -72,7 +60,7 @@ export async function ensureLocalhostCertificate(
 			"-set_serial",
 			`0x${randomBytes(8).toString("hex")}`,
 			"-days",
-			String(DAYS),
+			String(CERTIFICATE_DAYS),
 			"-sha256",
 			"-extfile",
 			extensions,
@@ -87,7 +75,6 @@ export async function ensureLocalhostCertificate(
 	}
 }
 
-/** Takes the lock, a folder only one process can make; throws while another holds it. */
 async function takeLock(lock: string): Promise<void> {
 	try {
 		await mkdir(lock);
@@ -100,7 +87,6 @@ async function takeLock(lock: string): Promise<void> {
 	}
 }
 
-/** Whether the certificate is there, signed by this CA, and not about to expire. */
 async function current(cert: string, ca: string): Promise<boolean> {
 	const pem = await readFile(cert, "utf8").catch(() => undefined);
 	if (pem === undefined) return false;

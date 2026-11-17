@@ -6,11 +6,6 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, type Result, type Sandbox, sandbox } from "./sandbox.ts";
 
-/**
- * An app with `domain: false`, such as Vite behind another app's page: it serves HTTPS itself at
- * `https://localhost:$PORT`, with a certificate basepad gives it, and has no domain.
- */
-
 const node = (script: string) =>
 	JSON.stringify(`exec '${process.execPath}' '${join(import.meta.dirname, "apps", script)}'`);
 
@@ -72,16 +67,8 @@ test("in a worktree, it starts with the first request to one of the worktree's d
 	expect(added.stderr).toBe("");
 	const tree = join(box.root, "assets.worktrees/worktree-1");
 	expect(existsSync(join(tree, "tls.json"))).toBe(false);
-	// The proxy may not route a worktree's domain for a moment after it is made.
 	const web = `https://web.worktree-1.assets.localhost:${box.proxyPort}`;
-	for (const until = Date.now() + 10_000; ; ) {
-		try {
-			await box.get(web);
-			break;
-		} catch (error) {
-			if (Date.now() > until) throw error;
-		}
-	}
+	await box.getOnceRouted(web);
 	const { port } = JSON.parse(await readFile(join(tree, "tls.json"), "utf8"));
 	expect(await box.get(`https://localhost:${port}/`)).toEqual({ cwd: tree });
 });

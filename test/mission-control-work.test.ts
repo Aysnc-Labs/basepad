@@ -18,10 +18,6 @@ afterEach(() => {
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/**
- * A stand-in for the `basepad` command: prints what it was asked, then runs `body`, a script with
- * `args` and `go` (a file to wait for) in scope.
- */
 function basepad(body: string): { command: string[]; dir: string; go: string } {
 	const dir = mkdtempSync(join(tmpdir(), "basepad-work-"));
 	dirs.push(dir);
@@ -36,7 +32,6 @@ function basepad(body: string): { command: string[]; dir: string; go: string } {
 	return { command: [process.execPath, "-e", script], dir: join(dir, "work"), go };
 }
 
-/** `takeWork` again until `done` says what it read is what the test waits for. */
 async function until(dir: string, done: (work: Awaited<ReturnType<typeof takeWork>>) => boolean) {
 	for (let i = 0; i < 250; i++) {
 		const work = await takeWork(dir);
@@ -142,7 +137,6 @@ test("it goes on after the process that started it has gone, as the view does on
 });
 
 test("one whose process was killed partway says so, with its last line", async () => {
-	// It kills the shell that runs it, then stops: no one says how it ended.
 	const { command, dir } = basepad(`process.kill(process.ppid, "SIGKILL");`);
 	await startWork({ dir, command, cwd: tmpdir(), order: { kind: "add" } });
 	expect((await until(dir, (w) => w.finished.length > 0)).finished).toEqual([
@@ -152,7 +146,6 @@ test("one whose process was killed partway says so, with its last line", async (
 });
 
 test("an addition killed after it made its worktree names it and how to remove it", async () => {
-	// As `worktree add` prints once its git worktree is there, before its setup runs.
 	const { command, dir } = basepad(`
 		console.log("Worktree shop-2 is checked out at /code/shop-2.");
 		console.log("Running \`npm install\`");
@@ -177,10 +170,6 @@ test("a removal killed partway names how to finish it", async () => {
 	]);
 });
 
-/**
- * A record left on disk as if by an earlier view: `pid`, its process (`{ pid, start }`), or none
- * when the view crashed before its command ran. `age` in ms.
- */
 function leftover(dir: string, pid: object | undefined, age = 0): void {
 	mkdirSync(dir, { recursive: true });
 	const base = join(dir, "1-1-left");
@@ -193,7 +182,6 @@ function leftover(dir: string, pid: object | undefined, age = 0): void {
 	aged(`${base}.json`, age);
 }
 
-/** Makes a file `age` ms old. */
 function aged(file: string, age: number): void {
 	const then = (Date.now() - age) / 1000;
 	utimesSync(file, then, then);
@@ -204,7 +192,6 @@ const stopped =
 
 test("a record whose pid is now another process's (reused, after a reboot) is not taken for running work", async () => {
 	const { dir } = basepad("");
-	// This test's own process, alive, but not the one the record started.
 	leftover(dir, { pid: process.pid, start: "not its start" });
 	expect(await takeWork(dir)).toEqual({ running: [], finished: [stopped] });
 	expect(readdirSync(dir)).toEqual([]);
@@ -269,8 +256,6 @@ test("two views reading finished work at once: only one tells it, whole", async 
 });
 
 test("an addition killed before it made anything names no worktree another made meanwhile", async () => {
-	// Killed at once: it printed nothing of a worktree. shop-2 is the developer's own, made by
-	// `basepad worktree add` in a shell before the view read the record: it must not be named.
 	const { command, dir } = basepad(`process.kill(process.ppid, "SIGKILL");`);
 	await startWork({ dir, command, cwd: tmpdir(), order: { kind: "add" }, before: ["shop-1"] });
 	const [told] = (await until(dir, (w) => w.finished.length > 0)).finished;
@@ -280,7 +265,6 @@ test("an addition killed before it made anything names no worktree another made 
 
 test("work killed before it printed anything says no last line", async () => {
 	const { dir } = basepad("");
-	// Not the stand-in, which prints what it was asked first.
 	const silent = [process.execPath, "-e", `process.kill(process.ppid, "SIGKILL");`];
 	await startWork({ dir, command: silent, cwd: tmpdir(), order: { kind: "add" } });
 	expect((await until(dir, (w) => w.finished.length > 0)).finished).toEqual([

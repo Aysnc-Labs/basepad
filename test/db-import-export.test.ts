@@ -1,11 +1,10 @@
 import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
+import { type AddressInfo, createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { configFile, type Result, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
-
-/** `db import` and `db export`: dumps in and out of the environment's own database. */
+import { configFile, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
 
 let box: Sandbox;
 let main: string;
@@ -25,7 +24,6 @@ const git = async (cwd: string, ...args: string[]) => {
 	});
 };
 
-/** A main checkout under git with `services`, up; `env` writes `<KEY>_URL` for each. */
 async function project(name: string, services: Record<string, string>): Promise<string> {
 	const keys = Object.keys(services);
 	const dir = await box.project(name, {
@@ -55,7 +53,6 @@ async function sql(dir: string, query: string, key = "db"): Promise<string> {
 	return out.stdout.trim();
 }
 
-/** The names in `items`, sorted; `none` when there is no such table. */
 const rows = (dir: string, key = "db") =>
 	sql(
 		dir,
@@ -63,7 +60,6 @@ const rows = (dir: string, key = "db") =>
 		key,
 	);
 
-/** `basepad` in `dir`, expected to succeed; its output. */
 async function ok(dir: string, ...args: string[]): Promise<string> {
 	const result = await box.basepad(dir, ...args);
 	expect(result.stderr).toBe("");
@@ -71,34 +67,6 @@ async function ok(dir: string, ...args: string[]): Promise<string> {
 	return result.stdout;
 }
 
-/**
- * `basepad` on a terminal of its own, typing `input` once it asks. Input stays open until basepad
- * exits. On macOS, Python's `pty`: macOS's `script` fails on Node's stdin, a socket there.
- */
-function onTerminal(cwd: string, input: string, ...args: string[]): Promise<Result> {
-	const command = [process.execPath, cli, ...args].map((arg) => `'${arg}'`).join(" ");
-	const shell = `cd '${cwd}' && ${command}`;
-	const [file, argv] =
-		process.platform === "darwin"
-			? [
-					"python3",
-					["-c", "import pty, sys; sys.exit(pty.spawn(sys.argv[1:]) >> 8)", "sh", "-c", shell],
-				]
-			: ["script", ["-qec", shell, "/dev/null"]];
-	return new Promise((resolve) => {
-		const child = execFile(file, argv, { env: box.env }, (error, stdout, stderr) =>
-			resolve({ code: error ? Number(error.code ?? 1) : 0, stdout, stderr }),
-		);
-		let typed = false;
-		child.stdout?.on("data", (chunk: Buffer) => {
-			if (typed || !chunk.toString().includes("[y/N]")) return;
-			typed = true;
-			child.stdin?.write(input);
-		});
-	});
-}
-
-/** A plain SQL file in the sandbox that makes `items` hold `names`. */
 async function sqlFile(name: string, ...names: string[]): Promise<string> {
 	const file = join(box.root, name);
 	await writeFile(
@@ -108,7 +76,6 @@ async function sqlFile(name: string, ...names: string[]): Promise<string> {
 	return file;
 }
 
-/** The first bytes of `file`, as text. */
 const head = async (file: string, bytes = 5) =>
 	(await readFile(file)).subarray(0, bytes).toString("latin1");
 
@@ -163,7 +130,7 @@ test("with no file, export writes a custom-format dump to standard output, and a
 	await ok(main, "db", "import", file, "--yes");
 	expect(await rows(main)).toBe("p1,p2");
 
-	const onScreen = await onTerminal(main, "", "db", "export");
+	const onScreen = await box.onTerminal(main, "", "db", "export");
 	expect(onScreen.code).toBe(1);
 	expect(onScreen.stdout).toContain("which is a terminal here. Name a file, or redirect it");
 }, 120_000);
@@ -179,12 +146,12 @@ test("import asks first, naming the database, and changes nothing unless told ye
 	);
 	expect(await rows(main)).toBe(before);
 
-	const no = await onTerminal(main, "n\n", "db", "import", file);
+	const no = await box.onTerminal(main, "n\n", "db", "import", file);
 	expect(no.stdout).toContain("Replace `db`'s database t27io_db? Its data is lost. [y/N]");
 	expect(no.code).toBe(1);
 	expect(await rows(main)).toBe(before);
 
-	const yes = await onTerminal(main, "y\n", "db", "import", file);
+	const yes = await box.onTerminal(main, "y\n", "db", "import", file);
 	expect(yes.code).toBe(0);
 	expect(await rows(main)).toBe("asked");
 }, 120_000);
@@ -210,7 +177,7 @@ test("an import that fails leaves the database as it was, and nothing beside it"
 test("inside a worktree, import and export act on its database and leave main's unchanged", async () => {
 	const mainRows = await rows(main);
 	const file = await sqlFile("tree.sql", "tree-only");
-	const no = await onTerminal(tree, "n\n", "db", "import", file);
+	const no = await box.onTerminal(tree, "n\n", "db", "import", file);
 	expect(no.stdout).toContain("Replace `db`'s database t27io_db_worktree_1?");
 	await ok(tree, "db", "import", file, "--yes");
 	expect(await rows(tree)).toBe("tree-only");
@@ -240,9 +207,42 @@ test("import from a postgres:// URL copies that database, and with several datab
 	expect(copied).toMatch(
 		/Imported a copy of 127\.0\.0\.1:\d+\/t27io_db into `ref`'s database t27src_ref\./,
 	);
-	// The URL's placeholder password is never shown.
 	expect(copied).not.toContain("basepad@");
 	expect(await rows(other, "ref")).toBe(sourceRows);
 	expect(await rows(other)).toBe("db-own");
 	expect(await rows(main)).toBe(sourceRows);
 }, 300_000);
+
+test("an import from a postgres:// URL keeps its password off pg_dump's command line", async () => {
+	const sockets: Socket[] = [];
+	const silent = createServer((socket) => sockets.push(socket));
+	const reached = new Promise((resolve) => silent.once("connection", resolve));
+	await new Promise<void>((resolve) => silent.listen(0, "127.0.0.1", resolve));
+	const { port } = silent.address() as AddressInfo;
+	const importing = box.basepad(
+		main,
+		"db",
+		"import",
+		`postgres://basepad:s3cret-pw@127.0.0.1:${port}/source`,
+		"--yes",
+	);
+	await reached;
+	const { stdout: processes } = await promisify(execFile)("ps", ["-e", "-w", "-w", "-o", "args="]);
+	for (const socket of sockets) socket.destroy();
+	silent.close();
+	expect((await importing).code).toBe(1);
+	const pgDump = processes.split("\n").filter((line) => /\/pg_dump /.test(line));
+	expect(pgDump).not.toEqual([]);
+	expect(pgDump.filter((line) => line.includes("s3cret-pw"))).toEqual([]);
+}, 120_000);
+
+test("a failed import from a postgres:// URL names the failing step, pg_dump | pg_restore, not its command", async () => {
+	const source = new URL(await url(main));
+	source.password = "s3cret-pw";
+	source.pathname = "/no_such_db";
+	const failed = await box.basepad(main, "db", "import", source.href, "--yes");
+	expect(failed.code).toBe(1);
+	expect(failed.stderr).toMatch(/`pg_dump \| pg_restore` failed \(exit \d+\):\n.*no_such_db/);
+	expect(failed.stderr).not.toContain("s3cret-pw");
+	expect(failed.stderr).not.toContain("bash");
+}, 120_000);

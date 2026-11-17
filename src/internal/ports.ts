@@ -1,10 +1,8 @@
 import { createConnection, createServer } from "node:net";
 import { BasepadError } from "./exec.ts";
 
-/** How many ports past the first one `freePort` tries. */
 const SPAN = 100;
 
-/** The first port from `from` on loopback that nothing listens on and basepad can bind. */
 export async function freePort(from: number): Promise<number> {
 	for (let port = from; port < from + SPAN && port <= 65535; port++) {
 		if (!(await answers(port)) && (await canListen(port))) return port;
@@ -12,7 +10,6 @@ export async function freePort(from: number): Promise<number> {
 	throw new BasepadError(`No free port on 127.0.0.1 from ${from} to ${from + SPAN - 1}.`);
 }
 
-/** Whether something accepts connections on `port` at any of `hosts`, tried in order. */
 export async function answers(
 	port: number,
 	hosts: readonly string[] = ["127.0.0.1"],
@@ -46,13 +43,8 @@ function canListen(port: number): Promise<boolean> {
 	});
 }
 
-/** What `waitFor` throws when what it waits on has stopped: waiting longer cannot help. */
 export class Stopped extends Error {}
 
-/**
- * Polls `check` until it resolves, or throws `failure` with the last error after `timeoutMs`.
- * After each failed check it asks `stopped`, and throws `Stopped` at once when it says so.
- */
 export async function waitFor<T>(
 	check: () => Promise<T>,
 	failure: string,

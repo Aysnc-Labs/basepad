@@ -6,8 +6,6 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, type Result, type Sandbox, sandbox } from "./sandbox.ts";
 
-/** A worktree ready to use: cloned paths, setup commands, `--branch`, and starting on first request. */
-
 const echo = join(import.meta.dirname, "apps/echo.mjs");
 const web = `web: { run: ${JSON.stringify(`exec '${process.execPath}' '${echo}'`)} }`;
 const config = (setup: string[]) =>
@@ -22,7 +20,6 @@ const config = (setup: string[]) =>
 let box: Sandbox;
 let main: string;
 let added: Result;
-/** The worktree the plain `worktree add` made. */
 let tree: string;
 
 const git = async (cwd: string, ...args: string[]) => {
@@ -52,7 +49,6 @@ beforeAll(async () => {
 	await git(main, "init", "--quiet", "--initial-branch=main");
 	await git(main, "add", ".");
 	await git(main, "commit", "--quiet", "-m", "init");
-	// A branch whose config's second setup command fails.
 	await git(main, "checkout", "--quiet", "-b", "broken");
 	await writeFile(
 		join(main, "basepad.config.ts"),
@@ -94,14 +90,12 @@ test("worktree add names the worktree it checked out before its setup runs, so o
 
 test("worktree add starts no app, and the first request starts it even with main's database server stopped", async () => {
 	expect(added.stdout).toMatch(/web +https:\/\/web\.worktree-1\.t17shop\.localhost:\d+ +stopped/);
-	// `down` in main stops its database server, which the worktree's database lives on.
 	expect((await box.basepad(main, "down")).code).toBe(0);
 	expect((await box.basepad(main, "status")).stdout).toMatch(/db +\S+ +stopped/);
 	expect((await box.get<{ cwd: string }>(url("web.worktree-1.t17shop.localhost"))).cwd).toBe(tree);
 	expect((await box.basepad(tree, "status")).stdout).toMatch(
 		/web +\S+ +running[\s\S]*db +\S+ +running/,
 	);
-	// Main's app stays stopped after `down`, whatever opens its domain.
 	await expect(box.get(url("web.t17shop.localhost"))).rejects.toThrow();
 });
 

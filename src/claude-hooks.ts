@@ -14,7 +14,6 @@ const INPUTS = {
 
 type Event = keyof typeof INPUTS;
 
-/** Reads and checks the hook input for `event` from standard input. */
 export async function readHookInput<E extends Event>(
 	event: E,
 ): Promise<z.infer<(typeof INPUTS)[E]>> {

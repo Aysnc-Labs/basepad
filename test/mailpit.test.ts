@@ -4,7 +4,6 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, type Result, readEnv, type Sandbox, sandbox, sendMail } from "./sandbox.ts";
 
-/** Each test file's project has its own name, so its derived ports differ. */
 const config = configFile(`{
 	name: "mp-shop",
 	services: { mail: mailpit() },
@@ -46,7 +45,6 @@ beforeAll(async () => {
 }, 300_000);
 afterAll(() => box?.dispose());
 
-/** The subjects in the inbox at `inbox`, each with its tags. */
 async function inbox(url: string): Promise<Record<string, string[]>> {
 	const { messages } = await box.get<Messages>(`${url}/api/v1/messages`);
 	return Object.fromEntries(messages.map((m) => [m.Subject, m.Tags]));

@@ -12,9 +12,9 @@ permissions:
   contents: read
 
 env:
-  # The mise basepad is tested against. The floor it supports is MISE_MIN_VERSION in src/versions.ts.
   MISE_VERSION: 2026.11.5
-  # mise downloads tools from GitHub releases; a token avoids anonymous rate limits.
+  # mise downloads tools from GitHub releases; a token avoids anonymous rate limits:
+  # https://mise.jdx.dev/dev-tools/github-tokens.html
   GITHUB_TOKEN: ${{ github.token }}
 
 jobs:
@@ -24,30 +24,49 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-      # Installs mise and the tools in mise.toml (node, pnpm).
       - uses: jdx/mise-action@v5
         with:
           version: ${{ env.MISE_VERSION }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
 
-  linux-root:
-    name: Check (Linux, as root)
+  mise-min:
+    name: Read MISE_MIN_VERSION
     if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: read
+        run: |
+          version=$(sed -n 's/^export const MISE_MIN_VERSION = "\(.*\)";$/\1/p' src/versions.ts)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  linux-root:
+    name: Check (Linux, as root, ${{ matrix.mise }} mise)
+    if: ${{ !github.event.pull_request.draft }}
+    needs: mise-min
+    strategy:
+      fail-fast: false
+      matrix:
+        mise: [pinned, oldest]
     runs-on: ubuntu-24.04
     container:
       image: ubuntu:24.04
       # An init as PID 1 reaps orphans. The default, `tail -f /dev/null`, leaves pitchfork's stopped
-      # supervisor a zombie, and `supervisor stop` waits about 60 s for it to go.
+      # supervisor a zombie, and `supervisor stop` waits about 60 s for it to go:
+      # https://docs.docker.com/reference/cli/docker/container/run/#init
       options: --init
     steps:
       - run: apt-get update -qq && apt-get install -y -qq curl ca-certificates git xz-utils >/dev/null
       - uses: actions/checkout@v7
-      # The checkout is owned by the runner's user, not root; git refuses it otherwise.
+      # The checkout is owned by the runner's user, not root; git refuses it otherwise:
+      # https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      # Installs mise and the tools in mise.toml (node, pnpm).
       - uses: jdx/mise-action@v5
         with:
-          version: ${{ env.MISE_VERSION }}
+          version: ${{ matrix.mise == 'oldest' && needs.mise-min.outputs.version || env.MISE_VERSION }}
       - run: id -u && pnpm install --frozen-lockfile
       - run: pnpm check

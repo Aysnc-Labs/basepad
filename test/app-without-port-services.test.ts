@@ -5,11 +5,6 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, readEnv, type Sandbox, sandbox } from "./sandbox.ts";
 
-/**
- * An app with `port: false` beside a worktree's own Redis and the project's Mailpit: the first
- * request to a worktree's app starts its worker and its Redis.
- */
-
 const node = (script: string) =>
 	JSON.stringify(`exec '${process.execPath}' '${join(import.meta.dirname, "apps", script)}'`);
 

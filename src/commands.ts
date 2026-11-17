@@ -54,24 +54,18 @@ import {
 export interface Flag {
 	short?: string;
 	description: string;
-	/** What the flag's value is, for one that takes one (`--branch <name>`); a switch has none. */
 	value?: string;
 }
 
 export interface Invocation {
 	cwd: string;
-	/** The arguments given, in the order the command's `args` names them. */
 	args: string[];
-	/** The flags given, by long name: `true` for a switch, the value for a flag that takes one. */
 	flags: Record<string, boolean | string>;
-	/** Prints one line of the command's output. */
 	print(line: string): void;
 }
 
-/** One `basepad` command. The CLI dispatches from, and generates help from, `COMMANDS`. */
 export interface Command {
 	summary: string;
-	/** The names of the arguments it takes, in order; one ending in `?` is optional. */
 	args?: string[];
 	flags: Record<string, Flag>;
 	run(invocation: Invocation): Promise<void>;
@@ -207,19 +201,15 @@ export const COMMANDS: Record<string, Command> = {
 	},
 };
 
-/** How long `up` waits for apps to listen or fail before it shows their state and returns. */
 const APP_WAIT_MS = 5000;
-/** How many of a failed app's last lines `up` shows. */
 const FAILED_LINES = 20;
 
-/** One environment: main, or a worktree, which knows its suffix and main's project. */
 interface Environment {
 	project: Project;
 	suffix?: string;
 	main?: Project;
 }
 
-/** The environment whose config is in `cwd` or its nearest parent with one. */
 async function environmentAt(cwd: string): Promise<Environment> {
 	const project = await loadProject(cwd);
 	const checkout = await checkoutOf(project.root);
@@ -243,7 +233,6 @@ async function environmentAt(cwd: string): Promise<Environment> {
 	return { project, suffix: checkout.suffix, main };
 }
 
-/** What `ready` needs from the command: the machine, the supervisor, and the developer's say. */
 interface Context {
 	here: Machine;
 	supervisor: Supervisor;
@@ -251,13 +240,6 @@ interface Context {
 	print(line: string): void;
 }
 
-/**
- * Makes an environment ready to start its apps: registers its definitions, starts its services
- * (main's, in a worktree, and its own servers) and provisions them, and writes its env files.
- * Starts no app. A worktree needs main ready first. Main's servers always start: every
- * environment's services need them. Of a worktree's own servers, those `start` picks (all by
- * default); the rest are left to its first start, and its env files say where they will listen.
- */
 async function ready(
 	environment: Environment,
 	context: Context,
@@ -265,7 +247,6 @@ async function ready(
 ): Promise<Layout> {
 	const { project, suffix, main } = environment;
 	const { here, supervisor, print } = context;
-	// Ports, folders and databases; the URL form waits for the supervisor, which answers on 443.
 	const ports = layout(project, here, suffix);
 	const services = Object.keys(project.services);
 	const owner = await supervisor.owner(ports.namespace);
@@ -281,13 +262,11 @@ async function ready(
 		);
 	}
 	const daemons: Record<string, Daemon> = {};
-	// Main's servers, and a worktree's own; a worktree's other services run on main's.
 	for (const key of ownServers(ports)) {
 		const service = project.services[key] as Service;
 		daemons[key] = await kindOf(service).prepare(service, placeOf(project, ports, here, key));
 	}
 	const servers = Object.values(ports.services).map((place) => place.daemon);
-	// No request reaches these, so the apps with a domain start them.
 	const unreached = Object.keys(project.apps).filter((key) => ports.apps[key]?.host === undefined);
 	const tls = localhostCertificate(here);
 	for (const [key, app] of Object.entries(project.apps)) {
@@ -301,14 +280,11 @@ async function ready(
 			dir: app.cwd,
 			port,
 			...(app.domain === false ? { proxy: false as const } : {}),
-			// So the proxy's start on a first request starts the servers first, wherever they run,
-			// and the apps no request reaches.
 			depends: unreached.includes(key)
 				? servers
 				: [...servers, ...unreached.map((name) => daemonId(ports.namespace, name))],
 		};
 	}
-	// Made before any app can start, once the proxy, which makes the CA, runs.
 	if (Object.values(project.apps).some((app) => app.domain === false)) {
 		await supervisor.serve();
 		const { ca, caKey } = supervisorPaths(here);
@@ -325,7 +301,6 @@ async function ready(
 		for (const line of await trustAsRoot(supervisor)) print(line);
 	}
 	const lay = layout(project, await machineWithPortFree(here, supervisor), suffix);
-	// Services' domains are main's, as the services are.
 	const domains = Object.values(lay.services).flatMap((place) =>
 		place.web === undefined || suffix !== undefined ? [] : [place.web.host],
 	);
@@ -380,10 +355,6 @@ async function ready(
 	return lay;
 }
 
-/**
- * Opens the supervisor (or takes the one opened), and readies main first when the environment is a
- * worktree.
- */
 async function open(
 	environment: Environment,
 	flags: Invocation["flags"],
@@ -393,7 +364,6 @@ async function open(
 	const here = machine(process.env);
 	const supervisor = opened ?? (await openSupervisor(here, print));
 	const context: Context = { here, supervisor, claim: flags.claim === true, print };
-	// `--claim` in a worktree claims the worktree's, never main's.
 	if (environment.main !== undefined) {
 		await ready({ project: environment.main }, { ...context, claim: false });
 	}
@@ -402,7 +372,6 @@ async function open(
 
 async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const environment = await environmentAt(cwd);
-	// Only on a terminal: scripts, CI and agents get `-d`'s behaviour without asking for it.
 	if (flags.detach !== true && process.stdin.isTTY && process.stdout.isTTY) {
 		return upOnTerminal(environment, flags, print);
 	}
@@ -415,11 +384,6 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	if (failure !== undefined) throw new BasepadError(failure);
 }
 
-/**
- * `up` on a terminal: mission control opens at once and the environment readies meanwhile, so its
- * logs show from the start. What readying prints waits for the view to close; a failure shows in it
- * as a notice.
- */
 async function upOnTerminal(
 	environment: Environment,
 	flags: Invocation["flags"],
@@ -427,7 +391,6 @@ async function upOnTerminal(
 ): Promise<void> {
 	const { project } = environment;
 	const here = machine(process.env);
-	// Loaded only here, so other commands never load the terminal UI.
 	const { missionControl } = await import("./mission-control/run.ts");
 	const held: string[] = [];
 	const say = (line: string) => held.push(line);
@@ -439,7 +402,6 @@ async function upOnTerminal(
 	const readying = (async () => {
 		const context = await open(environment, flags, say, supervisor);
 		const lay = await ready(environment, { ...context, print: say });
-		// The supervisor answers on 443 by now, so URLs show as they are served.
 		served = await machineWithPortFree(here, supervisor);
 		outcome = { lay, ...(await startApps(supervisor, project, lay)) };
 		if (outcome.failure !== undefined) {
@@ -460,11 +422,8 @@ async function upOnTerminal(
 			return told;
 		},
 		selected: layout(project, here, environment.suffix).namespace,
-		// This very command, run again on the same Node: mission control adds and removes worktrees
-		// with it, in processes of their own that outlive the view.
 		basepad: [process.execPath, ...process.execArgv, process.argv[1] as string],
 	});
-	// Closed while it readies, the environment still finishes.
 	if (outcome === undefined && error === undefined) print("Still starting; finishing…");
 	await readying;
 	for (const line of held) print(line);
@@ -477,10 +436,6 @@ async function upOnTerminal(
 
 const firstLine = (text: string) => text.split("\n")[0] ?? text;
 
-/**
- * Starts the environment's apps and waits briefly for them. Returns their states, and the report
- * of those that failed, if any did.
- */
 async function startApps(
 	supervisor: Supervisor,
 	project: Project,
@@ -499,11 +454,6 @@ async function startApps(
 	return { states, failure: await failures(supervisor, lay.namespace, failed, since) };
 }
 
-/**
- * `worktree add`: checks out a new worktree of main, copies the paths its config clones, readies it
- * (its databases from main's, its env files from main's) and runs its setup commands. Its apps
- * start on the first request to their domains, or now with `--start`. Prints where it is.
- */
 async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	const hook = flags.claude === true;
 	if (hook && (flags.branch !== undefined || flags.json === true)) {
@@ -511,14 +461,12 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 			"`--claude` takes the branch from Claude Code's hook input and prints only the path, so it goes without `--branch` and `--json`.",
 		);
 	}
-	// With `--json` or `--claude`, stdout carries the answer alone.
 	const say = flags.json === true || hook ? (line: string) => console.error(line) : print;
 	const input = hook ? await readHookInput("WorktreeCreate") : undefined;
 	const at = await environmentAt(input?.cwd ?? cwd);
 	const main = at.main ?? at.project;
 	const context = await open({ project: main }, {}, say);
 	await ready({ project: main }, context);
-	// Main's config is read before checking out, so a name too long fails before anything is made.
 	const requested = input?.name ?? (typeof flags.branch === "string" ? flags.branch : undefined);
 	const { suffix, branch, root } = await checkOutWorktree(main, requested);
 	const kept = checkedOut(suffix, root);
@@ -530,7 +478,6 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 		const { project } = environment;
 		for (const note of await clonePaths(main.root, project.root, project.worktrees.clone))
 			say(note);
-		// Its own servers with its apps: now with `--start`, else on their first start.
 		lay = await ready(environment, context, { start: () => flags.start === true });
 	} catch (error) {
 		if (!(error instanceof BasepadError)) throw error;
@@ -564,7 +511,6 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	if (failure !== undefined) throw new BasepadError(failure);
 }
 
-/** A worktree's daemon states with those of its services that run in main's namespace. */
 async function withServices(
 	supervisor: Supervisor,
 	lay: Pick<Layout, "namespace" | "mainNamespace" | "services">,
@@ -577,12 +523,10 @@ async function withServices(
 	return { ...states, ...Object.fromEntries(mains.map((key) => [key, main[key] ?? "stopped"])) };
 }
 
-/** The machine with `portFree` asked from its port 443, once the supervisor runs. */
 async function machineWithPortFree(here: Machine, supervisor: Supervisor): Promise<Machine> {
 	return { ...here, portFree: (await supervisor.standardPort()) === "proxy" };
 }
 
-/** Runs the config's `env` with each service's and app's outputs, and checks what it returns. */
 function envFiles(project: Project, outputs: Record<string, unknown>): EnvFiles {
 	let files: unknown;
 	try {
@@ -604,7 +548,6 @@ const EnvFilesSchema = z.record(
 	z.record(z.string(), z.union([z.string(), z.number()])),
 );
 
-/** Runs an app's command with its own and the project's `node_modules/.bin` first, as npm does. */
 function withLocalBins(project: Project, dir: string, run: string): string {
 	const bins = [
 		...new Set([join(dir, "node_modules/.bin"), join(project.root, "node_modules/.bin")]),
@@ -612,7 +555,6 @@ function withLocalBins(project: Project, dir: string, run: string): string {
 	return `export PATH=${bins.map(shellQuote).join(":")}:"$PATH" && ${run}`;
 }
 
-/** The apps table, then the services table, each when the project has any. */
 async function stateTables(
 	{ project }: Environment,
 	lay: Layout,
@@ -666,15 +608,12 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 	const lay = layout(project, machine(process.env), suffix);
 	const { namespace } = lay;
 	const apps = Object.keys(project.apps);
-	// Its own servers stop with its apps; those on main's keep running for main.
 	const own = ownServers(lay);
 	const mains = Object.keys(project.services).filter((key) => !own.includes(key));
-	// On a terminal, the landing shows while they stop.
 	const landed = process.stdout.isTTY
 		? await startLanding(project.name, suffix, [...apps, ...own], mains)
 		: undefined;
 	try {
-		// Held first, so no request starts an app again while it stops.
 		await supervisor.hold(namespace, apps);
 		await supervisor.stop(namespace);
 	} catch (error) {
@@ -693,7 +632,6 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 	);
 }
 
-/** Opens the landing for an environment's apps and services on the terminal. */
 async function startLanding(
 	project: string,
 	suffix: string | undefined,
@@ -725,7 +663,6 @@ async function status({ cwd, print }: Invocation): Promise<void> {
 	const supervisor = await openSupervisor(here, print);
 	const ports = layout(project, here, suffix);
 	const states = await withServices(supervisor, ports, await supervisor.status(ports.namespace));
-	// With no supervisor running nothing answers on 443, so the URL form is the port's default.
 	const lay = layout(
 		project,
 		Object.keys(states).length > 0 ? await machineWithPortFree(here, supervisor) : here,
@@ -735,20 +672,12 @@ async function status({ cwd, print }: Invocation): Promise<void> {
 	if (suffix === undefined) await printWorktrees(project, here, supervisor, print);
 }
 
-/**
- * Main's project, from main's folder or a worktree's, found through git. Reads main's config alone,
- * so a worktree's broken or missing config does not stand in the way.
- */
 async function mainAt(cwd: string): Promise<Project> {
 	const here = await realpath(cwd);
 	const checkout = await checkoutOf(here);
 	return loadProject(checkout.suffix === undefined ? here : checkout.main);
 }
 
-/**
- * `status` in main: each worktree git lists, with its tables from its own config, then what is left
- * of worktrees whose folder is gone.
- */
 async function printWorktrees(
 	main: Project,
 	here: Machine,
@@ -805,10 +734,6 @@ async function worktreeLs({ cwd, print }: Invocation): Promise<void> {
 	print(table([["WORKTREE", "BRANCH", "FOLDER"], ...rows]));
 }
 
-/**
- * `worktree rm`: removes a worktree from its suffix alone (git's record, the name pattern of its data,
- * its registration), so it works whatever state its folder or config is in. Its branch stays.
- */
 async function worktreeRm({ cwd, flags, args, print }: Invocation): Promise<void> {
 	if (flags.claude === true) return worktreeRmHook(cwd, args);
 	const [suffix] = args;
@@ -828,10 +753,6 @@ async function worktreeRm({ cwd, flags, args, print }: Invocation): Promise<void
 	await removeWorktree(main, tree, print);
 }
 
-/**
- * `worktree rm --claude`: removes the worktree at the hook input's `worktree_path`, changes and all:
- * Claude Code has asked before discarding work, or found none. Says everything on stderr.
- */
 async function worktreeRmHook(cwd: string, args: string[]): Promise<void> {
 	if (args.length > 0) {
 		throw new BasepadError(
@@ -840,7 +761,6 @@ async function worktreeRmHook(cwd: string, args: string[]): Promise<void> {
 	}
 	const input = await readHookInput("WorktreeRemove");
 	const path = await realpath(input.worktree_path).catch(() => input.worktree_path);
-	// From the worktree itself while it exists, so a session folder elsewhere does not matter.
 	const checkout = existsSync(path) ? await checkoutOf(path) : {};
 	const main =
 		checkout.suffix === undefined
@@ -855,13 +775,11 @@ async function worktreeRmHook(cwd: string, args: string[]): Promise<void> {
 	await removeWorktree(main, tree, (line) => console.error(line));
 }
 
-/** Removes a listed worktree of main: what basepad made for it, then its git worktree. */
 async function removeWorktree(
 	main: Project,
 	tree: Listed,
 	print: Invocation["print"],
 ): Promise<void> {
-	// Main's servers hold the worktree's data, so they run for it to be dropped.
 	const context = await open({ project: main }, {}, print);
 	await ready({ project: main }, context);
 	await removeEnvironment(main, tree.suffix, tree.root, context);
@@ -871,18 +789,12 @@ async function removeWorktree(
 	);
 }
 
-/**
- * Removes what basepad made for worktree `suffix` of main, from main's config alone: its apps and
- * registration, its domains in the hosts file, and its data on main's servers (never main's own: a
- * `shared` service's is main's).
- */
 async function removeEnvironment(
 	main: Project,
 	suffix: string,
 	root: string,
 	{ here, supervisor }: Context,
 ): Promise<void> {
-	// From names alone: main's config may since have made this suffix's names too long.
 	const namespace = namespaceOf(main.name, suffix);
 	await supervisor.unregister({ namespace, definitions: definitionsFile(here, namespace) });
 	await dropHosts(namespace);
@@ -892,7 +804,6 @@ async function removeEnvironment(
 		const store = kindOf(service).worktreeData;
 		if (store === undefined) continue;
 		const place = placeOf(main, lay, here, key);
-		// Its data by name or stamp; with no names that fit, by its stamp among every worktree's.
 		const data =
 			tree === undefined
 				? (await store.list(service, place)).filter((d) => d.owner === root)
@@ -905,7 +816,6 @@ async function removeEnvironment(
 	}
 }
 
-/** A worktree's layout, or none when its names are past their limits under main's config. */
 function worktreeLayout(main: Project, here: Machine, suffix: string): Layout | undefined {
 	try {
 		return layout(main, here, suffix);
@@ -915,17 +825,12 @@ function worktreeLayout(main: Project, here: Machine, suffix: string): Layout | 
 	}
 }
 
-/** What is left of worktrees whose folder is gone. */
 interface Leftovers {
-	/** git's records of them. */
 	checkouts: Listed[];
-	/** Their data on main's servers, by service key. */
 	data: { key: string; data: WorktreeData[] }[];
-	/** Their registrations with the supervisor. */
 	registrations: { namespace: string; dir: string }[];
 }
 
-/** Found by name alone: git's list, data stamped with a gone folder, registrations of a gone folder. */
 async function leftoversOf(
 	main: Project,
 	here: Machine,
@@ -947,7 +852,6 @@ async function leftoversOf(
 	return { checkouts, data, registrations };
 }
 
-/** Leftovers as a table's rows, its header first. */
 function leftoverRows({ checkouts, data, registrations }: Leftovers): string[][] {
 	return [
 		["LEFTOVER", "NAME", "FOLDER"],
@@ -957,7 +861,6 @@ function leftoverRows({ checkouts, data, registrations }: Leftovers): string[][]
 	];
 }
 
-/** The folders in basepad's home of services main's config no longer has, by key. */
 async function removedServices(main: Project, here: Machine): Promise<[string, string][]> {
 	const home = servicesHome(here, main.name);
 	if (!existsSync(home)) return [];
@@ -966,11 +869,6 @@ async function removedServices(main: Project, here: Machine): Promise<[string, s
 		.map((key) => [key, join(home, key)]);
 }
 
-/**
- * `prune`: lists what is left of worktrees whose folder is gone, and the data of services main's
- * config no longer has, then asks before removing each. `--yes` answers for the first only: a
- * removed service's data is main's too, so it is deleted only on a terminal's yes.
- */
 async function prune({ cwd, flags, print }: Invocation): Promise<void> {
 	const main = await mainAt(cwd);
 	const context = await open({ project: main }, {}, print);
@@ -1005,7 +903,6 @@ async function prune({ cwd, flags, print }: Invocation): Promise<void> {
 			`Delete the data of ${services.map(([key]) => `\`${key}\``).join(", ")}?`,
 		);
 		if (yes === true) {
-			// A service taken out of the config keeps running until stopped.
 			await supervisor.stop(
 				layout(main, here).mainNamespace,
 				services.map(([key]) => key),
@@ -1043,7 +940,6 @@ async function removeLeftovers(main: Project, left: Leftovers, context: Context)
 	for (const tree of left.checkouts) await removeCheckout(main, tree.path);
 }
 
-/** Asks a yes-or-no question on the terminal; with no terminal, no answer. */
 async function ask(question: string): Promise<boolean | undefined> {
 	if (!process.stdin.isTTY) return undefined;
 	const prompt = createInterface({ input: process.stdin, output: process.stdout });
@@ -1052,20 +948,16 @@ async function ask(question: string): Promise<boolean | undefined> {
 	return /^y(es)?$/i.test(answer.trim());
 }
 
-/** The label `db save` and `db load` use when given none. */
 const DEFAULT_LABEL = "default";
 
-/** One database service of the environment a `db` command runs in. */
 interface DatabaseService {
 	key: string;
 	service: Service;
 	database: Database<Service, NamesOf<Service>>;
 }
 
-/** A database service on its running server, where its kind's `db` commands act. */
 type DatabaseTarget = DatabaseService & { place: Place<NamesOf<Service>> };
 
-/** The environment `cwd` is in, with its database services; throws when it has none. */
 async function databaseServicesAt(
 	cwd: string,
 ): Promise<{ environment: Environment; services: [DatabaseService, ...DatabaseService[]] }> {
@@ -1081,10 +973,6 @@ async function databaseServicesAt(
 	return { environment, services: [first, ...rest] };
 }
 
-/**
- * The database a `db` command acts on: `--service`'s, or the environment's one database. With
- * several and no `--service`, says which there are.
- */
 function chosen(
 	project: Project,
 	services: [DatabaseService, ...DatabaseService[]],
@@ -1109,11 +997,6 @@ function chosen(
 	return only;
 }
 
-/**
- * Makes the environment ready as `up` makes it, without starting apps, for `db` commands on
- * `services`: of a worktree's own servers, only theirs start. Resolves to what puts a database
- * service on its server.
- */
 async function readyFor(
 	environment: Environment,
 	print: Invocation["print"],
@@ -1128,7 +1011,6 @@ async function readyFor(
 	});
 }
 
-/** The database a `db` command acts on, chosen as `chosen` says, ready on its server. */
 async function databaseAt({ cwd, flags, print }: Invocation): Promise<DatabaseTarget> {
 	const { environment, services } = await databaseServicesAt(cwd);
 	const service = chosen(environment.project, services, flags.service);
@@ -1136,7 +1018,6 @@ async function databaseAt({ cwd, flags, print }: Invocation): Promise<DatabaseTa
 	return onServer(service);
 }
 
-/** A snapshot label given, or the default; a lowercase DNS label, as suffixes are. */
 function labelOf(args: string[]): string {
 	const [label = DEFAULT_LABEL] = args;
 	if (!LABEL.test(label)) {
@@ -1168,7 +1049,6 @@ async function dbRm(invocation: Invocation): Promise<void> {
 	invocation.print(`Deleted snapshot ${label} of \`${key}\`.`);
 }
 
-/** Every database's snapshots in the environment. */
 async function dbSnapshots({ cwd, print }: Invocation): Promise<void> {
 	const { environment, services } = await databaseServicesAt(cwd);
 	const onServer = await readyFor(environment, print, services);
@@ -1191,7 +1071,6 @@ async function dbSnapshots({ cwd, print }: Invocation): Promise<void> {
 	print(table([["LABEL", "SERVICE", "DATABASE", "SIZE"], ...rows]));
 }
 
-/** Bytes as a person reads them: `7.5 MB`. */
 function size(bytes: number): string {
 	const units = ["B", "kB", "MB", "GB", "TB"];
 	let value = bytes;
@@ -1203,14 +1082,9 @@ function size(bytes: number): string {
 	return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
 }
 
-/**
- * `db import`: replaces the database with a dump or another server's, after asking with its name
- * on a terminal; `--yes` answers. With no terminal and no `--yes`, it changes nothing.
- */
 async function dbImport(invocation: Invocation): Promise<void> {
 	const [given = ""] = invocation.args;
 	const { key, service, place, database } = await databaseAt(invocation);
-	// A file is the developer's from where they ran it; anything else is the kind's to read.
 	const file = resolve(invocation.cwd, given);
 	const source = existsSync(file) ? file : given;
 	let replaced = "";
@@ -1228,10 +1102,6 @@ async function dbImport(invocation: Invocation): Promise<void> {
 	invocation.print(`Imported ${read} into \`${key}\`'s database ${replaced}.`);
 }
 
-/**
- * `db export`: a dump of the database to a file, or to standard output, which then carries only
- * the dump: anything else basepad says goes to standard error. Never a binary dump to a terminal.
- */
 async function dbExport(invocation: Invocation): Promise<void> {
 	const [given] = invocation.args;
 	if (given === undefined && process.stdout.isTTY) {

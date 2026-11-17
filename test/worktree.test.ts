@@ -26,7 +26,6 @@ const web = `web: { run: ${JSON.stringify(node(echo))} }`;
 let box: Sandbox;
 let main: string;
 let added: Result;
-/** The worktree `worktree add` made. */
 let tree: string;
 
 const git = async (cwd: string, ...args: string[]) => {
@@ -59,7 +58,6 @@ beforeAll(async () => {
 	await git(main, "init", "--quiet", "--initial-branch=main");
 	await git(main, "add", ".");
 	await git(main, "commit", "--quiet", "-m", "init");
-	// One made by hand already, so `worktree add` takes the next number.
 	await git(
 		main,
 		"worktree",
@@ -169,7 +167,6 @@ test("basepad keeps no list of worktrees", async () => {
 	const files = (await readdir(home, { recursive: true })).filter(
 		(path) => !path.startsWith("pitchfork") && !path.startsWith("services"),
 	);
-	// Only each environment's generated definitions, which the supervisor reads.
 	expect(files.filter((path) => path.includes("worktree")).sort()).toEqual([
 		"environments/t15shop.worktree-2.toml",
 		"environments/t15shop.worktree-3.toml",

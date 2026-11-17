@@ -12,10 +12,11 @@ const node = (script: string) => `exec '${process.execPath}' '${script}'`;
 
 const ENV_LOCAL = "# my secrets\nSECRET=hunter2\nWEB_URL=http://stale\n\nTRAILING=1\n";
 
+const TWO_SUPERVISOR_RESTARTS_MS = 240_000;
+
 let box: Sandbox;
 let shop: string;
 let firstUp: Result;
-/** Every file in the project but `node_modules`, with its bytes and mtime, before `up`. */
 let before: Map<string, { text: string; mtime: number }>;
 
 beforeAll(async () => {
@@ -57,7 +58,6 @@ async function files(dir: string): Promise<Map<string, { text: string; mtime: nu
 type Echo = { cwd: string; port: number; pid: number };
 const get = (url: string) => box.get<Echo>(url);
 
-/** Opens a WebSocket through the proxy, as a hot-reload client does, and returns its first message. */
 async function websocket(url: string): Promise<string> {
 	const { hostname, port } = new URL(url);
 	const ca = await box.ca();
@@ -107,7 +107,6 @@ test("up starts each app, prints the table and returns", () => {
 });
 
 test("with no terminal, up and up -d return without opening mission control", async () => {
-	// Mission control draws on the terminal's alternate screen, and waits for `q` there.
 	const alternateScreen = "\x1b[?1049h";
 	expect(firstUp.stdout).not.toContain(alternateScreen);
 	const detached = await box.basepad(shop, "up", "-d");
@@ -172,13 +171,11 @@ test("status shows each app running with its URL", async () => {
 
 test("status leaves an app alone once it listens: no connection of its own", async () => {
 	const connections = async () => (await box.get<{ connections: number }>(url("web"))).connections;
-	// Each GET is at most one connection of its own, through the proxy.
 	const statusConnects = async () => {
 		const before = await connections();
 		for (let i = 0; i < 3; i++) await box.basepad(shop, "status");
 		return (await connections()) - before > 1;
 	};
-	// Until the supervisor has seen it listen, status may still ask the port itself.
 	const until = Date.now() + 10_000;
 	while ((await statusConnects()) && Date.now() < until);
 	expect(await statusConnects()).toBe(false);
@@ -196,12 +193,10 @@ test("an app that exits on start is reported with its output, and up fails", asy
 	});
 	const out = await box.basepad(dir, "up");
 	expect(out.code).toBe(1);
-	// basepad's stderr as the message, so a failure shows why.
 	expect(out.stdout, out.stderr).toMatch(/bad +https:\/\/bad\.broken\.localhost:\d+ +failed/);
 	expect(out.stdout).toMatch(/ok +https:\/\/ok\.broken\.localhost:\d+ +running/);
 	expect(out.stderr).toContain("basepad: `bad` exited on start. Its last output:");
 	expect(out.stderr).toContain("boom: DATABASE_URL is not set");
-	// The command it suggests works as printed.
 	const hint = out.stderr.match(/For more, run: (.+)/)?.[1] as string;
 	expect(hint).toMatch(/pitchfork'? logs broken\/bad$/);
 	const logs = await box.run("sh", ["-c", hint]);
@@ -210,14 +205,13 @@ test("an app that exits on start is reported with its output, and up fails", asy
 	await box.basepad(dir, "down");
 });
 
-test("an app that exits at once is reported the same way, by every up", async () => {
+test("an app that exits at once is reported the same way by every up, though later ups find its start refused", async () => {
 	const dir = await box.project("sudden", {
 		"basepad.config.ts": configFile(`{
 			name: "sudden",
 			apps: { ok: { run: ${JSON.stringify(node(echo))} }, boom: { run: "echo gone; exit 3" } },
 		}`),
 	});
-	// The second finds it failed already: pitchfork refuses its start, which is no error of basepad's.
 	for (const args of [["up"], ["up"], ["up", "-d"]]) {
 		const out = await box.basepad(dir, ...args);
 		expect(out.code, out.stderr).toBe(1);
@@ -256,14 +250,17 @@ test("down stops the project's apps and deletes nothing", async () => {
 	expect(status.stdout).toContain(`cms  ${url("cms")}  stopped`);
 });
 
-test("up says so before a settings change restarts the supervisor, and only then", async () => {
-	expect(firstUp.stdout).not.toContain(RESTART_WARNING);
-	const other = String(await freePort());
-	const out = await box.basepadWith({ env: { BASEPAD_PROXY_PORT: other } }, shop, "up");
-	expect(out.stderr).toBe("");
-	expect(out.code).toBe(0);
-	expect(out.stdout.indexOf(RESTART_WARNING)).toBe(0);
-	expect(out.stdout).toContain(`web  https://web.shop.localhost:${other}  running`);
-	// Back on the sandbox's own port, so the supervisor is left as the file found it.
-	expect((await box.basepad(shop, "down")).code).toBe(0);
-}, 240_000); // Two restarts. In a container without an init, each supervisor stop takes about 60 s.
+test(
+	"up says so before a settings change restarts the supervisor, and only then",
+	async () => {
+		expect(firstUp.stdout).not.toContain(RESTART_WARNING);
+		const other = String(await freePort());
+		const out = await box.basepadWith({ env: { BASEPAD_PROXY_PORT: other } }, shop, "up");
+		expect(out.stderr).toBe("");
+		expect(out.code).toBe(0);
+		expect(out.stdout.indexOf(RESTART_WARNING)).toBe(0);
+		expect(out.stdout).toContain(`web  https://web.shop.localhost:${other}  running`);
+		expect((await box.basepad(shop, "down")).code).toBe(0);
+	},
+	TWO_SUPERVISOR_RESTARTS_MS,
+);
