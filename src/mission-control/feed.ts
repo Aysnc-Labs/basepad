@@ -242,7 +242,7 @@ export async function environmentOf(
 			...errorOf(daemon),
 		});
 		for (const [extra, { daemon: id }] of extras) {
-			const address = await kind.extraAddress?.(service, place, extra);
+			const address = await kind.extraAddress?.(place, extra);
 			services.push({
 				id,
 				name: ofDaemon(id).name,

@@ -65,7 +65,7 @@ export interface Kind<S extends ServiceBase, O, N> {
 	): Promise<O>;
 	worktreeData?: WorktreeDataStore<S, N>;
 	address(service: S, place: Place<N>): Promise<string>;
-	extraAddress?(service: S, place: Place<N>, extra: string): Promise<string>;
+	extraAddress?(place: Place<N>, extra: string): Promise<string>;
 	database?: Database<S, N>;
 }
 

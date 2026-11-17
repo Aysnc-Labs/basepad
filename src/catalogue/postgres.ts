@@ -19,6 +19,7 @@ const PASSWORD = "basepad";
 const READY_MS = 60_000;
 const NO_UNIX_SOCKETS = "unix_socket_directories=";
 const NEON_PROXY = "neon-proxy";
+const PROXIED_POSTGRES_PORT_LINE = 2;
 const ANY_PORT = `${HOST}:0`;
 
 export type PostgresVersion = 17 | 18;
@@ -29,42 +30,41 @@ export type PostgresVersion = 17 | 18;
  */
 export type PostgresWorktree = "copy" | "empty" | "shared";
 
-/** A Postgres server of the project's own, with one database for this service. */
-export interface PostgresService {
-	kind: "postgres";
+type PostgresOptions = { version?: PostgresVersion; worktree?: PostgresWorktree };
+
+interface PostgresServer {
 	version: PostgresVersion;
 	worktree: PostgresWorktree;
+}
+
+function serverWithDefaults(options: PostgresOptions): PostgresServer {
+	return { version: options.version ?? 18, worktree: options.worktree ?? "copy" };
+}
+
+/** A Postgres server of the project's own, with one database for this service. */
+export interface PostgresService extends PostgresServer {
+	kind: "postgres";
 }
 
 /**
  * A Postgres server of the project's own. `version` is 17 or 18; it defaults to 18. `worktree` is
  * what a worktree's database starts as; it defaults to `copy`.
  */
-export function postgres(
-	options: { version?: PostgresVersion; worktree?: PostgresWorktree } = {},
-): PostgresService {
-	return { kind: "postgres", version: options.version ?? 18, worktree: options.worktree ?? "copy" };
+export function postgres(options: PostgresOptions = {}): PostgresService {
+	return { kind: "postgres", ...serverWithDefaults(options) };
 }
 
 /** A Postgres server of the project's own with Neon's local proxy in front of it, for `@neondatabase/serverless`. */
-export interface PostgresWithNeonProxyService {
+export interface PostgresWithNeonProxyService extends PostgresServer {
 	kind: "postgresWithNeonProxy";
-	version: PostgresVersion;
-	worktree: PostgresWorktree;
 }
 
 /**
  * A Postgres server of the project's own, as `postgres()` gives, with Neon's local proxy in front
  * of it, so `@neondatabase/serverless` connects as it does to Neon. Its options are `postgres()`'s.
  */
-export function postgresWithNeonProxy(
-	options: { version?: PostgresVersion; worktree?: PostgresWorktree } = {},
-): PostgresWithNeonProxyService {
-	return {
-		kind: "postgresWithNeonProxy",
-		version: options.version ?? 18,
-		worktree: options.worktree ?? "copy",
-	};
+export function postgresWithNeonProxy(options: PostgresOptions = {}): PostgresWithNeonProxyService {
+	return { kind: "postgresWithNeonProxy", ...serverWithDefaults(options) };
 }
 
 type AnyPostgres = PostgresService | PostgresWithNeonProxyService;
@@ -321,7 +321,7 @@ export const postgresWithNeonProxyKind: Kind<
 	extraDaemons: [NEON_PROXY],
 
 	async prepare(service, place) {
-		const { port, daemon } = await prepareServer(service, place);
+		const { port: postgresPort, daemon } = await prepareServer(service, place);
 		const proxy = await install(
 			"github:aysnc-labs/prebuilt-binaries",
 			NEON_PROXY_VERSION,
@@ -331,11 +331,13 @@ export const postgresWithNeonProxyKind: Kind<
 		const file = extra.pid;
 		const running = await runningPort(file);
 		const proxyPort = running ?? (await freePort(extra.port));
-		const againstOldPostgres = running !== undefined && (await runningPort(file, 2)) !== port;
+		const againstOldPostgres =
+			running !== undefined &&
+			(await runningPort(file, PROXIED_POSTGRES_PORT_LINE)) !== postgresPort;
 		const argv = [
 			proxy.bin("neon-proxy"),
 			"--auth-backend=postgres",
-			`--auth-endpoint=postgres://${USER}:${PASSWORD}@${HOST}:${port}/postgres`,
+			`--auth-endpoint=postgres://${USER}:${PASSWORD}@${HOST}:${postgresPort}/postgres`,
 			"--wss",
 			`${HOST}:${proxyPort}`,
 			// Its other listeners default to fixed ports, so a second project's proxy fails on `Address already in use`:
@@ -350,7 +352,7 @@ export const postgresWithNeonProxyKind: Kind<
 		return {
 			[place.daemon]: daemon,
 			[extra.daemon]: {
-				run: `${recordRunning(file, proxyPort, port)} && export LOGFMT=text RUST_LOG=warn && exec ${argv.map(shellQuote).join(" ")}`,
+				run: `${recordRunning(file, proxyPort, postgresPort)} && export LOGFMT=text RUST_LOG=warn && exec ${argv.map(shellQuote).join(" ")}`,
 				dir: place.dir,
 				listens: proxyPort,
 				depends: [place.daemon],
@@ -373,7 +375,7 @@ export const postgresWithNeonProxyKind: Kind<
 		};
 	},
 
-	async extraAddress(_service, place) {
+	async extraAddress(place) {
 		return `ws://localhost:${await neonProxyPort(place)}/v2`;
 	},
 };
