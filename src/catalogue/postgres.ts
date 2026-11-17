@@ -166,12 +166,14 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			NO_UNIX_SOCKETS,
 		]);
 		return {
-			run: `exec ${server.map(shellQuote).join(" ")}`,
-			dir: place.dir,
-			// Fast shutdown: SIGTERM's smart shutdown would wait for every app's connections to close:
-			// https://www.postgresql.org/docs/current/server-shutdown.html
-			stopSignal: "SIGINT",
-			listens: port,
+			[place.daemon]: {
+				run: `exec ${server.map(shellQuote).join(" ")}`,
+				dir: place.dir,
+				// Fast shutdown: SIGTERM's smart shutdown would wait for every app's connections to close:
+				// https://www.postgresql.org/docs/current/server-shutdown.html
+				stopSignal: "SIGINT",
+				listens: port,
+			},
 		};
 	},
 

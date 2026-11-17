@@ -23,13 +23,20 @@ export type Place<N = unknown> = {
 	suffix?: string;
 	dir: string;
 	port: number;
+	daemon: string;
 	web?: Web;
+	extraDaemons: Record<string, ExtraDaemon>;
 	machine: Machine;
 } & N;
 
 export interface Web {
 	host: string;
 	url: string;
+	port: number;
+}
+
+export interface ExtraDaemon {
+	daemon: string;
 	port: number;
 }
 
@@ -41,9 +48,10 @@ export interface WorktreeData {
 export interface Kind<S extends ServiceBase, O, N> {
 	schema: z.ZodType<S>;
 	web?: true;
+	extraDaemons?(service: S): string[];
 	perEnvironment?(service: S): boolean;
 	names(service: S, input: NameInput): N;
-	prepare(service: S, place: Place<N>): Promise<Daemon>;
+	prepare(service: S, place: Place<N>): Promise<Record<string, Daemon>>;
 	provision(
 		service: S,
 		place: Place<N>,

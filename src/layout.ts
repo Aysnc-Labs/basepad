@@ -1,6 +1,14 @@
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { kindOf, type NamesOf, type Place, type Service, type Web } from "./catalogue.ts";
+import {
+	type ExtraDaemon,
+	type Kind,
+	kindOf,
+	type NamesOf,
+	type Place,
+	type Service,
+	type Web,
+} from "./catalogue.ts";
 import type { Project } from "./config.ts";
 import { BasepadError } from "./internal/exec.ts";
 
@@ -56,8 +64,16 @@ export type ServicePlace = {
 	port: number;
 	dir: string;
 	daemon: string;
+	extraDaemons: Record<string, ExtraDaemon>;
 	web?: Web;
 } & NamesOf<Service>;
+
+type KindOf = (
+	service: Service,
+) => Pick<
+	Kind<Service, unknown, NamesOf<Service>>,
+	"names" | "web" | "perEnvironment" | "extraDaemons"
+>;
 
 /** A DNS label's limit, in characters: https://www.rfc-editor.org/rfc/rfc1035#section-2.3.4 */
 const LABEL_MAX = 63;
@@ -77,6 +93,7 @@ export function layout(
 	},
 	machine: Machine,
 	suffix?: string,
+	kinds: KindOf = kindOf,
 ): Layout {
 	const fail = (reason: string): never => {
 		throw new BasepadError(`${project.file}: ${reason}`);
@@ -112,33 +129,48 @@ export function layout(
 	const services: Layout["services"] = {};
 	for (const [key, service] of Object.entries(project.services)) {
 		const dir = join(servicesHome(machine, name), key);
+		const kind = kinds(service);
 		let names: NamesOf<Service>;
 		try {
-			names = kindOf(service).names(service, { name, key, dir, suffix });
+			names = kind.names(service, { name, key, dir, suffix });
 		} catch (error) {
 			if (error instanceof BasepadError) fail(error.message);
 			throw error;
 		}
-		const web = kindOf(service).web === true;
+		const web = kind.web === true;
 		const host = appHost(key, name);
 		if (web && key in project.apps) {
 			fail(
 				`service \`${key}\` is served at ${host}, which is app \`${key}\`'s domain. Rename one.`,
 			);
 		}
-		const runsIn = kindOf(service).perEnvironment?.(service) ? namespace : name;
+		const runsIn = kind.perEnvironment?.(service) ? namespace : name;
+		const extraDaemons: Record<string, ExtraDaemon> = {};
+		for (const extra of kind.extraDaemons?.(service) ?? []) {
+			const daemon = `${key}-${extra}`;
+			if (daemon in project.apps || daemon in project.services) {
+				fail(
+					`service \`${key}\` runs a daemon named \`${daemon}\`, which is ${daemon in project.apps ? "app" : "service"} \`${daemon}\`'s name. Rename one.`,
+				);
+			}
+			extraDaemons[extra] = {
+				daemon: daemonId(runsIn, daemon),
+				port: servicePort(`${runsIn}.${key}.${extra}`),
+			};
+		}
 		services[key] = {
 			...names,
 			port: servicePort(`${runsIn}.${key}`),
 			dir,
 			daemon: daemonId(runsIn, key),
+			extraDaemons,
 			...(web ? { web: { host, url: urlOf(host), port: servicePort(`${name}.${key}.web`) } } : {}),
 		};
 	}
 	if (suffix === undefined) {
 		const longest = `${project.worktrees.prefix}-${LONGEST_NUMBER}`;
 		try {
-			layout(project, machine, longest);
+			layout(project, machine, longest, kinds);
 		} catch (error) {
 			if (!(error instanceof BasepadError) || !error.message.startsWith(`${project.file}: `)) {
 				throw error;
@@ -175,6 +207,10 @@ export function ownServers(lay: Pick<Layout, "namespace" | "services">): string[
 	return Object.entries(lay.services)
 		.filter(([, place]) => ofDaemon(place.daemon).namespace === lay.namespace)
 		.map(([key]) => key);
+}
+
+export function daemonsOf(place: Pick<ServicePlace, "daemon" | "extraDaemons">): string[] {
+	return [place.daemon, ...Object.values(place.extraDaemons).map((extra) => extra.daemon)];
 }
 
 export function appHost(app: string, name: string, suffix?: string): string {
