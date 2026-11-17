@@ -13,8 +13,9 @@ import { PGVECTOR_VERSIONS } from "../versions.ts";
 
 const HOST = "127.0.0.1";
 const USER = "postgres";
-const PASSWORD = "basepad";
+const PLACEHOLDER_PASSWORD = "basepad";
 const READY_MS = 60_000;
+const NO_UNIX_SOCKETS = "unix_socket_directories=";
 
 export type PostgresVersion = 17 | 18;
 
@@ -161,7 +162,7 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			"-c",
 			`listen_addresses=${HOST}`,
 			"-c",
-			"unix_socket_directories=",
+			NO_UNIX_SOCKETS,
 		]);
 		return {
 			run: `exec ${server.map(shellQuote).join(" ")}`,
@@ -190,11 +191,11 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		const sql = (text: string) => query(pg, port, text);
 		const db = place.database;
 		const outputs = {
-			url: `postgresql://${USER}:${PASSWORD}@${HOST}:${port}/${db}`,
+			url: `postgresql://${USER}:${PLACEHOLDER_PASSWORD}@${HOST}:${port}/${db}`,
 			host: HOST,
 			port,
 			user: USER,
-			password: PASSWORD,
+			password: PLACEHOLDER_PASSWORD,
 			database: db,
 		};
 		if (place.suffix !== undefined && service.worktree === "shared") return outputs;
@@ -209,24 +210,13 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		} else if (!exists) {
 			await sql(`create database ${identifier(db)}`);
 		}
-		const stamp = () =>
-			sql(
-				`select coalesce(shobj_description(oid, 'pg_database'), '') from pg_database where datname = ${literal(db)}`,
-			);
-		const owner = await stamp();
+		const owner = await ownerOf(sql, db);
 		if (owner !== "" && owner !== place.owner && !claim) {
 			throw new BasepadError(
 				`The database \`${db}\` belongs to the checkout at ${owner}, which has the same name ("${place.name}"). Two checkouts would share its data, so basepad stops here.\nIf that checkout moved here, or you want this one to take over, run \`basepad up --claim\`.`,
 			);
 		}
-		if (owner !== place.owner) {
-			// A comment on a database that has gone is only a warning, so the result is read back:
-			// https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/comment.c#L46-L62
-			await sql(`comment on database ${identifier(db)} is ${literal(place.owner)}`);
-			if ((await stamp()) !== place.owner) {
-				throw new BasepadError(`Could not mark \`${db}\` as belonging to ${place.owner}.`);
-			}
-		}
+		if (owner !== place.owner) await stampOwnerAndCheck(sql, db, place.owner);
 		return outputs;
 	},
 
@@ -334,11 +324,9 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			await confirm(place.database);
 			await replace(sql, swap, async (staging, owner) => {
 				await sql(`create database ${identifier(staging)}`);
-				await stamp(sql, staging, owner);
+				await stampOwner(sql, staging, owner);
 				await restore(pg, port, staging, from);
-				if (!(await createdAnything(pg, port, staging))) {
-					throw new BasepadError("It created nothing in the database.");
-				}
+				await rejectEmptySource(pg, port, staging);
 			});
 			return from.description;
 		},
@@ -414,7 +402,7 @@ async function sourceOf(source: string): Promise<Source> {
 	}
 }
 
-async function createdAnything(pg: Tool, port: number, name: string): Promise<boolean> {
+async function rejectEmptySource(pg: Tool, port: number, name: string): Promise<void> {
 	const user = (namespace: string) =>
 		`${namespace} not in (select oid from pg_namespace where nspname in ('pg_catalog', 'information_schema', 'pg_toast') or nspname like 'pg\\_%temp\\_%')`;
 	const anything = [
@@ -436,12 +424,17 @@ async function createdAnything(pg: Tool, port: number, name: string): Promise<bo
 		],
 		{ env: clientEnv() },
 	);
-	return out.trim() === "t";
+	if (out.trim() !== "t") throw new BasepadError("It created nothing in the database.");
 }
 
 async function restore(pg: Tool, port: number, to: string, from: Source): Promise<void> {
 	const into = connection(port, to);
-	const pgRestore = [pg.bin("pg_restore"), "--no-owner", "--no-privileges", "--exit-on-error"];
+	const restoreAsSuperuser = [
+		pg.bin("pg_restore"),
+		"--no-owner",
+		"--no-privileges",
+		"--exit-on-error",
+	];
 	if (from.format === "url") {
 		const env = {
 			...clientEnv(),
@@ -452,7 +445,7 @@ async function restore(pg: Tool, port: number, to: string, from: Source): Promis
 			"bash",
 			[
 				"-c",
-				`set -o pipefail; ${shellQuote(pg.bin("pg_dump"))} --format=custom --dbname="$BASEPAD_SOURCE_URL" | ${[...pgRestore, ...into].map(shellQuote).join(" ")}`,
+				`set -o pipefail; ${shellQuote(pg.bin("pg_dump"))} --format=custom --dbname="$BASEPAD_SOURCE_URL" | ${[...restoreAsSuperuser, ...into].map(shellQuote).join(" ")}`,
 			],
 			{ env, label: "pg_dump | pg_restore" },
 		);
@@ -468,9 +461,13 @@ async function restore(pg: Tool, port: number, to: string, from: Source): Promis
 			);
 		}
 	} else {
-		await must(pgRestore[0] as string, [...pgRestore.slice(1), ...into, from.file], {
-			env: clientEnv(),
-		});
+		await must(
+			restoreAsSuperuser[0] as string,
+			[...restoreAsSuperuser.slice(1), ...into, from.file],
+			{
+				env: clientEnv(),
+			},
+		);
 	}
 }
 
@@ -560,12 +557,12 @@ async function replace(
 		if (!(error instanceof BasepadError)) throw error;
 		throw new BasepadError(`${failed}\n${error.message}`);
 	}
-	await stamp(sql, staging, owner);
+	await stampOwner(sql, staging, owner);
 	await sql(`drop database if exists ${identifier(target)} with (force)`);
 	await sql(`alter database ${identifier(staging)} rename to ${identifier(target)}`);
 }
 
-async function stamp(
+async function stampOwner(
 	sql: (text: string) => Promise<string>,
 	name: string,
 	owner: string,
@@ -573,14 +570,39 @@ async function stamp(
 	await sql(`comment on database ${identifier(name)} is ${literal(owner)}`);
 }
 
+function ownerOf(sql: (text: string) => Promise<string>, name: string): Promise<string> {
+	return sql(
+		`select coalesce(shobj_description(oid, 'pg_database'), '') from pg_database where datname = ${literal(name)}`,
+	);
+}
+
+/** A comment on a database that has gone is only a warning, so the owner is read back: https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/comment.c#L46-L62 */
+async function stampOwnerAndCheck(
+	sql: (text: string) => Promise<string>,
+	name: string,
+	owner: string,
+): Promise<void> {
+	await stampOwner(sql, name, owner);
+	if ((await ownerOf(sql, name)) !== owner) {
+		throw new BasepadError(`Could not mark \`${name}\` as belonging to ${owner}.`);
+	}
+}
+
 async function installPostgres(version: PostgresVersion, home: string): Promise<Tool> {
 	const pg = await install("postgres", String(version), home);
 	const pgvector = PGVECTOR_VERSIONS[version];
-	const marker = join(pg.dir, `.basepad-pgvector-${pgvector}`);
-	if (existsSync(marker)) return pg;
-	const from = (await install("conda:pgvector", pgvector, home)).dir;
-	const pgConfig = join(pg.dir, "bin", "pg_config");
-	const config = (flag: string) => must(pgConfig, [flag]).then((out) => out.trim());
+	const placed = join(pg.dir, `.basepad-pgvector-${pgvector}`);
+	if (!existsSync(placed)) {
+		await placePgvector(pg, pgvector, home);
+		await writeFile(placed, "");
+	}
+	return pg;
+}
+
+async function placePgvector(pg: Tool, version: string, home: string): Promise<void> {
+	const from = (await install("conda:pgvector", version, home)).dir;
+	const pgConfigNotAmongMiseBins = join(pg.dir, "bin", "pg_config");
+	const config = (flag: string) => must(pgConfigNotAmongMiseBins, [flag]).then((out) => out.trim());
 	const libDir = await config("--pkglibdir");
 	const extensionDir = join(await config("--sharedir"), "extension");
 	const copies: [string, string][] = [];
@@ -591,7 +613,7 @@ async function installPostgres(version: PostgresVersion, home: string): Promise<
 		if (/^vector[.-]/.test(file)) copies.push([join(from, "share/extension", file), extensionDir]);
 	}
 	if (!copies.some(([file]) => file.endsWith(".control"))) {
-		throw new BasepadError(`mise's conda:pgvector@${pgvector} in ${from} has no vector.control.`);
+		throw new BasepadError(`mise's conda:pgvector@${version} in ${from} has no vector.control.`);
 	}
 	for (const [file, dir] of copies) {
 		const target = join(dir, file.slice(file.lastIndexOf("/") + 1));
@@ -599,8 +621,6 @@ async function installPostgres(version: PostgresVersion, home: string): Promise<
 		await copyFile(file, temp);
 		await rename(temp, target);
 	}
-	await writeFile(marker, "");
-	return pg;
 }
 
 type Route = "file clone" | "template copy" | "dump and restore";
@@ -612,50 +632,29 @@ async function copyDatabase(
 	to: string,
 	owner: string,
 ): Promise<Route> {
-	const sql = (...statements: string[]) => query(pg, port, statements);
-	const offered = await sql(
-		"select coalesce(enumvals::text, '') from pg_settings where name = 'file_copy_method'",
-	);
-	// File by file, not the default WAL_LOG: faster on a large database, and a clone needs it:
-	// https://www.postgresql.org/docs/current/sql-createdatabase.html#CREATE-DATABASE-STRATEGY
-	const create = `create database ${identifier(to)} template ${identifier(from)} strategy file_copy`;
-	const routes: [Route, string[]][] = [["template copy", [create]]];
-	if (offered.includes("clone")) {
-		routes.unshift(["file clone", ["set file_copy_method = clone", create]]);
-	}
+	const sql = (text: string) => query(pg, port, text);
 	const failures: string[] = [];
-	await sql(`alter database ${identifier(from)} allow_connections false`);
-	try {
-		await sql(
-			`select pg_terminate_backend(pid, 5000) from pg_stat_activity where datname = ${literal(from)} and pid <> pg_backend_pid()`,
-		);
-		for (const [route, statements] of routes) {
+	const copied = await withSourceClosed(sql, from, async () => {
+		for (const [route, statements] of await templateRoutes(sql, from, to)) {
 			try {
-				await sql(...statements);
+				await inOneSession(pg, port, statements);
 			} catch (error) {
 				failures.push(`${route}: ${(error as Error).message.trim()}`);
 				await sql(`drop database if exists ${identifier(to)}`);
 				continue;
 			}
-			await stamp(sql, to, owner);
 			return route;
 		}
-	} finally {
-		await sql(`alter database ${identifier(from)} allow_connections true`);
+		return undefined;
+	});
+	if (copied !== undefined) {
+		await stampOwner(sql, to, owner);
+		return copied;
 	}
 	await sql(`create database ${identifier(to)}`);
-	await stamp(sql, to, owner);
-	const conn = (db: string) =>
-		["-h", HOST, "-p", String(port), "-U", USER, "-d", db].map(shellQuote).join(" ");
+	await stampOwner(sql, to, owner);
 	try {
-		await must(
-			"bash",
-			[
-				"-c",
-				`set -o pipefail; ${shellQuote(pg.bin("pg_dump"))} -Fc ${conn(from)} | ${shellQuote(pg.bin("pg_restore"))} --no-owner --exit-on-error ${conn(to)}`,
-			],
-			{ env: clientEnv() },
-		);
+		await dumpAndRestore(pg, port, from, to);
 	} catch (error) {
 		await sql(`drop database if exists ${identifier(to)}`);
 		failures.push(`dump and restore: ${(error as Error).message.trim()}`);
@@ -664,11 +663,59 @@ async function copyDatabase(
 	return "dump and restore";
 }
 
+async function templateRoutes(
+	sql: (text: string) => Promise<string>,
+	from: string,
+	to: string,
+): Promise<[Route, string[]][]> {
+	const offered = await sql(
+		"select coalesce(enumvals::text, '') from pg_settings where name = 'file_copy_method'",
+	);
+	// File by file, not the default WAL_LOG: faster on a large database, and a clone needs it:
+	// https://www.postgresql.org/docs/current/sql-createdatabase.html#CREATE-DATABASE-STRATEGY
+	const create = `create database ${identifier(to)} template ${identifier(from)} strategy file_copy`;
+	const templateCopy: [Route, string[]] = ["template copy", [create]];
+	if (!offered.includes("clone")) return [templateCopy];
+	return [["file clone", ["set file_copy_method = clone", create]], templateCopy];
+}
+
+async function withSourceClosed<T>(
+	sql: (text: string) => Promise<string>,
+	database: string,
+	copy: () => Promise<T>,
+): Promise<T> {
+	await sql(`alter database ${identifier(database)} allow_connections false`);
+	try {
+		await sql(
+			`select pg_terminate_backend(pid, 5000) from pg_stat_activity where datname = ${literal(database)} and pid <> pg_backend_pid()`,
+		);
+		return await copy();
+	} finally {
+		await sql(`alter database ${identifier(database)} allow_connections true`);
+	}
+}
+
+async function dumpAndRestore(pg: Tool, port: number, from: string, to: string): Promise<void> {
+	const conn = (db: string) => connection(port, db).map(shellQuote).join(" ");
+	await must(
+		"bash",
+		[
+			"-c",
+			`set -o pipefail; ${shellQuote(pg.bin("pg_dump"))} -Fc ${conn(from)} | ${shellQuote(pg.bin("pg_restore"))} --no-owner --exit-on-error ${conn(to)}`,
+		],
+		{ env: clientEnv() },
+	);
+}
+
 function serverPort(data: string): Promise<number | undefined> {
 	return runningPort(join(data, "postmaster.pid"), 3);
 }
 
-async function query(pg: Tool, port: number, sql: string | string[]): Promise<string> {
+function query(pg: Tool, port: number, sql: string): Promise<string> {
+	return inOneSession(pg, port, [sql]);
+}
+
+async function inOneSession(pg: Tool, port: number, statements: string[]): Promise<string> {
 	const out = await must(
 		pg.bin("psql"),
 		[
@@ -683,7 +730,7 @@ async function query(pg: Tool, port: number, sql: string | string[]): Promise<st
 			"-tAX",
 			"-v",
 			"ON_ERROR_STOP=1",
-			...[sql].flat().flatMap((statement) => ["-c", statement]),
+			...statements.flatMap((statement) => ["-c", statement]),
 		],
 		{ env: clientEnv() },
 	);

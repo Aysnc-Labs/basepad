@@ -9,7 +9,7 @@ import { install } from "../tools.ts";
 import { MAILPIT_VERSION } from "../versions.ts";
 
 const HOST = "127.0.0.1";
-const PASSWORD = "basepad";
+const PLACEHOLDER_PASSWORD = "basepad";
 const READY_MS = 30_000;
 
 /** A Mailpit of the project's own, shared by its worktrees. */
@@ -90,11 +90,11 @@ export const mailpitKind: Kind<MailpitService, MailpitOutputs, MailpitNames> = {
 			stopped,
 		);
 		return {
-			url: `smtp://${place.user}:${PASSWORD}@${HOST}:${port}`,
+			url: `smtp://${place.user}:${PLACEHOLDER_PASSWORD}@${HOST}:${port}`,
 			host: HOST,
 			port,
 			user: place.user,
-			password: PASSWORD,
+			password: PLACEHOLDER_PASSWORD,
 			inbox: webOf(place).url,
 		};
 	},
