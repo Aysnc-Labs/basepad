@@ -9,6 +9,7 @@ export interface Part {
 	address?: string;
 	note?: string;
 	error?: string;
+	extraDaemons?: string[];
 }
 
 export interface EnvironmentView {
@@ -358,7 +359,7 @@ function actionOn(
 			kind,
 			namespace: ofDaemon(part.id).namespace,
 			apps: isApp ? [part.name] : [],
-			services: isApp ? [] : [part.name],
+			services: isApp ? [] : [part.name, ...(part.extraDaemons ?? [])],
 			label: part.name,
 		};
 	}
