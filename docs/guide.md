@@ -3,7 +3,7 @@
 Everything basepad does, in detail. New here? Start with the [README](../README.md).
 
 - [Install](#install) · [A first project](#a-first-project)
-- [The config](#the-config): [what `env` gets](#what-env-gets), [env files](#env-files), [apps](#apps), [Postgres](#postgres), [worktrees](#worktrees), [the local file](#the-local-file)
+- [The config](#the-config): [what `env` gets](#what-env-gets), [env files](#env-files), [apps](#apps), [Postgres](#postgres), [Postgres with Neon's proxy](#postgres-with-neons-proxy), [worktrees](#worktrees), [the local file](#the-local-file)
 - [Commands](#commands) and mission control's keys
 - [Port-free URLs: `basepad setup`](#port-free-urls-basepad-setup)
 - [Notes](#notes): apps that ignore `PORT`, frameworks behind the proxy, extensions, your own database
@@ -136,7 +136,7 @@ export default defineConfig({
 | Key        | Required | What it is                                                                                                                                |
 | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`     | yes      | The project's one key: a lowercase DNS label (letters, digits, hyphens). Every database and domain is built from it.                      |
-| `services` | no       | The services basepad provides, by key: Postgres, `postgres()` or `postgres({ version: 17 })` (18 is the default), Redis, `redis()` or `redis({ worktree: "shared" })`, and [Mailpit](#mailpit), `mailpit()`. |
+| `services` | no       | The services basepad provides, by key: Postgres, `postgres()` or `postgres({ version: 17 })` (18 is the default), Postgres with [Neon's proxy](#postgres-with-neons-proxy), `postgresWithNeonProxy()`, Redis, `redis()` or `redis({ worktree: "shared" })`, and [Mailpit](#mailpit), `mailpit()`. |
 | `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config, `port: false` for one that listens on nothing, and `domain: false` for one served at `https://localhost:$PORT`. |
 | `env`      | no       | A function from every service's and app's outputs to the env files to write: each file's path, relative to the config, to its keys.       |
 | `worktrees` | no      | How [worktrees](#worktrees) are made: `prefix` (default `worktree`) names them `<prefix>-<n>`; `dir`, relative to the config, is where they are checked out (default `<repository>/../<name>.worktrees`); `clone` lists untracked paths copied from main, such as `node_modules`; `setup` lists shell commands run once in each new worktree. |
@@ -157,6 +157,8 @@ A service gives:
 | `user`     | `postgres`                                                                  |
 | `password` | `basepad`, the `postgres` role's real password; local connections need none |
 | `database` | `<name>_<key>`, with hyphens made underscores: `shop_db`                    |
+
+`postgresWithNeonProxy()` gives Postgres's outputs, with `url` for Neon's driver, plus `directUrl` and `wsProxy`; see [Postgres with Neon's proxy](#postgres-with-neons-proxy).
 
 Redis gives `url` (`redis://127.0.0.1:<port>`, with no database index: clients pick their own), `host` and `port`.
 
@@ -190,6 +192,50 @@ basepad sets exactly the keys `env` returns, in the files it names:
 - `up` creates the database `<name>_<key>`, and keeps its data across `down` and `up` in `~/.basepad/services/<name>/<key>`.
 - Postgres's standard extensions and pgvector are there for `CREATE EXTENSION`. basepad enables none; see [Extensions](#extensions).
 - Data from another Postgres major version is refused, never converted. To change `version`, dump the database first.
+
+### Postgres with Neon's proxy
+
+`db: postgresWithNeonProxy()` is for an app that talks to Postgres through Neon's serverless driver, `@neondatabase/serverless`. It is the Postgres above, with [Neon's local proxy](https://neon.com/guides/local-development-with-neon) in front of it, so the driver connects locally as it does to Neon, with one code path. It takes `postgres()`'s options, `version` and `worktree`.
+
+| Output      | What it is                                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------- |
+| `url`       | What the driver connects with: `postgresql://postgres:basepad@localhost:<port>/<database>?options=endpoint%3Dlocal` |
+| `directUrl` | Straight to Postgres, as `postgres()`'s `url`, for `psql`, migration tools and `pg`: Postgres refuses `url`'s `options` |
+| `wsProxy`   | The proxy's address for the driver: `localhost:<proxy port>/v2`                              |
+
+`host`, `port`, `user`, `password` and `database` are Postgres's, as above.
+
+```ts
+env: ({ db }) => ({
+	".env.local": { DATABASE_URL: db.url, DIRECT_URL: db.directUrl, NEON_WS_PROXY: db.wsProxy },
+}),
+```
+
+Point the driver at the proxy where your app makes its pool, when `NEON_WS_PROXY` is set:
+
+```ts
+import { neonConfig, Pool } from "@neondatabase/serverless";
+
+if (process.env.NEON_WS_PROXY) {
+	neonConfig.useSecureWebSocket = false;
+	neonConfig.wsProxy = () => process.env.NEON_WS_PROXY as string;
+}
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+```
+
+- The proxy runs as its own daemon, `<key>-neon-proxy`, beside the server: `status` lists it with its address (`ws://localhost:<port>/v2`) and state, and `down` stops it.
+- Its port comes from the project's name, as Postgres's does; when something else holds it, `up` takes the next free one and rewrites your env files.
+- It speaks plain WebSocket on `127.0.0.1`, with no certificate, hence `useSecureWebSocket = false`.
+- It checks the `postgres` role's password, `basepad`, against Postgres. `up` creates the table the proxy reads in the `postgres` database, `neon_control_plane.endpoints`.
+- It comes from mise, as `github:aysnc-labs/prebuilt-binaries@neon-proxy-<version>`, pinned by basepad. On Linux it needs glibc 2.39 or newer (Ubuntu 24.04, Debian 13); on an older one, `up` says so.
+
+It is not a copy of Neon, so passing locally is not passing on Neon:
+
+- The driver connects as `postgres`, a superuser; on Neon your role is not one.
+- There is no pooler: no PgBouncer, as Neon's `-pooler` hosts have.
+- The extensions are basepad's (Postgres's standard ones and pgvector), not Neon's list.
+- There are no cold starts.
+- The WebSocket is plain, not TLS.
 
 ### Database commands: `basepad db`
 
@@ -441,5 +487,15 @@ As root on Linux (most cloud sandboxes and containers), `up` needs no human:
 - Postgres refuses to run as root, so basepad runs it as a system user, `basepad`, which it creates. mise installs under `/root`, so basepad gives that user traverse-only access (`o+x`) to the folders above Postgres's programs and data.
 - The proxy listens on port 443 itself, and `up` trusts its certificate authority in the system store and the browsers' stores, so URLs are port-free with no `basepad setup` and no prompt.
 - Where `*.localhost` doesn't resolve for server-side code (glibc without systemd's resolver, as in most containers), `up` adds the project's domains to `/etc/hosts`, in a block marked `# >>> basepad <name>`. When it can't write the file, it prints the lines to add.
+
+`postgresWithNeonProxy()` installs Neon's proxy from GitHub releases through mise, which checks its attestation. A GitHub Actions job needs `GITHUB_TOKEN` in its env and the `attestations: read` permission:
+
+```yaml
+permissions:
+  contents: read
+  attestations: read
+env:
+  GITHUB_TOKEN: ${{ github.token }}
+```
 
 As a user, as on a hosted CI runner, URLs keep their port, and tools basepad doesn't start (a test runner, say) need its certificate authority, `~/.basepad/pitchfork/state/proxy/ca.pem`: for Node, set `NODE_EXTRA_CA_CERTS` to it.

@@ -10,6 +10,8 @@ concurrency:
 
 permissions:
   contents: read
+  # mise checks the attestations of tools it installs from GitHub releases, such as Neon's proxy
+  attestations: read
 
 env:
   MISE_VERSION: 2026.11.5
