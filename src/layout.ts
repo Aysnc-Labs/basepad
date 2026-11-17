@@ -62,11 +62,12 @@ export type ServicePlace = {
 /** A DNS label's limit, in characters: https://www.rfc-editor.org/rfc/rfc1035#section-2.3.4 */
 const LABEL_MAX = 63;
 
-const APP_PORT_BASE = 20000;
-const APP_PORT_BLOCK = 20;
-const APP_PORT_BLOCKS = 600;
 const SERVICE_PORT_BASE = 15000;
-const SERVICE_PORTS = 5000;
+const APP_PORT_BASE = 20000;
+const APP_PORT_END = 32000;
+const APP_PORT_BLOCK = 20;
+const APP_PORT_BLOCKS = (APP_PORT_END - APP_PORT_BASE) / APP_PORT_BLOCK;
+const SERVICE_PORTS = APP_PORT_BASE - SERVICE_PORT_BASE;
 
 const LONGEST_NUMBER = 999;
 

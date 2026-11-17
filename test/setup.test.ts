@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { nssStores } from "../src/setup.ts";
 import { configFile, type Sandbox, sandbox } from "./sandbox.ts";
 
 const rootOnLinux = process.platform === "linux" && process.getuid?.() === 0;
@@ -88,4 +90,18 @@ test("one app fetches another by its HTTPS domain from server-side code", async 
 
 	const status = await basepad(dir, "status");
 	expect(status.stdout).toContain(`web  https://web.pair.localhost${suffix()}  running`);
+});
+
+test("Chrome's NSS store is ~/.pki/nssdb when it exists, else ~/.local/share/pki/nssdb", async () => {
+	const home = await mkdtemp(join(tmpdir(), "basepad-nss-"));
+	const store = async (dir: string) => {
+		await mkdir(join(home, dir), { recursive: true });
+		await writeFile(join(home, dir, "cert9.db"), "");
+		return join(home, dir);
+	};
+	expect(await nssStores(home)).toEqual([]);
+	const shared = await store(".local/share/pki/nssdb");
+	expect(await nssStores(home)).toEqual([shared]);
+	const legacy = await store(".pki/nssdb");
+	expect(await nssStores(home)).toEqual([legacy]);
 });

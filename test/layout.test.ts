@@ -12,6 +12,8 @@ import {
 	worktreeFolder,
 } from "../src/layout.ts";
 
+const LINUX_EPHEMERAL_START = 32768;
+
 const layout = (...args: Parameters<typeof layoutOf>) =>
 	layoutOf(...args) as Layout & { services: Record<string, PostgresNames> };
 
@@ -113,7 +115,7 @@ test("each app starts from its own port, the same every time, below the ephemera
 	expect(ports("blog")).not.toEqual(shop);
 	for (const port of [...shop, ...ports("blog")]) {
 		expect(port).toBeGreaterThanOrEqual(20000);
-		expect(port).toBeLessThan(32768);
+		expect(port).toBeLessThan(LINUX_EPHEMERAL_START);
 	}
 });
 

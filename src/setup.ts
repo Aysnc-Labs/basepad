@@ -231,12 +231,15 @@ const LINUX_CA_DIRS = [
 ];
 
 /**
- * The NSS databases Chrome and Firefox read on Linux; pitchfork's trust does not reach them:
+ * The NSS databases Chrome and Firefox read on Linux; pitchfork's trust does not reach them.
+ * Chrome reads ~/.pki/nssdb when it exists, else ~/.local/share/pki/nssdb (since M146):
  * https://chromium.googlesource.com/chromium/src/+/main/docs/linux/cert_management.md
  */
-async function nssStores(): Promise<string[]> {
-	const home = process.env.HOME || homedir();
-	const stores = [join(home, ".pki/nssdb")].filter((dir) => existsSync(join(dir, "cert9.db")));
+export async function nssStores(home = process.env.HOME || homedir()): Promise<string[]> {
+	const chrome = [".pki/nssdb", ".local/share/pki/nssdb"]
+		.map((dir) => join(home, dir))
+		.find((dir) => existsSync(join(dir, "cert9.db")));
+	const stores = chrome === undefined ? [] : [chrome];
 	for (const firefox of [".mozilla/firefox", "snap/firefox/common/.mozilla/firefox"]) {
 		const dir = join(home, firefox);
 		const profiles = await readdir(dir).catch(() => []);

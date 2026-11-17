@@ -29,7 +29,7 @@ export async function dropHosts(name: string): Promise<void> {
 	const current = await readFile(HOSTS_FILE, "utf8").catch(() => undefined);
 	if (current === undefined) return;
 	const text = withoutHosts(current, name);
-	if (text !== current && (await writable(HOSTS_FILE))) await writeFile(HOSTS_FILE, text);
+	if (text !== current) await writeHostsInPlace(text);
 }
 
 export async function syncHosts(name: string, hosts: string[]): Promise<string[]> {
@@ -44,14 +44,11 @@ export async function syncHosts(name: string, hosts: string[]): Promise<string[]
 	}
 	const text = withHosts(current, name, hosts);
 	if (text === current) return [];
-	if (!(await writable(HOSTS_FILE))) {
-		return [
-			`This system does not resolve ${name}'s domains for server-side code. Add to ${HOSTS_FILE}:`,
-			...hosts.map((host) => `  127.0.0.1 ${host}`),
-		];
-	}
-	await writeFile(HOSTS_FILE, text);
-	return [`Added ${name}'s domains to ${HOSTS_FILE}.`];
+	if (await writeHostsInPlace(text)) return [`Added ${name}'s domains to ${HOSTS_FILE}.`];
+	return [
+		`This system does not resolve ${name}'s domains for server-side code. Add to ${HOSTS_FILE}:`,
+		...hosts.map((host) => `  127.0.0.1 ${host}`),
+	];
 }
 
 async function resolves(host: string): Promise<boolean> {
@@ -61,9 +58,11 @@ async function resolves(host: string): Promise<boolean> {
 	);
 }
 
-async function writable(file: string): Promise<boolean> {
-	return access(file, constants.W_OK).then(
+async function writeHostsInPlace(text: string): Promise<boolean> {
+	const writable = await access(HOSTS_FILE, constants.W_OK).then(
 		() => true,
 		() => false,
 	);
+	if (writable) await writeFile(HOSTS_FILE, text);
+	return writable;
 }

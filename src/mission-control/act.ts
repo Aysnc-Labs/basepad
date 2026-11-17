@@ -91,10 +91,14 @@ export function desktopHands(
 				);
 				if (done) return "the clipboard";
 			}
-			terminal.write(`\u001b]52;c;${Buffer.from(text).toString("base64")}\u0007`);
+			terminal.write(osc52Copy(text));
 			return "the clipboard, through the terminal";
 		},
 	};
+}
+
+function osc52Copy(text: string): string {
+	return `\u001b]52;c;${Buffer.from(text).toString("base64")}\u0007`;
 }
 
 function runWith(command: string, args: string[], input?: string): Promise<void> {

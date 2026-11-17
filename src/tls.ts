@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { must } from "./internal/exec.ts";
 import { waitFor } from "./internal/ports.ts";
 
-const DAYS = 365;
+const CERTIFICATE_DAYS = 365;
 const RENEW_MS = 30 * 24 * 60 * 60 * 1000;
 const STALE_LOCK_MS = 30_000;
 
@@ -60,7 +60,7 @@ export async function ensureLocalhostCertificate(
 			"-set_serial",
 			`0x${randomBytes(8).toString("hex")}`,
 			"-days",
-			String(DAYS),
+			String(CERTIFICATE_DAYS),
 			"-sha256",
 			"-extfile",
 			extensions,

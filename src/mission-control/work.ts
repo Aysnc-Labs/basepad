@@ -44,7 +44,7 @@ export async function startWork(options: {
 		order.kind === "add"
 			? { kind: "add", title: "Adding a worktree", ...(before ? { before } : {}) }
 			: { kind: "remove", title: `Removing ${order.suffix}`, namespace: order.namespace, args };
-	await writeFile(`${base}.json`, JSON.stringify(record));
+	await writeWhole(`${base}.json`, JSON.stringify(record));
 	const child = spawn(
 		"sh",
 		["-c", '"$@" >"$0.log" 2>&1; echo $? >"$0.exit"', base, ...command, ...args],
@@ -61,7 +61,12 @@ export async function startWork(options: {
 	const pid = child.pid as number;
 	const start = await startOf(pid);
 	const shell: Shell = { pid, ...(start === undefined ? {} : { start }) };
-	await writeFile(`${base}.pid`, JSON.stringify(shell));
+	await writeWhole(`${base}.pid`, JSON.stringify(shell));
+}
+
+async function writeWhole(file: string, text: string): Promise<void> {
+	await writeFile(`${file}.partial`, text);
+	await rename(`${file}.partial`, file);
 }
 
 export async function takeWork(dir: string): Promise<{ running: Running[]; finished: string[] }> {

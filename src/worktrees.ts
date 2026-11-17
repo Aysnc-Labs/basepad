@@ -93,12 +93,8 @@ export async function clonePaths(from: string, to: string, paths: string[]): Pro
 }
 
 async function copyOnWrite(args: string[]): Promise<void> {
-	if (process.platform !== "darwin") {
-		await must("cp", ["-R", "--reflink=auto", ...args]);
-		return;
-	}
-	const cloned = await exec("cp", ["-c", "-R", ...args]);
-	if (cloned.code !== 0) await must("cp", ["-R", ...args]);
+	const clone = process.platform === "darwin" ? "-c" : "--reflink=auto";
+	await must("cp", [clone, "-R", ...args]);
 }
 
 export async function runSetup(
