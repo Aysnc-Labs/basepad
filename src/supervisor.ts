@@ -579,3 +579,20 @@ function localTime(date: Date): string {
 	const p = (n: number) => String(n).padStart(2, "0");
 	return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
 }
+
+const FIRST_DISTROS_WITH_GLIBC: Record<string, string> = { "2.39": "Ubuntu 24.04, Debian 13" };
+
+/** What `up` says of a daemon that exited on start, from its last log lines. */
+export function startFailure(name: string, lines: string[], logsCommand: string): string {
+	const glibc = lines.join("\n").match(/version `GLIBC_([\d.]+)' not found/)?.[1];
+	const distros = glibc === undefined ? undefined : FIRST_DISTROS_WITH_GLIBC[glibc];
+	const why =
+		glibc === undefined
+			? "exited on start."
+			: `needs glibc ${glibc} or newer${distros === undefined ? "" : ` (${distros})`}, and this system's is older.`;
+	return [
+		`\`${name}\` ${why} Its last output:`,
+		...(lines.length > 0 ? lines : ["(none)"]).map((line) => `  ${line}`),
+		`For more, run: ${logsCommand}`,
+	].join("\n");
+}

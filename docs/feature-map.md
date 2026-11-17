@@ -116,9 +116,10 @@ Paths: src/forward.ts, src/supervisor.ts, src/layout.ts
 
 ### Postgres
 
-Purpose: a Postgres 17 or 18 server per project, with its database stamped to the owning checkout, pgvector available, and connection values for `env`.
-Entry: `services: { db: postgres({ version }) }` in the config
-Paths: src/catalogue.ts, src/catalogue/postgres.ts, src/internal/service-user.ts
+Purpose: a Postgres 17 or 18 server per project, with its database stamped to the owning checkout, pgvector available, and connection values for `env`. `postgresWithNeonProxy()` is the same server with Neon's local proxy in front of it, as its own daemon `<key>-neon-proxy` (an extra daemon of the Kind), so `@neondatabase/serverless` connects through `url` and `wsProxy`; `directUrl` goes straight to Postgres.
+Entry: `services: { db: postgres({ version }) }` or `services: { db: postgresWithNeonProxy({ version }) }` in the config
+Paths: src/catalogue.ts, src/catalogue/postgres.ts, src/internal/service-user.ts, src/layout.ts
+Decisions: [0002](adr/0002-a-kind-owns-its-companion-processes.md)
 
 ### Redis
 

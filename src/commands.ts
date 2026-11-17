@@ -40,7 +40,13 @@ import {
 	supervisorPaths,
 } from "./layout.ts";
 import { setup, trustAsRoot } from "./setup.ts";
-import { type Daemon, type DaemonState, openSupervisor, type Supervisor } from "./supervisor.ts";
+import {
+	type Daemon,
+	type DaemonState,
+	openSupervisor,
+	type Supervisor,
+	startFailure,
+} from "./supervisor.ts";
 import { ensureLocalhostCertificate } from "./tls.ts";
 import {
 	checkedOut,
@@ -590,6 +596,11 @@ async function stateTables(
 			const place = placeOf(project, lay, here, key);
 			const address = await kindOf(service).address(service, place);
 			rows.push([key, address, states[ofDaemon(place.daemon).name] ?? "stopped"]);
+			for (const [extra, { daemon }] of Object.entries(place.extraDaemons)) {
+				const name = ofDaemon(daemon).name;
+				const extraAddress = (await kindOf(service).extraAddress?.(service, place, extra)) ?? "";
+				rows.push([name, extraAddress, states[name] ?? "stopped"]);
+			}
 		}
 		tables.push(table([["SERVICE", "ADDRESS", "STATE"], ...rows]));
 	}
@@ -605,13 +616,7 @@ async function failures(
 	const parts: string[] = [];
 	for (const key of failed) {
 		const lines = await supervisor.logs(namespace, key, since, FAILED_LINES);
-		parts.push(
-			[
-				`\`${key}\` exited on start. Its last output:`,
-				...(lines.length > 0 ? lines : ["(none)"]).map((line) => `  ${line}`),
-				`For more, run: ${supervisor.logsCommand(namespace, key)}`,
-			].join("\n"),
-		);
+		parts.push(startFailure(key, lines, supervisor.logsCommand(namespace, key)));
 	}
 	return parts.join("\n");
 }

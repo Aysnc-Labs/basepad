@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import { mailpitKind } from "./catalogue/mailpit.ts";
-import { postgresKind } from "./catalogue/postgres.ts";
+import { postgresKind, postgresWithNeonProxyKind } from "./catalogue/postgres.ts";
 import { redisKind } from "./catalogue/redis.ts";
 import type { Machine } from "./layout.ts";
 import type { Daemon } from "./supervisor.ts";
@@ -64,6 +64,7 @@ export interface Kind<S extends ServiceBase, O, N> {
 	): Promise<O>;
 	worktreeData?: WorktreeDataStore<S, N>;
 	address(service: S, place: Place<N>): Promise<string>;
+	extraAddress?(service: S, place: Place<N>, extra: string): Promise<string>;
 	database?: Database<S, N>;
 }
 
@@ -93,7 +94,12 @@ export interface Database<S, N> {
 	export(service: S, place: Place<N>, file: string | undefined): Promise<string>;
 }
 
-const CATALOGUE = { postgres: postgresKind, redis: redisKind, mailpit: mailpitKind };
+const CATALOGUE = {
+	postgres: postgresKind,
+	postgresWithNeonProxy: postgresWithNeonProxyKind,
+	redis: redisKind,
+	mailpit: mailpitKind,
+};
 type Catalogue = typeof CATALOGUE;
 
 /** Something basepad provides to an environment: one config entry of a kind in the catalogue. */

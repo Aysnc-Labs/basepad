@@ -240,7 +240,7 @@ export async function readEnv(dir: string, file: string): Promise<Record<string,
 }
 
 export function configFile(body: string): string {
-	return `import { defineConfig, mailpit, postgres, redis } from "basepad";\n\nexport default defineConfig(${body});\n`;
+	return `import { defineConfig, mailpit, postgres, postgresWithNeonProxy, redis } from "basepad";\n\nexport default defineConfig(${body});\n`;
 }
 
 export async function sendMail(
