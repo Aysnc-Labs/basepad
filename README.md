@@ -1,13 +1,20 @@
-<p align="center">
-  <img src="docs/rocket.svg" width="220" alt="basepad's rocket on its launch pad">
-</p>
+<div align="center">
 
-<h1 align="center">basepad</h1>
+<img src="docs/rocket.svg" width="220" alt="basepad's rocket on its launch pad">
 
-<p align="center">
-  A development environment for coding agents.<br>
-  On your machine, or in a cloud sandbox.
-</p>
+<h1>basepad</h1>
+
+A development environment for coding agents,<br>
+on your machine or in a cloud sandbox.
+
+<br>
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![npm](https://img.shields.io/npm/v/basepad)](https://www.npmjs.com/package/basepad)
+
+<sub>macOS (Apple Silicon) &nbsp;·&nbsp; Linux x64 &nbsp;·&nbsp; Linux ARM</sub>
+
+</div>
 
 ---
 
@@ -54,9 +61,7 @@ npx basepad init                           # writes a starter config
 npx basepad up
 ```
 
-Run `npx basepad setup` once per machine and your browser will trust the local HTTPS domains. It's worth it for the rocket alone.
-
-Works on macOS (Apple Silicon) and Linux (x64 and ARM).
+Run `npx basepad setup` once per machine so your browser trusts the local HTTPS domains.
 
 ## Commands
 
@@ -70,6 +75,8 @@ Works on macOS (Apple Silicon) and Linux (x64 and ARM).
 | `basepad db save`, `db load` | Snapshot this environment's database, and put it back |
 | `basepad setup` | Once per machine, for trusted URLs with no port |
 
+`basepad --help` lists every command.
+
 The [guide](docs/guide.md) has the rest: every config option, how worktrees copy data, the Claude Code hooks, CI and sandboxes, and every key in mission control.
 
 ## Hacking on basepad
@@ -80,5 +87,3 @@ pnpm check
 ```
 
 The tests run the real thing against real mise, pitchfork and Postgres. [`AGENTS.md`](AGENTS.md) explains how to keep a test run away from your own setup.
-
-MIT licensed.
