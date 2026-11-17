@@ -14,7 +14,7 @@ import { PGVECTOR_VERSIONS } from "../versions.ts";
 
 const HOST = "127.0.0.1";
 const USER = "postgres";
-const PLACEHOLDER_PASSWORD = "basepad";
+const PASSWORD = "basepad";
 const READY_MS = 60_000;
 const NO_UNIX_SOCKETS = "unix_socket_directories=";
 
@@ -43,7 +43,10 @@ export function postgres(
 	return { kind: "postgres", version: options.version ?? 18, worktree: options.worktree ?? "copy" };
 }
 
-/** What a Postgres service gives to `env`. The password is a placeholder: local connections are trusted. */
+/**
+ * What a Postgres service gives to `env`. The `postgres` role's password is real, but local
+ * connections are trusted, so a direct connection needs none.
+ */
 export interface PostgresOutputs {
 	url: string;
 	host: string;
@@ -166,12 +169,14 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			NO_UNIX_SOCKETS,
 		]);
 		return {
-			run: `exec ${server.map(shellQuote).join(" ")}`,
-			dir: place.dir,
-			// Fast shutdown: SIGTERM's smart shutdown would wait for every app's connections to close:
-			// https://www.postgresql.org/docs/current/server-shutdown.html
-			stopSignal: "SIGINT",
-			listens: port,
+			[place.daemon]: {
+				run: `exec ${server.map(shellQuote).join(" ")}`,
+				dir: place.dir,
+				// Fast shutdown: SIGTERM's smart shutdown would wait for every app's connections to close:
+				// https://www.postgresql.org/docs/current/server-shutdown.html
+				stopSignal: "SIGINT",
+				listens: port,
+			},
 		};
 	},
 
@@ -192,13 +197,19 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 		const sql = (text: string) => query(pg, port, text);
 		const db = place.database;
 		const outputs = {
-			url: `postgresql://${USER}:${PLACEHOLDER_PASSWORD}@${HOST}:${port}/${db}`,
+			url: `postgresql://${USER}:${PASSWORD}@${HOST}:${port}/${db}`,
 			host: HOST,
 			port,
 			user: USER,
-			password: PLACEHOLDER_PASSWORD,
+			password: PASSWORD,
 			database: db,
 		};
+		if (place.suffix === undefined) {
+			await inOneSession(pg, port, [
+				"set password_encryption = 'scram-sha-256'",
+				`alter role ${identifier(USER)} password ${literal(PASSWORD)}`,
+			]);
+		}
 		if (place.suffix !== undefined && service.worktree === "shared") return outputs;
 		const open = await sql(`select datallowconn from pg_database where datname = ${literal(db)}`);
 		const exists = open !== "";

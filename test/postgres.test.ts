@@ -67,6 +67,18 @@ test("a client connects with the split values, and the server needs no password"
 	expect(out.stdout.trim()).toBe("postgres|pg_shop_db");
 });
 
+const SCRAM = "select rolpassword like 'SCRAM-SHA-256$%' from pg_authid where rolname = 'postgres'";
+
+test("the postgres role has the SCRAM password the URL names; a cluster without it gets it on the next up", async () => {
+	expect(await sql(shop, SCRAM)).toBe("t");
+	const { DB_PASSWORD } = await readEnv(shop, "backend/.env");
+	expect(DB_PASSWORD).toBe("basepad");
+	await sql(shop, "alter role postgres password null");
+	expect(await sql(shop, SCRAM)).toBe("");
+	expect((await box.basepad(shop, "up")).code).toBe(0);
+	expect(await sql(shop, SCRAM)).toBe("t");
+});
+
 test("pgvector and Postgres's standard extensions can be created; basepad enables none", async () => {
 	expect(await sql(shop, "select count(*) from pg_extension where extname <> 'plpgsql'")).toBe("0");
 	await sql(shop, "create extension vector; create extension pg_trgm; create extension citext");
