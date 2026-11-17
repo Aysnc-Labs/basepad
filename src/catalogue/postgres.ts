@@ -338,7 +338,8 @@ export const postgresWithNeonProxyKind: Kind<
 			`--auth-endpoint=postgres://${USER}:${PASSWORD}@${HOST}:${port}/postgres`,
 			"--wss",
 			`${HOST}:${proxyPort}`,
-			// Its other listeners on any free port, or a second project's proxy fails on `Address already in use`.
+			// Its other listeners default to fixed ports, so a second project's proxy fails on `Address already in use`:
+			// https://github.com/neondatabase/neon/blob/main/proxy/src/binary/proxy.rs
 			"--proxy",
 			ANY_PORT,
 			"--mgmt",

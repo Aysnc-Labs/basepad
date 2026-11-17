@@ -12,5 +12,4 @@ export const MAILPIT_VERSION = "1";
 
 export const REDIS_VERSION = "8";
 
-/** A tag of aysnc-labs/prebuilt-binaries, moved on purpose: https://github.com/aysnc-labs/prebuilt-binaries/releases */
 export const NEON_PROXY_VERSION = "neon-proxy-8853";
