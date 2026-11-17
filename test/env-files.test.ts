@@ -40,3 +40,7 @@ test("`export`, spacing and CRLF line endings are kept", () => {
 test("a multi-line quoted value is replaced whole", () => {
 	expect(setKeys('KEY="line1\nline2"\nNEXT=1\n', { KEY: "one" })).toBe("KEY=one\nNEXT=1\n");
 });
+
+test("a key written empty is set on its own line", () => {
+	expect(setKeys("A=1\nEMPTY=\nB=2\n", { EMPTY: "x" })).toBe("A=1\nEMPTY=x\nB=2\n");
+});

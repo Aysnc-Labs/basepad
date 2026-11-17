@@ -30,7 +30,7 @@ export async function writeEnvFiles(root: string, files: EnvFiles): Promise<stri
 	return changed;
 }
 
-const ASSIGNMENT = /^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_.-]*)(\s*=\s*)/;
+const ASSIGNMENT = /^([ \t]*(?:export[ \t]+)?)([A-Za-z_][A-Za-z0-9_.-]*)([ \t]*=[ \t]*)/;
 
 export function setKeys(text: string, keys: Record<string, string | number>): string {
 	const wanted = new Map(Object.entries(keys).map(([key, value]) => [key, String(value)]));
