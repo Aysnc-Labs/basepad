@@ -16,10 +16,10 @@ test.runIf(rootOnLinux)(
 	"a bind-mounted /etc/hosts gets a project's domains, then loses them",
 	async () => {
 		expect(await mountedHosts()).toBe(true);
-		expect(await syncHosts("b5hosts", ["web.b5hosts.localhost"])).toEqual([
+		expect(await syncHosts("b5hosts", ["web.b5hosts.invalid"])).toEqual([
 			"Added b5hosts's domains to /etc/hosts.",
 		]);
-		expect(await readFile("/etc/hosts", "utf8")).toContain("127.0.0.1 web.b5hosts.localhost\n");
+		expect(await readFile("/etc/hosts", "utf8")).toContain("127.0.0.1 web.b5hosts.invalid\n");
 		await dropHosts("b5hosts");
 		expect(await readFile("/etc/hosts", "utf8")).not.toContain("b5hosts");
 	},
