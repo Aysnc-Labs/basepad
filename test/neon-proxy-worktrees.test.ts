@@ -110,19 +110,21 @@ async function squat(port: number): Promise<Server> {
 	return server;
 }
 
-function pitchfork(...args: string[]): Promise<Result> {
+async function pitchfork(...args: string[]): Promise<void> {
 	const home = join(box.root, "home/pitchfork");
-	return box.basepadWith(
+	await promisify(execFile)(
+		"mise",
+		["exec", `pitchfork@${PITCHFORK_VERSION}`, "--", "pitchfork", ...args],
 		{
-			via: ["mise", "exec", `pitchfork@${PITCHFORK_VERSION}`, "--", "pitchfork", ...args],
+			cwd: box.root,
 			env: {
+				...box.env,
 				PITCHFORK_STATE_DIR: join(home, "state"),
 				PITCHFORK_CONFIG_DIR: join(home, "config"),
 				PITCHFORK_LOGS_DIR: join(home, "logs"),
 				MISE_SKILLS_FETCH: "false",
 			},
 		},
-		box.root,
 	);
 }
 
@@ -203,4 +205,33 @@ test("switching a service from postgres() to postgresWithNeonProxy() keeps its d
 	const note = "select body from notes";
 	expect(await rowsThroughProxy(main, "plain", note)).toEqual([{ body: "from main" }]);
 	expect(await rowsThroughProxy(tree, "plain", note)).toEqual([{ body: "from the worktree" }]);
+}, 120_000);
+
+test("a taken proxy port moves the proxy to the next free one, and the env file follows", async () => {
+	const before = (await env(main)).DB_WS as string;
+	const port = Number(new URL(`ws://${before}`).port);
+	await ok(main, "down");
+	const squatter = await squat(port);
+	try {
+		await ok(main, "up");
+		const after = (await env(main)).DB_WS as string;
+		expect(Number(new URL(`ws://${after}`).port)).toBeGreaterThan(port);
+		expect(await rowsThroughProxy(main, "db", "select 1 as one")).toEqual([{ one: 1 }]);
+	} finally {
+		await new Promise((resolve) => squatter.close(resolve));
+	}
+}, 120_000);
+
+test("when Postgres comes back on another port, up restarts the proxy against it", async () => {
+	const before = Number(new URL((await env(main)).DB_DIRECT as string).port);
+	await pitchfork("stop", `${NAME}/db`);
+	const squatter = await squat(before);
+	try {
+		await ok(main, "up");
+		const after = Number(new URL((await env(main)).DB_DIRECT as string).port);
+		expect(after).not.toBe(before);
+		expect(await rowsThroughProxy(main, "db", "select 1 as one")).toEqual([{ one: 1 }]);
+	} finally {
+		await new Promise((resolve) => squatter.close(resolve));
+	}
 }, 120_000);

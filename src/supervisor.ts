@@ -21,6 +21,7 @@ export interface Daemon {
 	stopSignal?: "SIGINT";
 	listens?: number;
 	depends?: string[];
+	restart?: true;
 }
 
 export type DaemonState = "running" | "starting" | "stopped" | "failed";

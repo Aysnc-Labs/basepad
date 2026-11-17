@@ -311,6 +311,8 @@ async function ready(
 		definitions: ports.definitions,
 		daemons,
 	});
+	const restarts = Object.keys(daemons).filter((name) => daemons[name]?.restart === true);
+	if (restarts.length > 0) await supervisor.stop(ports.namespace, restarts);
 	if (suffix === undefined && isRootOnLinux()) {
 		for (const line of await trustAsRoot(supervisor)) print(line);
 	}

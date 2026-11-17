@@ -329,7 +329,9 @@ export const postgresWithNeonProxyKind: Kind<
 		);
 		const extra = neonProxyOf(place);
 		const file = neonProxyPidFile(place);
-		const proxyPort = (await runningPort(file)) ?? (await freePort(extra.port));
+		const running = await runningPort(file);
+		const proxyPort = running ?? (await freePort(extra.port));
+		const againstOldPostgres = running !== undefined && (await runningPort(file, 2)) !== port;
 		const argv = [
 			proxy.bin("neon-proxy"),
 			"--auth-backend=postgres",
@@ -347,10 +349,11 @@ export const postgresWithNeonProxyKind: Kind<
 		return {
 			[place.daemon]: daemon,
 			[extra.daemon]: {
-				run: `${recordRunning(file, proxyPort)} && export LOGFMT=text RUST_LOG=warn && exec ${argv.map(shellQuote).join(" ")}`,
+				run: `${recordRunning(file, proxyPort, port)} && export LOGFMT=text RUST_LOG=warn && exec ${argv.map(shellQuote).join(" ")}`,
 				dir: place.dir,
 				listens: proxyPort,
 				depends: [place.daemon],
+				...(againstOldPostgres ? { restart: true as const } : {}),
 			},
 		};
 	},
