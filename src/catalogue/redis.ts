@@ -82,9 +82,11 @@ export const redisKind: Kind<RedisService, RedisOutputs, RedisNames> = {
 			server,
 		];
 		return {
-			run: `${recordRunning(pidFile(server), port)} && exec ${argv.map(shellQuote).join(" ")}`,
-			dir: server,
-			listens: port,
+			[place.daemon]: {
+				run: `${recordRunning(pidFile(server), port)} && exec ${argv.map(shellQuote).join(" ")}`,
+				dir: server,
+				listens: port,
+			},
 		};
 	},
 

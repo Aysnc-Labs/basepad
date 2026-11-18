@@ -18,8 +18,8 @@ function signalled(pid: number): "ours" | "another's" | "gone" {
 	}
 }
 
-export function recordRunning(file: string, port: number): string {
-	return `printf '%s\\n%s\\n' "$$" ${port} > ${shellQuote(file)}`;
+export function recordRunning(file: string, ...ports: number[]): string {
+	return `printf '%s\\n' "$$" ${ports.join(" ")} > ${shellQuote(file)}`;
 }
 
 export async function runningPort(file: string, portLine = 1): Promise<number | undefined> {

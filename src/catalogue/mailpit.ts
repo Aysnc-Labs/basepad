@@ -71,9 +71,11 @@ export const mailpitKind: Kind<MailpitService, MailpitOutputs, MailpitNames> = {
 			"--disable-version-check",
 		];
 		return {
-			run: `${recordRunning(place.pid, smtp)} && exec ${argv.map(shellQuote).join(" ")} --listen "${HOST}:$PORT"`,
-			dir: place.dir,
-			port: webOf(place).port,
+			[place.daemon]: {
+				run: `${recordRunning(place.pid, smtp)} && exec ${argv.map(shellQuote).join(" ")} --listen "${HOST}:$PORT"`,
+				dir: place.dir,
+				port: webOf(place).port,
+			},
 		};
 	},
 

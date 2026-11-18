@@ -3,20 +3,23 @@ import { existsSync } from "node:fs";
 import { copyFile, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import type { Kind, Place, Snapshot } from "../catalogue.ts";
+import type { ExtraDaemon, Kind, Place, Snapshot } from "../catalogue.ts";
 import { BasepadError, must, shellQuote } from "../internal/exec.ts";
 import { writeWhole } from "../internal/files.ts";
-import { freePort, waitFor } from "../internal/ports.ts";
-import { runningPort } from "../internal/processes.ts";
+import { answers, freePort, waitFor } from "../internal/ports.ts";
+import { recordRunning, runningPort } from "../internal/processes.ts";
 import { serviceUser } from "../internal/service-user.ts";
+import type { Daemon } from "../supervisor.ts";
 import { install, type Tool } from "../tools.ts";
-import { PGVECTOR_VERSIONS } from "../versions.ts";
+import { NEON_PROXY_VERSION, PGVECTOR_VERSIONS } from "../versions.ts";
 
 const HOST = "127.0.0.1";
 const USER = "postgres";
-const PLACEHOLDER_PASSWORD = "basepad";
+const PASSWORD = "basepad";
 const READY_MS = 60_000;
 const NO_UNIX_SOCKETS = "unix_socket_directories=";
+const NEON_PROXY = "neon-proxy";
+const ANY_PORT = `${HOST}:0`;
 
 export type PostgresVersion = 17 | 18;
 
@@ -26,24 +29,49 @@ export type PostgresVersion = 17 | 18;
  */
 export type PostgresWorktree = "copy" | "empty" | "shared";
 
-/** A Postgres server of the project's own, with one database for this service. */
-export interface PostgresService {
-	kind: "postgres";
+type PostgresOptions = { version?: PostgresVersion; worktree?: PostgresWorktree };
+
+interface PostgresServer {
 	version: PostgresVersion;
 	worktree: PostgresWorktree;
+}
+
+function serverWithDefaults(options: PostgresOptions): PostgresServer {
+	return { version: options.version ?? 18, worktree: options.worktree ?? "copy" };
+}
+
+/** A Postgres server of the project's own, with one database for this service. */
+export interface PostgresService extends PostgresServer {
+	kind: "postgres";
 }
 
 /**
  * A Postgres server of the project's own. `version` is 17 or 18; it defaults to 18. `worktree` is
  * what a worktree's database starts as; it defaults to `copy`.
  */
-export function postgres(
-	options: { version?: PostgresVersion; worktree?: PostgresWorktree } = {},
-): PostgresService {
-	return { kind: "postgres", version: options.version ?? 18, worktree: options.worktree ?? "copy" };
+export function postgres(options: PostgresOptions = {}): PostgresService {
+	return { kind: "postgres", ...serverWithDefaults(options) };
 }
 
-/** What a Postgres service gives to `env`. The password is a placeholder: local connections are trusted. */
+/** A Postgres server of the project's own with Neon's local proxy in front of it, for `@neondatabase/serverless`. */
+export interface PostgresWithNeonProxyService extends PostgresServer {
+	kind: "postgresWithNeonProxy";
+}
+
+/**
+ * A Postgres server of the project's own, as `postgres()` gives, with Neon's local proxy in front
+ * of it, so `@neondatabase/serverless` connects as it does to Neon. Its options are `postgres()`'s.
+ */
+export function postgresWithNeonProxy(options: PostgresOptions = {}): PostgresWithNeonProxyService {
+	return { kind: "postgresWithNeonProxy", ...serverWithDefaults(options) };
+}
+
+type AnyPostgres = PostgresService | PostgresWithNeonProxyService;
+
+/**
+ * What a Postgres service gives to `env`. The `postgres` role's password is real, but local
+ * connections are trusted, so a direct connection needs none.
+ */
 export interface PostgresOutputs {
 	url: string;
 	host: string;
@@ -51,6 +79,16 @@ export interface PostgresOutputs {
 	user: string;
 	password: string;
 	database: string;
+}
+
+/** What a Postgres service with Neon's proxy gives to `env`. */
+export interface PostgresWithNeonProxyOutputs extends PostgresOutputs {
+	/** What the driver connects with: `postgresql://postgres:basepad@localhost:<port>/<database>?options=endpoint%3Dlocal`. */
+	url: string;
+	/** Straight to Postgres, for every other tool: Postgres refuses the proxy's `options`. */
+	directUrl: string;
+	/** The proxy's address for the driver's `wsProxy` setting: `localhost:<port>/v2`. */
+	wsProxy: string;
 }
 
 export interface PostgresNames {
@@ -65,17 +103,18 @@ export interface PostgresNames {
 /** Postgres truncates identifiers past this many bytes: https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS */
 const IDENTIFIER_MAX = 63;
 
-export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames> = {
-	schema: z.strictObject({
-		kind: z.literal("postgres"),
+const schemaOf = <K extends AnyPostgres["kind"]>(kind: K) =>
+	z.strictObject({
+		kind: z.literal(kind),
 		version: z.union([z.literal(17), z.literal(18)], {
 			error: "Postgres version must be 17 or 18",
 		}),
 		worktree: z.enum(["copy", "empty", "shared"], {
 			error: "Postgres `worktree` must be copy, empty or shared",
 		}),
-	}),
+	});
 
+const server = {
 	names(service, { name, key, dir, suffix }) {
 		const main = `${name}_${key}`.replaceAll("-", "_");
 		const mainBytes = Buffer.byteLength(main);
@@ -121,104 +160,6 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 					". The `db` commands make a database there before it replaces another; shorten `name` or the service key.",
 				),
 		};
-	},
-
-	async prepare(service, place) {
-		const pg = await installPostgres(service.version, place.machine.home);
-		const user = await serviceUser();
-		const { data } = place;
-		await mkdir(place.dir, { recursive: true });
-		await user.grant({ traverse: [pg.dir, place.dir], owned: [place.dir] });
-		const initialised = await readFile(join(data, "PG_VERSION"), "utf8").catch(() => undefined);
-		if (initialised === undefined) {
-			// A half-made folder from an initdb that failed; initdb refuses one that isn't empty:
-			// https://www.postgresql.org/docs/current/creating-cluster.html
-			await rm(data, { recursive: true, force: true });
-			const argv = user.wrap([
-				pg.bin("initdb"),
-				"-D",
-				data,
-				"-U",
-				USER,
-				"--auth=trust",
-				// Pinned, or initdb takes the shell's locale and clusters differ between machines:
-				// https://www.postgresql.org/docs/current/app-initdb.html
-				"--encoding=UTF8",
-				"--locale-provider=builtin",
-				"--locale=C.UTF-8",
-			]);
-			await must(argv[0] as string, argv.slice(1));
-		} else if (initialised.trim() !== String(service.version)) {
-			throw new BasepadError(
-				`\`${place.key}\` asks for Postgres ${service.version}, but its data in ${data} is Postgres ${initialised.trim()}. Dump it with Postgres ${initialised.trim()}, remove that folder, then run \`basepad up\` again.`,
-			);
-		}
-		const port = (await serverPort(data)) ?? (await freePort(place.port));
-		const server = user.wrap([
-			pg.bin("postgres"),
-			"-D",
-			data,
-			"-p",
-			String(port),
-			"-c",
-			`listen_addresses=${HOST}`,
-			"-c",
-			NO_UNIX_SOCKETS,
-		]);
-		return {
-			run: `exec ${server.map(shellQuote).join(" ")}`,
-			dir: place.dir,
-			// Fast shutdown: SIGTERM's smart shutdown would wait for every app's connections to close:
-			// https://www.postgresql.org/docs/current/server-shutdown.html
-			stopSignal: "SIGINT",
-			listens: port,
-		};
-	},
-
-	async provision(service, place, { claim, stopped, print }) {
-		const pg = await installPostgres(service.version, place.machine.home);
-		const { data } = place;
-		const port = await waitFor(
-			async () => {
-				const port = await serverPort(data);
-				if (port === undefined) throw new Error("It has not started.");
-				await query(pg, port, "select 1");
-				return port;
-			},
-			`Postgres for \`${place.key}\` didn't answer within ${READY_MS / 1000} s.`,
-			READY_MS,
-			stopped,
-		);
-		const sql = (text: string) => query(pg, port, text);
-		const db = place.database;
-		const outputs = {
-			url: `postgresql://${USER}:${PLACEHOLDER_PASSWORD}@${HOST}:${port}/${db}`,
-			host: HOST,
-			port,
-			user: USER,
-			password: PLACEHOLDER_PASSWORD,
-			database: db,
-		};
-		if (place.suffix !== undefined && service.worktree === "shared") return outputs;
-		const open = await sql(`select datallowconn from pg_database where datname = ${literal(db)}`);
-		const exists = open !== "";
-		if (open === "f") await sql(`alter database ${identifier(db)} allow_connections true`);
-		if (!exists && place.suffix !== undefined && service.worktree === "copy") {
-			const start = performance.now();
-			const route = await copyDatabase(pg, port, place.main, db, place.owner);
-			const seconds = ((performance.now() - start) / 1000).toFixed(1);
-			print(`Copied main's \`${place.key}\` by ${route} in ${seconds} s.`);
-		} else if (!exists) {
-			await sql(`create database ${identifier(db)}`);
-		}
-		const owner = await ownerOf(sql, db);
-		if (owner !== "" && owner !== place.owner && !claim) {
-			throw new BasepadError(
-				`The database \`${db}\` belongs to the checkout at ${owner}, which has the same name ("${place.name}"). Two checkouts would share its data, so basepad stops here.\nIf that checkout moved here, or you want this one to take over, run \`basepad up --claim\`.`,
-			);
-		}
-		if (owner !== place.owner) await stampOwnerAndCheck(sql, db, place.owner);
-		return outputs;
 	},
 
 	worktreeData: {
@@ -349,7 +290,244 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 			return plain ? "plain SQL" : "a custom-format dump";
 		},
 	},
+} satisfies Pick<
+	Kind<AnyPostgres, unknown, PostgresNames>,
+	"names" | "worktreeData" | "address" | "database"
+>;
+
+export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames> = {
+	...server,
+	schema: schemaOf("postgres"),
+
+	async prepare(service, place) {
+		const { daemon } = await prepareServer(service, place);
+		return { [place.daemon]: daemon };
+	},
+
+	provision(service, place, options) {
+		return provisionServer(service, place, options, []);
+	},
 };
+
+export const postgresWithNeonProxyKind: Kind<
+	PostgresWithNeonProxyService,
+	PostgresWithNeonProxyOutputs,
+	PostgresNames
+> = {
+	...server,
+	schema: schemaOf("postgresWithNeonProxy"),
+
+	extraDaemons: [NEON_PROXY],
+
+	async prepare(service, place) {
+		const { port: postgresPort, daemon } = await prepareServer(service, place);
+		const proxy = await install(
+			"github:aysnc-labs/prebuilt-binaries",
+			NEON_PROXY_VERSION,
+			place.machine.home,
+		);
+		const extra = neonProxyOf(place);
+		const running = await runningProxy(extra.pid);
+		const proxyPort = running?.proxy ?? (await freePort(extra.port));
+		const againstOldPostgres = running !== undefined && running.postgres !== postgresPort;
+		const argv = [
+			proxy.bin("neon-proxy"),
+			"--auth-backend=postgres",
+			`--auth-endpoint=postgres://${USER}:${PASSWORD}@${HOST}:${postgresPort}/postgres`,
+			"--wss",
+			`${HOST}:${proxyPort}`,
+			// Its other listeners default to fixed ports, so a second project's proxy fails on `Address already in use`:
+			// https://github.com/neondatabase/neon/blob/main/proxy/src/binary/proxy.rs
+			"--proxy",
+			ANY_PORT,
+			"--mgmt",
+			ANY_PORT,
+			"--http",
+			ANY_PORT,
+		];
+		return {
+			[place.daemon]: daemon,
+			[extra.daemon]: {
+				run: `${recordProxy(extra.pid, { proxy: proxyPort, postgres: postgresPort })} && export LOGFMT=text RUST_LOG=warn && exec ${argv.map(shellQuote).join(" ")}`,
+				dir: place.dir,
+				listens: proxyPort,
+				depends: [place.daemon],
+				...(againstOldPostgres ? { restart: true as const } : {}),
+			},
+		};
+	},
+
+	async provision(service, place, options) {
+		const outputs = await provisionServer(service, place, options, [
+			"create schema if not exists neon_control_plane",
+			"create table if not exists neon_control_plane.endpoints (endpoint_id text primary key, allowed_ips text)",
+		]);
+		const proxyPort = await waitFor(
+			async () => {
+				const port = (await runningProxy(neonProxyOf(place).pid))?.proxy;
+				if (port === undefined) throw new Error("It has not started.");
+				if (!(await answers(port, [HOST]))) throw new Error(`Nothing answers on port ${port}.`);
+				return port;
+			},
+			`Neon's proxy for \`${place.key}\` didn't answer within ${READY_MS / 1000} s.`,
+			READY_MS,
+			options.stopped,
+		);
+		return {
+			...outputs,
+			url: `postgresql://${USER}:${PASSWORD}@localhost:${outputs.port}/${outputs.database}?options=endpoint%3Dlocal`,
+			directUrl: outputs.url,
+			wsProxy: `localhost:${proxyPort}/v2`,
+		};
+	},
+
+	async extraAddress(place) {
+		return `ws://localhost:${await neonProxyPort(place)}/v2`;
+	},
+};
+
+function neonProxyOf(place: Place<PostgresNames>): ExtraDaemon {
+	return place.extraDaemons[NEON_PROXY] as ExtraDaemon;
+}
+
+async function neonProxyPort(place: Place<PostgresNames>): Promise<number> {
+	const extra = neonProxyOf(place);
+	return (await runningProxy(extra.pid))?.proxy ?? extra.port;
+}
+
+interface ProxyPorts {
+	proxy: number;
+	postgres: number | undefined;
+}
+
+function recordProxy(pid: string, ports: { proxy: number; postgres: number }): string {
+	return recordRunning(pid, ports.proxy, ports.postgres);
+}
+
+async function runningProxy(pid: string): Promise<ProxyPorts | undefined> {
+	const proxy = await runningPort(pid, 1);
+	return proxy === undefined ? undefined : { proxy, postgres: await runningPort(pid, 2) };
+}
+
+async function prepareServer(
+	service: AnyPostgres,
+	place: Place<PostgresNames>,
+): Promise<{ port: number; daemon: Daemon }> {
+	const pg = await installPostgres(service.version, place.machine.home);
+	const user = await serviceUser();
+	const { data } = place;
+	await mkdir(place.dir, { recursive: true });
+	await user.grant({ traverse: [pg.dir, place.dir], owned: [place.dir] });
+	const initialised = await readFile(join(data, "PG_VERSION"), "utf8").catch(() => undefined);
+	if (initialised === undefined) {
+		// A half-made folder from an initdb that failed; initdb refuses one that isn't empty:
+		// https://www.postgresql.org/docs/current/creating-cluster.html
+		await rm(data, { recursive: true, force: true });
+		const argv = user.wrap([
+			pg.bin("initdb"),
+			"-D",
+			data,
+			"-U",
+			USER,
+			"--auth=trust",
+			// Pinned, or initdb takes the shell's locale and clusters differ between machines:
+			// https://www.postgresql.org/docs/current/app-initdb.html
+			"--encoding=UTF8",
+			"--locale-provider=builtin",
+			"--locale=C.UTF-8",
+		]);
+		await must(argv[0] as string, argv.slice(1));
+	} else if (initialised.trim() !== String(service.version)) {
+		throw new BasepadError(
+			`\`${place.key}\` asks for Postgres ${service.version}, but its data in ${data} is Postgres ${initialised.trim()}. Dump it with Postgres ${initialised.trim()}, remove that folder, then run \`basepad up\` again.`,
+		);
+	}
+	const port = (await serverPort(data)) ?? (await freePort(place.port));
+	const server = user.wrap([
+		pg.bin("postgres"),
+		"-D",
+		data,
+		"-p",
+		String(port),
+		"-c",
+		`listen_addresses=${HOST}`,
+		"-c",
+		NO_UNIX_SOCKETS,
+	]);
+	return {
+		port,
+		daemon: {
+			run: `exec ${server.map(shellQuote).join(" ")}`,
+			dir: place.dir,
+			// Fast shutdown: SIGTERM's smart shutdown would wait for every app's connections to close:
+			// https://www.postgresql.org/docs/current/server-shutdown.html
+			stopSignal: "SIGINT",
+			listens: port,
+		},
+	};
+}
+
+async function provisionServer(
+	service: AnyPostgres,
+	place: Place<PostgresNames>,
+	{
+		claim,
+		stopped,
+		print,
+	}: { claim: boolean; stopped: () => Promise<boolean>; print(line: string): void },
+	mainSetup: string[],
+): Promise<PostgresOutputs> {
+	const pg = await installPostgres(service.version, place.machine.home);
+	const { data } = place;
+	const port = await waitFor(
+		async () => {
+			const port = await serverPort(data);
+			if (port === undefined) throw new Error("It has not started.");
+			await query(pg, port, "select 1");
+			return port;
+		},
+		`Postgres for \`${place.key}\` didn't answer within ${READY_MS / 1000} s.`,
+		READY_MS,
+		stopped,
+	);
+	const sql = (text: string) => query(pg, port, text);
+	const db = place.database;
+	const outputs = {
+		url: `postgresql://${USER}:${PASSWORD}@${HOST}:${port}/${db}`,
+		host: HOST,
+		port,
+		user: USER,
+		password: PASSWORD,
+		database: db,
+	};
+	if (place.suffix === undefined) {
+		await inOneSession(pg, port, [
+			"set password_encryption = 'scram-sha-256'",
+			`alter role ${identifier(USER)} password ${literal(PASSWORD)}`,
+			...mainSetup,
+		]);
+	}
+	if (place.suffix !== undefined && service.worktree === "shared") return outputs;
+	const open = await sql(`select datallowconn from pg_database where datname = ${literal(db)}`);
+	const exists = open !== "";
+	if (open === "f") await sql(`alter database ${identifier(db)} allow_connections true`);
+	if (!exists && place.suffix !== undefined && service.worktree === "copy") {
+		const start = performance.now();
+		const route = await copyDatabase(pg, port, place.main, db, place.owner);
+		const seconds = ((performance.now() - start) / 1000).toFixed(1);
+		print(`Copied main's \`${place.key}\` by ${route} in ${seconds} s.`);
+	} else if (!exists) {
+		await sql(`create database ${identifier(db)}`);
+	}
+	const owner = await ownerOf(sql, db);
+	if (owner !== "" && owner !== place.owner && !claim) {
+		throw new BasepadError(
+			`The database \`${db}\` belongs to the checkout at ${owner}, which has the same name ("${place.name}"). Two checkouts would share its data, so basepad stops here.\nIf that checkout moved here, or you want this one to take over, run \`basepad up --claim\`.`,
+		);
+	}
+	if (owner !== place.owner) await stampOwnerAndCheck(sql, db, place.owner);
+	return outputs;
+}
 
 type Source =
 	| { format: "custom" | "plain"; file: string; description: string }
@@ -484,7 +662,7 @@ function toStdout(file: string, args: string[]): Promise<void> {
 }
 
 async function own(
-	service: PostgresService,
+	service: AnyPostgres,
 	place: Place<PostgresNames>,
 ): Promise<{ pg: Tool; port: number; sql: Sql }> {
 	if (place.suffix !== undefined && service.worktree === "shared") {
@@ -562,7 +740,7 @@ function ownerOf(sql: Sql, name: string): Promise<string> {
 }
 
 /** A comment on a database that has gone is only a warning, so the owner is read back: https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/comment.c#L46-L62 */
-async function stampOwnerAndCheck(sql: Sql, name: string, owner: string): Promise<void> {
+export async function stampOwnerAndCheck(sql: Sql, name: string, owner: string): Promise<void> {
 	await stampOwner(sql, name, owner);
 	if ((await ownerOf(sql, name)) !== owner) {
 		throw new BasepadError(`Could not mark \`${name}\` as belonging to ${owner}.`);

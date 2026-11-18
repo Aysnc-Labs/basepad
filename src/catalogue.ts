@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import { mailpitKind } from "./catalogue/mailpit.ts";
-import { postgresKind } from "./catalogue/postgres.ts";
+import { postgresKind, postgresWithNeonProxyKind } from "./catalogue/postgres.ts";
 import { redisKind } from "./catalogue/redis.ts";
 import type { Machine } from "./layout.ts";
 import type { Daemon } from "./supervisor.ts";
@@ -23,7 +23,9 @@ export type Place<N = unknown> = {
 	suffix?: string;
 	dir: string;
 	port: number;
+	daemon: string;
 	web?: Web;
+	extraDaemons: Record<string, ExtraDaemon>;
 	machine: Machine;
 } & N;
 
@@ -31,6 +33,12 @@ export interface Web {
 	host: string;
 	url: string;
 	port: number;
+}
+
+export interface ExtraDaemon {
+	daemon: string;
+	port: number;
+	pid: string;
 }
 
 export interface WorktreeData {
@@ -41,9 +49,10 @@ export interface WorktreeData {
 export interface Kind<S extends ServiceBase, O, N> {
 	schema: z.ZodType<S>;
 	web?: true;
+	extraDaemons?: readonly string[];
 	perEnvironment?(service: S): boolean;
 	names(service: S, input: NameInput): N;
-	prepare(service: S, place: Place<N>): Promise<Daemon>;
+	prepare(service: S, place: Place<N>): Promise<Record<string, Daemon>>;
 	provision(
 		service: S,
 		place: Place<N>,
@@ -56,6 +65,7 @@ export interface Kind<S extends ServiceBase, O, N> {
 	): Promise<O>;
 	worktreeData?: WorktreeDataStore<S, N>;
 	address(service: S, place: Place<N>): Promise<string>;
+	extraAddress?(place: Place<N>, extra: string): Promise<string>;
 	database?: Database<S, N>;
 }
 
@@ -85,7 +95,12 @@ export interface Database<S, N> {
 	export(service: S, place: Place<N>, file: string | undefined): Promise<string>;
 }
 
-const CATALOGUE = { postgres: postgresKind, redis: redisKind, mailpit: mailpitKind };
+const CATALOGUE = {
+	postgres: postgresKind,
+	postgresWithNeonProxy: postgresWithNeonProxyKind,
+	redis: redisKind,
+	mailpit: mailpitKind,
+};
 type Catalogue = typeof CATALOGUE;
 
 /** Something basepad provides to an environment: one config entry of a kind in the catalogue. */
@@ -104,6 +119,14 @@ export type NamesOf<S extends Service> = ReturnType<Catalogue[S["kind"]]["names"
 export function kindOf<S extends Service>(service: S): Kind<S, OutputsOf<S>, NamesOf<S>> {
 	return CATALOGUE[service.kind] as unknown as Kind<S, OutputsOf<S>, NamesOf<S>>;
 }
+
+export const EXTRA_DAEMONS: readonly string[] = [
+	...new Set(
+		Object.values(CATALOGUE).flatMap(
+			(kind: { extraDaemons?: readonly string[] }) => kind.extraDaemons ?? [],
+		),
+	),
+];
 
 export const SCHEMAS: z.ZodType<Service>[] = Object.values(CATALOGUE).map((kind) => kind.schema);
 

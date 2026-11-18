@@ -1,6 +1,11 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "vitest";
-import { logBook } from "../src/mission-control/feed.ts";
-import type { LogEntry } from "../src/supervisor.ts";
+import type { Project } from "../src/config.ts";
+import { postgresWithNeonProxy } from "../src/index.ts";
+import { environmentOf, logBook } from "../src/mission-control/feed.ts";
+import type { DaemonInfo, LogEntry } from "../src/supervisor.ts";
 
 function supervisor() {
 	const calls: { ids: string[]; history: number; stopped: boolean; print(e: LogEntry): void }[] =
@@ -99,4 +104,33 @@ test("each line read says so, and the scrollback keeps the newest 2000 lines of 
 	const kept = texts(book, "shop/web");
 	expect(kept.length).toBeGreaterThanOrEqual(2000);
 	expect(kept.at(-1)).toBe("line 3499");
+});
+
+test("a service's extra daemon is a part of its own, with its address and state, and moves with its service", async () => {
+	const home = await mkdtemp(join(tmpdir(), "bp-feed-"));
+	const project: Project = {
+		file: "/code/shop/basepad.config.ts",
+		root: "/code/shop",
+		name: "shop",
+		services: { db: postgresWithNeonProxy() },
+		apps: {},
+		env: () => ({}),
+		worktrees: { prefix: "worktree", clone: [], setup: [] },
+	};
+	const daemons = new Map<string, DaemonInfo>(
+		[
+			{ id: "shop/db", namespace: "shop", name: "db", state: "running" },
+			{ id: "shop/db-neon-proxy", namespace: "shop", name: "db-neon-proxy", state: "failed" },
+		].map((d): [string, DaemonInfo] => [d.id, d as DaemonInfo]),
+	);
+	const machine = { home, proxyPort: 7443, portFree: false, forwards443: false };
+	const env = await environmentOf(project, undefined, "main", "/code/shop", daemons, machine);
+	expect(env.services.map(({ id, name, state }) => ({ id, name, state }))).toEqual([
+		{ id: "shop/db", name: "db", state: "running" },
+		{ id: "shop/db-neon-proxy", name: "db-neon-proxy", state: "failed" },
+	]);
+	expect(env.services[0]?.extraDaemons).toEqual(["db-neon-proxy"]);
+	expect(env.services[1]?.address).toMatch(/^ws:\/\/localhost:\d+\/v2$/);
+	expect(env.services[1]?.note).toBe("with db");
+	await rm(home, { recursive: true, force: true });
 });

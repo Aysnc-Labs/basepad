@@ -8,6 +8,9 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
   contents: read
+  # mise checks the attestations of tools it installs from GitHub releases, such as Neon's proxy:
+  # https://mise.jdx.dev/dev-tools/backends/github.html#github-attestations
+  attestations: read
 
 jobs:
   mode:

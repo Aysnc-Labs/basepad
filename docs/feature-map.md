@@ -66,7 +66,7 @@ Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### Mission control
 
-Purpose: one place to see and steer a project while it runs, so nothing needs another command. It opens at once, while `up` readies the environment, so its logs show from the start; a failure shows as a notice. Then every environment (main and each worktree) at a glance, the selected one's apps and services with their addresses, and their logs live, with crashes standing out. Its keys are in `docs/guide.md`. It only reads and asks: the supervisor runs everything, and worktrees are added and removed by the `worktree add` and `worktree rm` commands in processes of their own (`work.ts`), so closing or crashing the view stops nothing. A pure frame (state to Ink element) and a pure reducer (key to view and intent), behind one feed (git, configs, the supervisor's states and `pitchfork logs --tail`, worktree work under way), one place that performs intents (`act.ts`) and one terminal adapter.
+Purpose: one place to see and steer a project while it runs, so nothing needs another command. It opens at once, while `up` readies the environment, so its logs show from the start; a failure shows as a notice. Then every environment (main and each worktree) at a glance, the selected one's apps and services with their addresses (a service's extra daemons as parts of their own, stopped and started with it), and their logs live, with crashes standing out. Its keys are in `docs/guide.md`. It only reads and asks: the supervisor runs everything, and worktrees are added and removed by the `worktree add` and `worktree rm` commands in processes of their own (`work.ts`), so closing or crashing the view stops nothing. A pure frame (state to Ink element) and a pure reducer (key to view and intent), behind one feed (git, configs, the supervisor's states and `pitchfork logs --tail`, worktree work under way), one place that performs intents (`act.ts`) and one terminal adapter.
 Entry: `basepad up` on a terminal (`-d`, or no terminal, skips it)
 Paths: src/mission-control/, src/supervisor.ts, src/commands.ts, src/worktrees.ts
 
@@ -116,9 +116,10 @@ Paths: src/forward.ts, src/supervisor.ts, src/layout.ts
 
 ### Postgres
 
-Purpose: a Postgres 17 or 18 server per project, with its database stamped to the owning checkout, pgvector available, and connection values for `env`.
-Entry: `services: { db: postgres({ version }) }` in the config
-Paths: src/catalogue.ts, src/catalogue/postgres.ts, src/internal/service-user.ts
+Purpose: a Postgres 17 or 18 server per project, with its database stamped to the owning checkout, pgvector available, and connection values for `env`. `postgresWithNeonProxy()` is the same server with Neon's local proxy in front of it, as its own daemon `<key>-neon-proxy` (an extra daemon of the Kind; `up` stops it once the config no longer asks for it), so `@neondatabase/serverless` connects through `url` and `wsProxy`; `directUrl` goes straight to Postgres.
+Entry: `services: { db: postgres({ version }) }` or `services: { db: postgresWithNeonProxy({ version }) }` in the config
+Paths: src/catalogue.ts, src/catalogue/postgres.ts, src/internal/service-user.ts, src/layout.ts
+Decisions: [0002](adr/0002-a-kind-owns-its-companion-processes.md)
 
 ### Redis
 

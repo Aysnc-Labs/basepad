@@ -11,3 +11,5 @@ export const PGVECTOR_VERSIONS = { 17: "0.8.0", 18: "0.8.6" } as const;
 export const MAILPIT_VERSION = "1";
 
 export const REDIS_VERSION = "8";
+
+export const NEON_PROXY_VERSION = "neon-proxy-8853";

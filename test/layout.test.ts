@@ -1,13 +1,17 @@
 import { expect, test } from "vitest";
 import type { PostgresNames } from "../src/catalogue/postgres.ts";
+import { kindOf, type Service } from "../src/catalogue.ts";
 import { mailpit, postgres, redis } from "../src/index.ts";
 import {
 	daemonId,
+	daemonsOf,
+	extraDaemonNames,
 	type Layout,
 	layout as layoutOf,
 	machine,
 	nextSuffix,
 	ofDaemon,
+	type ServicePlace,
 	suffixOf,
 	worktreeFolder,
 } from "../src/layout.ts";
@@ -284,4 +288,45 @@ test("a service with a domain is served at <key>.<name>.localhost in main and ev
 	expect(layout(project("shop", [], ["db"]), here).services.db?.web).toBeUndefined();
 	const clash = { ...project("shop", ["mail"]), services: { mail: mailpit() } };
 	expect(() => layout(clash, here)).toThrow(/mail\.shop\.localhost, which is app `mail`'s domain/);
+});
+
+const withSidecar = (service: Service) =>
+	service.kind === "redis" ? { ...kindOf(service), extraDaemons: ["sidecar"] } : kindOf(service);
+
+test("a Kind's extra daemon runs beside its service, as <key>-<daemon>, on a port of its own", () => {
+	const services = { cache: redis(), ref: redis({ worktree: "shared" }) };
+	const main = layoutOf({ ...project("shop"), services }, here, undefined, withSidecar).services;
+	const tree = layoutOf({ ...project("shop"), services }, here, "worktree-1", withSidecar).services;
+	expect(main.cache?.extraDaemons.sidecar?.daemon).toBe("shop/cache-sidecar");
+	expect(tree.cache?.extraDaemons.sidecar?.daemon).toBe("shop.worktree-1/cache-sidecar");
+	expect(tree.ref?.extraDaemons.sidecar?.daemon).toBe("shop/ref-sidecar");
+	expect(main.cache?.extraDaemons.sidecar?.pid).toBe("/h/services/shop/cache/sidecar.pid");
+	const port = main.cache?.extraDaemons.sidecar?.port as number;
+	expect(port).toBeGreaterThanOrEqual(15000);
+	expect(port).toBeLessThan(20000);
+	expect(port).not.toBe(main.cache?.port);
+	expect(port).not.toBe(main.ref?.extraDaemons.sidecar?.port);
+	expect(port).not.toBe(tree.cache?.extraDaemons.sidecar?.port);
+	expect(tree.ref?.extraDaemons.sidecar?.port).toBe(main.ref?.extraDaemons.sidecar?.port);
+	expect(daemonsOf(main.cache as ServicePlace)).toEqual(["shop/cache", "shop/cache-sidecar"]);
+	expect(layout(project("shop", [], ["db"]), here).services.db?.extraDaemons).toEqual({});
+	expect(daemonsOf(layout(project("shop", [], ["db"]), here).services.db as ServicePlace)).toEqual([
+		"shop/db",
+	]);
+});
+
+test("a key that is the name of a service's extra daemon is refused, naming both", () => {
+	const services = { cache: redis() };
+	const app = { ...project("shop", ["cache-sidecar"]), services };
+	expect(() => layoutOf(app, here, undefined, withSidecar)).toThrow(
+		"/p/basepad.config.ts: service `cache` runs a daemon named `cache-sidecar`, which is app `cache-sidecar`'s name. Rename one.",
+	);
+	const service = { ...project("shop"), services: { ...services, "cache-sidecar": postgres() } };
+	expect(() => layoutOf(service, here, undefined, withSidecar)).toThrow(
+		"/p/basepad.config.ts: service `cache` runs a daemon named `cache-sidecar`, which is service `cache-sidecar`'s name. Rename one.",
+	);
+});
+
+test("a service named like another's extra daemon (db-x beside db) is not an orphan candidate", () => {
+	expect(extraDaemonNames(["db", "db-x"])).toEqual(["db-neon-proxy", "db-x-neon-proxy"]);
 });

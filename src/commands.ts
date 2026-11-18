@@ -22,7 +22,9 @@ import { Stopped } from "./internal/ports.ts";
 import { table } from "./internal/table.ts";
 import {
 	daemonId,
+	daemonsOf,
 	definitionsFile,
+	extraDaemonNames,
 	isRootOnLinux,
 	type Layout,
 	layout,
@@ -30,14 +32,22 @@ import {
 	type Machine,
 	machine,
 	namespaceOf,
+	ofDaemon,
 	ownServers,
 	placeOf,
+	type ServicePlace,
 	servicesHome,
 	suffixOf,
 	supervisorPaths,
 } from "./layout.ts";
 import { setup, trustAsRoot } from "./setup.ts";
-import { type Daemon, type DaemonState, openSupervisor, type Supervisor } from "./supervisor.ts";
+import {
+	type Daemon,
+	type DaemonState,
+	openSupervisor,
+	type Supervisor,
+	startFailure,
+} from "./supervisor.ts";
 import { ensureLocalhostCertificate } from "./tls.ts";
 import {
 	checkedOut,
@@ -264,9 +274,14 @@ async function ready(
 	const daemons: Record<string, Daemon> = {};
 	for (const key of ownServers(ports)) {
 		const service = project.services[key] as Service;
-		daemons[key] = await kindOf(service).prepare(service, placeOf(project, ports, here, key));
+		const prepared = await kindOf(service).prepare(service, placeOf(project, ports, here, key));
+		for (const id of daemonsOf(ports.services[key] as ServicePlace)) {
+			const daemon = prepared[id];
+			if (daemon === undefined) throw new Error(`\`${key}\`'s kind prepared no daemon ${id}.`);
+			daemons[ofDaemon(id).name] = daemon;
+		}
 	}
-	const servers = Object.values(ports.services).map((place) => place.daemon);
+	const servers = Object.values(ports.services).flatMap(daemonsOf);
 	const unreached = Object.keys(project.apps).filter((key) => ports.apps[key]?.host === undefined);
 	const tls = localhostCertificate(here);
 	for (const [key, app] of Object.entries(project.apps)) {
@@ -297,6 +312,9 @@ async function ready(
 		definitions: ports.definitions,
 		daemons,
 	});
+	await stopOrphans(supervisor, project, here, ports.namespace, Object.keys(daemons));
+	const restarts = Object.keys(daemons).filter((name) => daemons[name]?.restart === true);
+	if (restarts.length > 0) await supervisor.stop(ports.namespace, restarts);
 	if (suffix === undefined && isRootOnLinux()) {
 		for (const line of await trustAsRoot(supervisor)) print(line);
 	}
@@ -314,17 +332,20 @@ async function ready(
 	const outputs: Record<string, unknown> = {};
 	const own = ownServers(lay);
 	const runsIn = (key: string) => (own.includes(key) ? lay.namespace : lay.mainNamespace);
+	const placeAt = (key: string) => lay.services[key] as ServicePlace;
+	const serverOf = (key: string) => ofDaemon(placeAt(key).daemon).name;
 	const started = services.filter((key) => runsIn(key) === lay.mainNamespace || start(key));
 	for (const namespace of new Set(started.map(runsIn))) {
 		const keys = started.filter((key) => runsIn(key) === namespace);
+		const names = keys.flatMap((key) => daemonsOf(placeAt(key)).map((id) => ofDaemon(id).name));
 		const hosts = Object.fromEntries(
 			keys.flatMap((key) => {
-				const web = lay.services[key]?.web;
-				return web === undefined ? [] : [[key, web.host]];
+				const web = placeAt(key).web;
+				return web === undefined ? [] : [[serverOf(key), web.host]];
 			}),
 		);
-		const states = await supervisor.start(namespace, keys, APP_WAIT_MS, hosts);
-		const failed = keys.filter((key) => states[key] === "failed");
+		const states = await supervisor.start(namespace, names, APP_WAIT_MS, hosts);
+		const failed = names.filter((name) => states[name] === "failed");
 		if (failed.length > 0)
 			throw new BasepadError(await failures(supervisor, namespace, failed, since));
 	}
@@ -337,13 +358,13 @@ async function ready(
 				started: started.includes(key),
 				print,
 				stopped: async () => {
-					const state = (await supervisor.status(namespace))[key];
+					const state = (await supervisor.status(namespace))[serverOf(key)];
 					return state === "failed" || state === "stopped";
 				},
 			});
 		} catch (error) {
 			if (!(error instanceof Stopped)) throw error;
-			throw new BasepadError(await failures(supervisor, namespace, [key], since));
+			throw new BasepadError(await failures(supervisor, namespace, [serverOf(key)], since));
 		}
 	}
 	for (const [key, app] of Object.entries(lay.apps)) {
@@ -353,6 +374,23 @@ async function ready(
 	if (main !== undefined) await copyEnvFiles(main.root, project.root, Object.keys(files));
 	await writeEnvFiles(project.root, files);
 	return lay;
+}
+
+async function stopOrphans(
+	supervisor: Supervisor,
+	project: Project,
+	here: Machine,
+	namespace: string,
+	defined: string[],
+): Promise<void> {
+	const extras = extraDaemonNames([
+		...Object.keys(project.services),
+		...(await removedServices(project, here)).map(([key]) => key),
+	]);
+	const orphans = Object.keys(await supervisor.status(namespace)).filter(
+		(name) => !defined.includes(name) && extras.includes(name),
+	);
+	if (orphans.length > 0) await supervisor.stop(namespace, orphans);
 }
 
 async function open(
@@ -517,10 +555,12 @@ async function withServices(
 	states: Record<string, DaemonState>,
 ): Promise<Record<string, DaemonState>> {
 	const own = ownServers(lay);
-	const mains = Object.keys(lay.services).filter((key) => !own.includes(key));
+	const mains = Object.entries(lay.services)
+		.filter(([key]) => !own.includes(key))
+		.flatMap(([, place]) => daemonsOf(place).map((id) => ofDaemon(id).name));
 	if (mains.length === 0) return states;
 	const main = await supervisor.status(lay.mainNamespace);
-	return { ...states, ...Object.fromEntries(mains.map((key) => [key, main[key] ?? "stopped"])) };
+	return { ...states, ...Object.fromEntries(mains.map((name) => [name, main[name] ?? "stopped"])) };
 }
 
 async function machineWithPortFree(here: Machine, supervisor: Supervisor): Promise<Machine> {
@@ -574,8 +614,14 @@ async function stateTables(
 	if (services.length > 0) {
 		const rows: string[][] = [];
 		for (const [key, service] of services) {
-			const address = await kindOf(service).address(service, placeOf(project, lay, here, key));
-			rows.push([key, address, states[key] ?? "stopped"]);
+			const place = placeOf(project, lay, here, key);
+			const address = await kindOf(service).address(service, place);
+			rows.push([key, address, states[ofDaemon(place.daemon).name] ?? "stopped"]);
+			for (const [extra, { daemon }] of Object.entries(place.extraDaemons)) {
+				const name = ofDaemon(daemon).name;
+				const extraAddress = (await kindOf(service).extraAddress?.(place, extra)) ?? "";
+				rows.push([name, extraAddress, states[name] ?? "stopped"]);
+			}
 		}
 		tables.push(table([["SERVICE", "ADDRESS", "STATE"], ...rows]));
 	}
@@ -591,13 +637,7 @@ async function failures(
 	const parts: string[] = [];
 	for (const key of failed) {
 		const lines = await supervisor.logs(namespace, key, since, FAILED_LINES);
-		parts.push(
-			[
-				`\`${key}\` exited on start. Its last output:`,
-				...(lines.length > 0 ? lines : ["(none)"]).map((line) => `  ${line}`),
-				`For more, run: ${supervisor.logsCommand(namespace, key)}`,
-			].join("\n"),
-		);
+		parts.push(startFailure(key, lines, supervisor.logsCommand(namespace, key)));
 	}
 	return parts.join("\n");
 }
