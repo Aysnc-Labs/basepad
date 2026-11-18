@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { ExtraDaemon, Kind, Place, Snapshot } from "../catalogue.ts";
 import { BasepadError, must, shellQuote } from "../internal/exec.ts";
 import { writeWhole } from "../internal/files.ts";
-import { freePort, waitFor } from "../internal/ports.ts";
+import { answers, freePort, waitFor } from "../internal/ports.ts";
 import { recordRunning, runningPort } from "../internal/processes.ts";
 import { serviceUser } from "../internal/service-user.ts";
 import type { Daemon } from "../supervisor.ts";
@@ -362,7 +362,17 @@ export const postgresWithNeonProxyKind: Kind<
 			"create schema if not exists neon_control_plane",
 			"create table if not exists neon_control_plane.endpoints (endpoint_id text primary key, allowed_ips text)",
 		]);
-		const proxyPort = await neonProxyPort(place);
+		const proxyPort = await waitFor(
+			async () => {
+				const port = (await runningProxy(neonProxyOf(place).pid))?.proxy;
+				if (port === undefined) throw new Error("It has not started.");
+				if (!(await answers(port, [HOST]))) throw new Error(`Nothing answers on port ${port}.`);
+				return port;
+			},
+			`Neon's proxy for \`${place.key}\` didn't answer within ${READY_MS / 1000} s.`,
+			READY_MS,
+			options.stopped,
+		);
 		return {
 			...outputs,
 			url: `postgresql://${USER}:${PASSWORD}@localhost:${outputs.port}/${outputs.database}?options=endpoint%3Dlocal`,
