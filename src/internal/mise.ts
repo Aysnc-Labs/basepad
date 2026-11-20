@@ -1,14 +1,13 @@
 import { shellQuote } from "./exec.ts";
 
-export function throughMise(
-	command: string,
-	variables: Record<string, string> = {},
-	fromParent: string[] = [],
-): string {
-	const assignments = [
-		...Object.entries(variables).map(([name, value]) => shellQuote(`${name}=${value}`)),
-		...fromParent.map((name) => `${name}="$${name}"`),
-	];
-	const env = assignments.length > 0 ? `env ${assignments.join(" ")} ` : "";
-	return `exec mise x -- ${env}sh -c ${shellQuote(command)}`;
+const SHELL_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const STASH = "__BASEPAD_";
+
+export function throughMise(command: string, names: string[] = []): string {
+	const carried = names.filter((name) => SHELL_NAME.test(name));
+	const stash = carried.map((name) => `${STASH}${name}="$${name}" `).join("");
+	const restore = carried
+		.map((name) => `export ${name}="$${STASH}${name}"; unset ${STASH}${name}; `)
+		.join("");
+	return `${stash}exec mise x -- sh -c ${shellQuote(`${restore}${command}`)}`;
 }

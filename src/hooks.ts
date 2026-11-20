@@ -72,11 +72,12 @@ async function runCommands(
 	variables: Record<string, string>,
 	starting: (command: string) => (line: string) => void,
 ): Promise<{ command: string; code: number } | undefined> {
-	const env: NodeJS.ProcessEnv = { ...process.env };
+	const env: NodeJS.ProcessEnv = { ...process.env, ...variables };
 	if (env.BASEPAD_PATH) env.PATH = env.BASEPAD_PATH;
 	delete env.BASEPAD_PATH;
+	const names = Object.keys(variables);
 	for (const command of commands) {
-		const code = await streamed(dir, throughMise(command, variables), env, starting(command));
+		const code = await streamed(dir, throughMise(command, names), env, starting(command));
 		if (code !== 0) return { command, code };
 	}
 	return undefined;
