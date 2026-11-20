@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readdir, realpath, rm } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { z } from "zod";
 import {
@@ -40,6 +40,7 @@ import {
 	servicesHome,
 	suffixOf,
 	supervisorPaths,
+	worktreeSuffix,
 } from "./layout.ts";
 import { told } from "./mission-control/feed.ts";
 import { hooksId } from "./mission-control/model.ts";
@@ -58,6 +59,7 @@ import {
 	checkOutWorktree,
 	checkoutOf,
 	clonePaths,
+	configDirOf,
 	hasChanges,
 	type Listed,
 	listWorktrees,
@@ -1008,6 +1010,7 @@ function worktreeLayout(main: Project, here: Machine, suffix: string): Layout | 
 }
 
 interface Leftovers {
+	configDir: string;
 	checkouts: Listed[];
 	data: { key: string; data: WorktreeData[] }[];
 	registrations: { namespace: string; dir: string }[];
@@ -1031,7 +1034,7 @@ async function leftoversOf(
 	const registrations = (await supervisor.registrations()).filter(
 		(entry) => suffixOf(main.name, entry.namespace) !== undefined && !existsSync(entry.dir),
 	);
-	return { checkouts, data, registrations };
+	return { configDir: await configDirOf(main), checkouts, data, registrations };
 }
 
 function leftoverRows({ checkouts, data, registrations }: Leftovers): string[][] {
@@ -1115,7 +1118,8 @@ function leftoverWorktrees(main: Project, left: Leftovers): Pick<Listed, "suffix
 		if (suffix !== undefined && !trees.has(dir)) trees.set(dir, suffix);
 	}
 	for (const { data } of left.data) {
-		for (const { owner } of data) if (!trees.has(owner)) trees.set(owner, basename(owner));
+		for (const { owner } of data)
+			if (!trees.has(owner)) trees.set(owner, worktreeSuffix(owner, left.configDir));
 	}
 	return [...trees].map(([root, suffix]) => ({ root, suffix }));
 }

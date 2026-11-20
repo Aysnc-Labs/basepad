@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import {
 	EXTRA_DAEMONS,
 	type ExtraDaemon,
@@ -249,6 +249,10 @@ export function ofDaemon(id: string): { namespace: string; name: string } {
 
 export function suffixOf(name: string, namespace: string): string | undefined {
 	return namespace.startsWith(`${name}.`) ? namespace.slice(name.length + 1) : undefined;
+}
+
+export function worktreeSuffix(root: string, configDir = ""): string {
+	return basename(resolve(root, relative(resolve("/", configDir), "/")));
 }
 
 export function worktreeFolder(
