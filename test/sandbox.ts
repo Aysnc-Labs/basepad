@@ -100,7 +100,7 @@ export async function sandbox(): Promise<Sandbox> {
 
 	const ca = () => readFile(join(root, "home/pitchfork/state/proxy/ca.pem"), "utf8");
 	const psql = (args: string[], sql: string) =>
-		exec("mise", ["exec", "postgres@18", "--", "psql", ...args, "-tAX", "-c", sql], toolsDir, {
+		exec("mise", ["exec", "--", "psql", ...args, "-tAX", "-c", sql], toolsDir, {
 			PGCONNECT_TIMEOUT: "5",
 		});
 

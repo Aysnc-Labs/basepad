@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { copyFile, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import type { ExtraDaemon, Kind, Place, Snapshot } from "../catalogue.ts";
 import { BasepadError, must, shellQuote } from "../internal/exec.ts";
@@ -10,8 +9,7 @@ import { answers, freePort, waitFor } from "../internal/ports.ts";
 import { recordRunning, runningPort } from "../internal/processes.ts";
 import { serviceUser } from "../internal/service-user.ts";
 import type { Daemon } from "../supervisor.ts";
-import { install, type Tool } from "../tools.ts";
-import { NEON_PROXY_VERSION, PGVECTOR_VERSIONS } from "../versions.ts";
+import { type MiseTool, programsIn } from "../tools.ts";
 
 const HOST = "127.0.0.1";
 const USER = "postgres";
@@ -21,23 +19,20 @@ const NO_UNIX_SOCKETS = "unix_socket_directories=";
 const NEON_PROXY = "neon-proxy";
 const ANY_PORT = `${HOST}:0`;
 
-export type PostgresVersion = 17 | 18;
-
 /**
  * What a worktree's database starts as: a copy of main's data, empty, or main's own database
  * (`shared`, which a worktree never drops).
  */
 export type PostgresWorktree = "copy" | "empty" | "shared";
 
-type PostgresOptions = { version?: PostgresVersion; worktree?: PostgresWorktree };
+type PostgresOptions = { worktree?: PostgresWorktree };
 
 interface PostgresServer {
-	version: PostgresVersion;
 	worktree: PostgresWorktree;
 }
 
 function serverWithDefaults(options: PostgresOptions): PostgresServer {
-	return { version: options.version ?? 18, worktree: options.worktree ?? "copy" };
+	return { ...options, worktree: options.worktree ?? "copy" };
 }
 
 /** A Postgres server of the project's own, with one database for this service. */
@@ -46,8 +41,8 @@ export interface PostgresService extends PostgresServer {
 }
 
 /**
- * A Postgres server of the project's own. `version` is 17 or 18; it defaults to 18. `worktree` is
- * what a worktree's database starts as; it defaults to `copy`.
+ * A Postgres server of the project's own, run from the programs the project's mise config gives.
+ * `worktree` is what a worktree's database starts as; it defaults to `copy`.
  */
 export function postgres(options: PostgresOptions = {}): PostgresService {
 	return { kind: "postgres", ...serverWithDefaults(options) };
@@ -106,9 +101,6 @@ const IDENTIFIER_MAX = 63;
 const schemaOf = <K extends AnyPostgres["kind"]>(kind: K) =>
 	z.strictObject({
 		kind: z.literal(kind),
-		version: z.union([z.literal(17), z.literal(18)], {
-			error: "Postgres version must be 17 or 18",
-		}),
 		worktree: z.enum(["copy", "empty", "shared"], {
 			error: "Postgres `worktree` must be copy, empty or shared",
 		}),
@@ -166,7 +158,7 @@ const server = {
 		async list(service, place) {
 			const port = await serverPort(place.data);
 			if (port === undefined) return [];
-			const pg = await installPostgres(service.version, place.machine.home);
+			const pg = await programsOf(service, place);
 			const rows = await query(
 				pg,
 				port,
@@ -192,7 +184,7 @@ const server = {
 			}
 			const port = await serverPort(place.data);
 			if (port === undefined || names.length === 0) return;
-			const pg = await installPostgres(service.version, place.machine.home);
+			const pg = await programsOf(service, place);
 			for (const name of names) {
 				await query(pg, port, `drop database if exists ${identifier(name)} with (force)`);
 			}
@@ -285,10 +277,10 @@ const server = {
 				...(plain ? ["--format=plain", "--no-owner", "--no-privileges"] : ["--format=custom"]),
 			];
 			if (file === undefined) {
-				await toStdout(pg.bin("pg_dump"), args);
+				await toStdout(pg.pg_dump, args);
 			} else {
 				await writeWhole(file, (partial) =>
-					must(pg.bin("pg_dump"), [...args, `--file=${partial}`], { env: clientEnv() }),
+					must(pg.pg_dump, [...args, `--file=${partial}`], { env: clientEnv() }),
 				);
 			}
 			return plain ? "plain SQL" : "a custom-format dump";
@@ -325,17 +317,13 @@ export const postgresWithNeonProxyKind: Kind<
 
 	async prepare(service, place) {
 		const { port: postgresPort, daemon } = await prepareServer(service, place);
-		const proxy = await install(
-			"github:aysnc-labs/prebuilt-binaries",
-			NEON_PROXY_VERSION,
-			place.machine.home,
-		);
+		const proxy = await programsIn(place.checkout, NEON_PROXY_TOOLS);
 		const extra = neonProxyOf(place);
 		const running = await runningProxy(extra.pid);
 		const proxyPort = running?.proxy ?? (await freePort(extra.port));
 		const againstOldPostgres = running !== undefined && running.postgres !== postgresPort;
 		const argv = [
-			proxy.bin("neon-proxy"),
+			proxy[NEON_PROXY],
 			"--auth-backend=postgres",
 			`--auth-endpoint=postgres://${USER}:${PASSWORD}@${HOST}:${postgresPort}/postgres`,
 			"--wss",
@@ -418,18 +406,20 @@ async function prepareServer(
 	service: AnyPostgres,
 	place: Place<PostgresNames>,
 ): Promise<{ port: number; daemon: Daemon }> {
-	const pg = await installPostgres(service.version, place.machine.home);
+	const pg = await programsOf(service, place);
+	const major = await majorVersion(pg.postgres);
 	const user = await serviceUser();
 	const { data } = place;
 	await mkdir(place.dir, { recursive: true });
-	await user.grant({ traverse: [pg.dir, place.dir], owned: [place.dir] });
+	const programDirs = [...new Set(Object.values<string>(pg).map((program) => dirname(program)))];
+	await user.grant({ traverse: [...programDirs, place.dir], owned: [place.dir] });
 	const initialised = await readFile(join(data, "PG_VERSION"), "utf8").catch(() => undefined);
 	if (initialised === undefined) {
 		// A half-made folder from an initdb that failed; initdb refuses one that isn't empty:
 		// https://www.postgresql.org/docs/current/creating-cluster.html
 		await rm(data, { recursive: true, force: true });
 		const argv = user.wrap([
-			pg.bin("initdb"),
+			pg.initdb,
 			"-D",
 			data,
 			"-U",
@@ -442,14 +432,14 @@ async function prepareServer(
 			"--locale=C.UTF-8",
 		]);
 		await must(argv[0] as string, argv.slice(1));
-	} else if (initialised.trim() !== String(service.version)) {
+	} else if (initialised.trim() !== major) {
 		throw new BasepadError(
-			`\`${place.key}\` asks for Postgres ${service.version}, but its data in ${data} is Postgres ${initialised.trim()}. Dump it with Postgres ${initialised.trim()}, remove that folder, then run \`basepad up\` again.`,
+			`\`${place.key}\`'s data in ${data} is Postgres ${initialised.trim()}, but ${pg.postgres} is Postgres ${major}. Dump it with Postgres ${initialised.trim()}, remove that folder, then run \`basepad up\` again.`,
 		);
 	}
 	const port = (await serverPort(data)) ?? (await freePort(place.port));
 	const server = user.wrap([
-		pg.bin("postgres"),
+		pg.postgres,
 		"-D",
 		data,
 		"-p",
@@ -463,7 +453,7 @@ async function prepareServer(
 		port,
 		daemon: {
 			run: `exec ${server.map(shellQuote).join(" ")}`,
-			program: pg.bin("postgres"),
+			program: pg.postgres,
 			dir: place.dir,
 			// Fast shutdown: SIGTERM's smart shutdown would wait for every app's connections to close:
 			// https://www.postgresql.org/docs/current/server-shutdown.html
@@ -483,7 +473,7 @@ async function provisionServer(
 	}: { claim: boolean; stopped: () => Promise<boolean>; print(line: string): void },
 	mainSetup: string[],
 ): Promise<PostgresOutputs> {
-	const pg = await installPostgres(service.version, place.machine.home);
+	const pg = await programsOf(service, place);
 	const { data } = place;
 	const port = await waitFor(
 		async () => {
@@ -582,7 +572,7 @@ async function sourceOf(source: string): Promise<Source> {
 	}
 }
 
-async function rejectEmptySource(pg: Tool, port: number, name: string): Promise<void> {
+async function rejectEmptySource(pg: Pg, port: number, name: string): Promise<void> {
 	const user = (namespace: string) =>
 		`${namespace} not in (select oid from pg_namespace where nspname in ('pg_catalog', 'information_schema', 'pg_toast') or nspname like 'pg\\_%temp\\_%')`;
 	const anything = [
@@ -593,7 +583,7 @@ async function rejectEmptySource(pg: Tool, port: number, name: string): Promise<
 		"select 1 from pg_extension where extname <> 'plpgsql'",
 	];
 	const out = await must(
-		pg.bin("psql"),
+		pg.psql,
 		[
 			...connection(port, name),
 			"-tAX",
@@ -607,27 +597,22 @@ async function rejectEmptySource(pg: Tool, port: number, name: string): Promise<
 	if (out.trim() !== "t") throw new BasepadError("It created nothing in the database.");
 }
 
-async function restore(pg: Tool, port: number, to: string, from: Source): Promise<void> {
+async function restore(pg: Pg, port: number, to: string, from: Source): Promise<void> {
 	const into = connection(port, to);
-	const restoreAsSuperuser = [
-		pg.bin("pg_restore"),
-		"--no-owner",
-		"--no-privileges",
-		"--exit-on-error",
-	];
+	const restoreAsSuperuser = [pg.pg_restore, "--no-owner", "--no-privileges", "--exit-on-error"];
 	if (from.format === "url") {
 		const env = { ...clientEnv(), ...(from.password ? { PGPASSWORD: from.password } : {}) };
 		await must(
 			"bash",
 			[
 				"-c",
-				`set -o pipefail; ${shellQuote(pg.bin("pg_dump"))} --format=custom --dbname=${shellQuote(from.url)} | ${[...restoreAsSuperuser, ...into].map(shellQuote).join(" ")}`,
+				`set -o pipefail; ${shellQuote(pg.pg_dump)} --format=custom --dbname=${shellQuote(from.url)} | ${[...restoreAsSuperuser, ...into].map(shellQuote).join(" ")}`,
 			],
 			{ env, label: "pg_dump | pg_restore" },
 		);
 	} else if (from.format === "plain") {
 		try {
-			await must(pg.bin("psql"), [...into, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", from.file], {
+			await must(pg.psql, [...into, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", from.file], {
 				env: clientEnv(),
 			});
 		} catch (error) {
@@ -670,7 +655,7 @@ function toStdout(file: string, args: string[]): Promise<void> {
 async function own(
 	service: AnyPostgres,
 	place: Place<PostgresNames>,
-): Promise<{ pg: Tool; port: number; sql: Sql }> {
+): Promise<{ pg: Pg; port: number; sql: Sql }> {
 	if (place.suffix !== undefined && service.worktree === "shared") {
 		throw new BasepadError(
 			`\`${place.key}\` is shared with main in worktrees (\`worktree: "shared"\`), so its database is main's. Run this in main to act on it.`,
@@ -678,7 +663,7 @@ async function own(
 	}
 	const port = await serverPort(place.data);
 	if (port === undefined) throw new BasepadError(`Postgres for \`${place.key}\` is not running.`);
-	const pg = await installPostgres(service.version, place.machine.home);
+	const pg = await programsOf(service, place);
 	return { pg, port, sql: (text) => query(pg, port, text) };
 }
 
@@ -753,37 +738,49 @@ export async function stampOwnerAndCheck(sql: Sql, name: string, owner: string):
 	}
 }
 
-async function installPostgres(version: PostgresVersion, home: string): Promise<Tool> {
-	const pg = await install("postgres", String(version), home);
-	const pgvector = PGVECTOR_VERSIONS[version];
-	const placed = join(pg.dir, `.basepad-pgvector-${pgvector}`);
-	if (!existsSync(placed)) {
-		await placePgvector(pg, pgvector, home);
-		await writeFile(placed, "");
-	}
-	return pg;
+const PREBUILT = "github:aysnc-labs/prebuilt-binaries";
+
+const POSTGRES_TOOL: MiseTool = {
+	name: "postgres",
+	version: "18.7-1",
+	alias: `${PREBUILT}[version_prefix=postgres-]`,
+};
+
+const POSTGRES_TOOLS = {
+	initdb: POSTGRES_TOOL,
+	pg_ctl: POSTGRES_TOOL,
+	postgres: POSTGRES_TOOL,
+	psql: POSTGRES_TOOL,
+	pg_dump: POSTGRES_TOOL,
+	pg_restore: POSTGRES_TOOL,
+};
+
+const NEON_PROXY_TOOLS = {
+	[NEON_PROXY]: {
+		name: NEON_PROXY,
+		version: "8853",
+		alias: `${PREBUILT}[version_prefix=neon-proxy-]`,
+	},
+} satisfies Record<string, MiseTool>;
+
+type Pg = Record<keyof typeof POSTGRES_TOOLS, string>;
+
+function programsOf(service: AnyPostgres, place: Place<PostgresNames>): Promise<Pg> {
+	return programsIn(
+		place.checkout,
+		service.kind === "postgresWithNeonProxy"
+			? { ...POSTGRES_TOOLS, ...NEON_PROXY_TOOLS }
+			: POSTGRES_TOOLS,
+	);
 }
 
-async function placePgvector(pg: Tool, version: string, home: string): Promise<void> {
-	const from = (await install("conda:pgvector", version, home)).dir;
-	const pgConfig = join(pg.dir, "bin", "pg_config");
-	const config = (flag: string) => must(pgConfig, [flag]).then((out) => out.trim());
-	const libDir = await config("--pkglibdir");
-	const extensionDir = join(await config("--sharedir"), "extension");
-	const copies: [string, string][] = [];
-	for (const file of await readdir(join(from, "lib"))) {
-		if (/^vector\.(so|dylib)$/.test(file)) copies.push([join(from, "lib", file), libDir]);
+async function majorVersion(postgres: string): Promise<string> {
+	const out = await must(postgres, ["--version"]);
+	const major = out.match(/\(PostgreSQL\) (\d+)/)?.[1];
+	if (major === undefined) {
+		throw new BasepadError(`${postgres} --version printed no Postgres version: ${out.trim()}`);
 	}
-	for (const file of await readdir(join(from, "share/extension"))) {
-		if (/^vector[.-]/.test(file)) copies.push([join(from, "share/extension", file), extensionDir]);
-	}
-	if (!copies.some(([file]) => file.endsWith(".control"))) {
-		throw new BasepadError(`mise's conda:pgvector@${version} in ${from} has no vector.control.`);
-	}
-	for (const [file, dir] of copies) {
-		const target = join(dir, file.slice(file.lastIndexOf("/") + 1));
-		await writeWhole(target, (partial) => copyFile(file, partial));
-	}
+	return major;
 }
 
 type Sql = (text: string) => Promise<string>;
@@ -791,7 +788,7 @@ type Sql = (text: string) => Promise<string>;
 type Route = "file clone" | "template copy" | "dump and restore";
 
 async function copyDatabase(
-	pg: Tool,
+	pg: Pg,
 	port: number,
 	from: string,
 	to: string,
@@ -852,13 +849,13 @@ async function withSourceClosed<T>(sql: Sql, database: string, copy: () => Promi
 	}
 }
 
-async function dumpAndRestore(pg: Tool, port: number, from: string, to: string): Promise<void> {
+async function dumpAndRestore(pg: Pg, port: number, from: string, to: string): Promise<void> {
 	const conn = (db: string) => connection(port, db).map(shellQuote).join(" ");
 	await must(
 		"bash",
 		[
 			"-c",
-			`set -o pipefail; ${shellQuote(pg.bin("pg_dump"))} -Fc ${conn(from)} | ${shellQuote(pg.bin("pg_restore"))} --no-owner --exit-on-error ${conn(to)}`,
+			`set -o pipefail; ${shellQuote(pg.pg_dump)} -Fc ${conn(from)} | ${shellQuote(pg.pg_restore)} --no-owner --exit-on-error ${conn(to)}`,
 		],
 		{ env: clientEnv() },
 	);
@@ -868,13 +865,13 @@ function serverPort(data: string): Promise<number | undefined> {
 	return runningPort(join(data, "postmaster.pid"), 3);
 }
 
-function query(pg: Tool, port: number, sql: string): Promise<string> {
+function query(pg: Pg, port: number, sql: string): Promise<string> {
 	return inOneSession(pg, port, [sql]);
 }
 
-async function inOneSession(pg: Tool, port: number, statements: string[]): Promise<string> {
+async function inOneSession(pg: Pg, port: number, statements: string[]): Promise<string> {
 	const out = await must(
-		pg.bin("psql"),
+		pg.psql,
 		[
 			"-h",
 			HOST,

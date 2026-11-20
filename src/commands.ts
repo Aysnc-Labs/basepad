@@ -271,7 +271,10 @@ async function ready(
 	const daemons: Record<string, Daemon> = {};
 	for (const key of ownServers(ports)) {
 		const service = project.services[key] as Service;
-		const prepared = await kindOf(service).prepare(service, placeOf(project, ports, here, key));
+		const prepared = await kindOf(service).prepare(
+			service,
+			placeOf(project, ports, here, key, main?.root),
+		);
 		for (const id of daemonsOf(ports.services[key] as ServicePlace)) {
 			const daemon = prepared[id];
 			if (daemon === undefined) throw new Error(`\`${key}\`'s kind prepared no daemon ${id}.`);
@@ -354,15 +357,19 @@ async function ready(
 		const service = project.services[key] as Service;
 		const namespace = runsIn(key);
 		try {
-			outputs[key] = await kindOf(service).provision(service, placeOf(project, lay, here, key), {
-				claim: context.claim,
-				started: started.includes(key),
-				print,
-				stopped: async () => {
-					const state = (await supervisor.status(namespace))[serverOf(key)];
-					return state === "failed" || state === "stopped";
+			outputs[key] = await kindOf(service).provision(
+				service,
+				placeOf(project, lay, here, key, main?.root),
+				{
+					claim: context.claim,
+					started: started.includes(key),
+					print,
+					stopped: async () => {
+						const state = (await supervisor.status(namespace))[serverOf(key)];
+						return state === "failed" || state === "stopped";
+					},
 				},
-			});
+			);
 		} catch (error) {
 			if (!(error instanceof Stopped)) throw error;
 			throw new BasepadError(
@@ -1167,7 +1174,7 @@ async function readyFor(
 	const lay = await ready(environment, context, { start: (key) => keys.includes(key) });
 	return (service) => ({
 		...service,
-		place: placeOf(environment.project, lay, context.here, service.key),
+		place: placeOf(environment.project, lay, context.here, service.key, environment.main?.root),
 	});
 }
 

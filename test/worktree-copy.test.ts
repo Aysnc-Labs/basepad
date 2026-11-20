@@ -19,11 +19,12 @@ const git = async (cwd: string, ...args: string[]) => {
 	});
 };
 
-async function project(name: string, version: 17 | 18): Promise<string> {
+async function project(name: string, files: Record<string, string> = {}): Promise<string> {
 	const dir = await box.project(name, {
+		...files,
 		"basepad.config.ts": configFile(`{
 	name: "${name}",
-	services: { db: postgres({ version: ${version} }) },
+	services: { db: postgres() },
 	env: ({ db }) => ({ ".env.local": { DATABASE_URL: db.url } }),
 }`),
 		".gitignore": "node_modules\n.env.local\n",
@@ -36,6 +37,8 @@ async function project(name: string, version: 17 | 18): Promise<string> {
 	return dir;
 }
 
+const CONDA_POSTGRES_17 = '[tools]\n"conda:postgresql" = "17"\n';
+
 const url = async (dir: string) => (await readEnv(dir, ".env.local")).DATABASE_URL as string;
 
 async function sql(dir: string, query: string): Promise<string> {
@@ -46,7 +49,7 @@ async function sql(dir: string, query: string): Promise<string> {
 
 async function holdOpen(dir: string): Promise<ChildProcess> {
 	const db = await url(dir);
-	const client = spawn("mise", ["exec", "postgres@18", "--", "psql", db, "-tAX"], {
+	const client = spawn("mise", ["exec", "--", "psql", db, "-tAX"], {
 		cwd: box.toolsDir,
 		env: box.env,
 		stdio: ["pipe", "ignore", "ignore"],
@@ -68,7 +71,7 @@ const clients: ChildProcess[] = [];
 
 beforeAll(async () => {
 	box = await sandbox();
-	main = await project("t16busy", 18);
+	main = await project("t16busy");
 	await sql(main, "create table items (name text); insert into items values ('first')");
 }, 300_000);
 afterAll(async () => {
@@ -103,7 +106,7 @@ test("worktree add says which route it copied by: a file clone on Postgres 18 wh
 }, 120_000);
 
 test("on Postgres 17, which cannot clone, the copy is a template copy", async () => {
-	const old = await project("t16old", 17);
+	const old = await project("t16old", { "mise.toml": CONDA_POSTGRES_17 });
 	await sql(old, "create table items (name text); insert into items values ('old')");
 	clients.push(await holdOpen(old));
 	const added = await box.basepad(old, "worktree", "add");
@@ -132,12 +135,11 @@ const MACOS_BUDGET_S = 1.5;
 test.runIf(process.platform === "darwin")(
 	`on macOS, worktree add copies a database of about 1 GB within ${MACOS_BUDGET_S} s`,
 	async () => {
-		const big = await project("t16big", 18);
+		const big = await project("t16big");
 		const init = await box.run("mise", [
 			"-C",
 			box.toolsDir,
 			"exec",
-			"postgres@18",
 			"--",
 			"pgbench",
 			"-i",

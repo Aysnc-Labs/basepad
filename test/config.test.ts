@@ -44,7 +44,7 @@ test("gives one plain description, apps' folders resolved from the config", asyn
 		file: join(dir, "basepad.config.ts"),
 		root: dir,
 		name: "shop",
-		services: { db: { kind: "postgres", version: 18 } },
+		services: { db: { kind: "postgres", worktree: "copy" } },
 		apps: {
 			web: { run: "next dev", cwd: dir },
 			cms: { run: "npm run dev", cwd: join(dir, "apps/cms") },
@@ -56,13 +56,12 @@ test("takes postgresWithNeonProxy() as a service, with postgres()'s options", as
 	const dir = await scratch({
 		"basepad.config.ts": configFile(`{
 			name: "shop",
-			services: { db: postgresWithNeonProxy({ version: 17, worktree: "empty" }) },
+			services: { db: postgresWithNeonProxy({ worktree: "empty" }) },
 		}`),
 	});
 	const project = await loadProject(dir);
 	expect(project.services.db).toEqual({
 		kind: "postgresWithNeonProxy",
-		version: 17,
 		worktree: "empty",
 	});
 });
@@ -148,9 +147,9 @@ describe("errors name the file and key, with no stack", () => {
 			"`services.db.worktree`: Postgres `worktree` must be copy, empty or shared",
 		],
 		[
-			"a bad Postgres version",
-			`{ name: "shop", services: { db: postgres({ version: 16 as 17 }) } }`,
-			"`services.db.version`: Postgres version must be 17 or 18",
+			"a Postgres version, which the project's mise config decides now",
+			`{ name: "shop", services: { db: postgres({ version: 18 } as {}) } }`,
+			"unknown key `services.db.version`",
 		],
 		[
 			"an unknown hook",

@@ -11,7 +11,7 @@ Everything basepad does, in detail. New here? Start with the [README](../README.
 
 ## Install
 
-mise is the one thing you install by hand. basepad installs everything else it needs through it: Postgres, [pitchfork](https://pitchfork.jdx.dev) (which runs the apps and serves their domains) and, when your project's Node is older than 24, a Node 24 to run on.
+mise is the one thing you install by hand. Your project's `mise.toml` lists its tools, its services' among them, and `basepad up` installs them through mise. basepad also installs what runs basepad itself: [pitchfork](https://pitchfork.jdx.dev) (which runs the apps and serves their domains) and, when your project's Node is older than 24, a Node 24 to run on.
 
 1. Install mise 2026.10.24 or later, and activate it in your shell, as [mise's guide](https://mise.jdx.dev/getting-started.html) says:
 
@@ -41,7 +41,18 @@ npm install --save-dev github:Aysnc-Labs/basepad
 echo "basepad.config.local.ts" >> .gitignore
 ```
 
-`npm install --save-dev` adds basepad to `package.json`'s devDependencies, and the `.gitignore` line keeps [the local file](#the-local-file) out of git. Write `basepad.config.ts` to give the project a database and an app:
+`npm install --save-dev` adds basepad to `package.json`'s devDependencies, and the `.gitignore` line keeps [the local file](#the-local-file) out of git. Add Postgres to the `mise.toml` that `mise use` wrote, so the project has a database server:
+
+```toml
+[tool_alias]
+postgres = "github:aysnc-labs/prebuilt-binaries[version_prefix=postgres-]"
+
+[tools]
+node = "24"
+postgres = "18.7-1"
+```
+
+Write `basepad.config.ts` to give the project a database and an app:
 
 ```ts
 import { defineConfig, postgres } from "basepad";
@@ -112,7 +123,7 @@ import { defineConfig, postgres } from "basepad";
 export default defineConfig({
 	name: "shop",
 	services: {
-		db: postgres({ version: 18 }),
+		db: postgres(),
 	},
 	apps: {
 		web: { run: "next dev" }, // https://web.shop.localhost
@@ -136,7 +147,7 @@ export default defineConfig({
 | Key        | Required | What it is                                                                                                                                |
 | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`     | yes      | The project's one key: a lowercase DNS label (letters, digits, hyphens). Every database and domain is built from it.                      |
-| `services` | no       | The services basepad provides, by key: Postgres, `postgres()` or `postgres({ version: 17 })` (18 is the default), Postgres with [Neon's proxy](#postgres-with-neons-proxy), `postgresWithNeonProxy()`, Redis, `redis()` or `redis({ worktree: "shared" })`, and [Mailpit](#mailpit), `mailpit()`. |
+| `services` | no       | The services basepad provides, by key: [Postgres](#postgres), `postgres()`, Postgres with [Neon's proxy](#postgres-with-neons-proxy), `postgresWithNeonProxy()`, Redis, `redis()` or `redis({ worktree: "shared" })`, and [Mailpit](#mailpit), `mailpit()`. |
 | `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config, `port: false` for one that listens on nothing, and `domain: false` for one served at `https://localhost:$PORT`. |
 | `env`      | no       | A function from every service's and app's outputs to the env files to write: each file's path, relative to the config, to its keys.       |
 | `hooks`    | no       | Shell commands run around `up`, `down` and other events, by name: `beforeUp`, `afterUp` and so on. See [Hooks](#hooks). |
@@ -189,15 +200,32 @@ basepad sets exactly the keys `env` returns, in the files it names:
 
 ### Postgres
 
-- Each Postgres service is a server of the project's own, from mise, listening on `127.0.0.1` only, with trust authentication. No other project shares it.
+- Each Postgres service is a server of the project's own, listening on `127.0.0.1` only, with trust authentication. No other project shares it.
+- Its programs come from the project's mise config. In main's checkout, `up` runs `mise install`, then `mise which` for `initdb`, `pg_ctl`, `postgres`, `psql`, `pg_dump` and `pg_restore`, as your shell finds them. So the `psql` in your terminal is the server's own build, and a Postgres on your `PATH` that mise doesn't give, such as Homebrew's, is never used.
 - Its port comes from the project's name, so it is the same on every machine. When something else holds it, `up` takes the next free one and rewrites your env files.
 - `up` creates the database `<name>_<key>`, and keeps its data across `down` and `up` in `~/.basepad/services/<name>/<key>`.
-- Postgres's standard extensions and pgvector are there for `CREATE EXTENSION`. basepad enables none; see [Extensions](#extensions).
-- Data from another Postgres major version is refused, never converted. To change `version`, dump the database first.
+- The build decides which extensions are there for `CREATE EXTENSION`. basepad enables none; see [Extensions](#extensions).
+- The build also decides the version: `up` reads Postgres's major version from `postgres --version`. Data from another major version is refused, never converted, and the error names the program. To change major version, dump the database first.
+
+When the mise config gives none of these programs, `up` stops before it starts anything and prints the lines to add to `mise.toml`:
+
+```toml
+[tool_alias]
+postgres = "github:aysnc-labs/prebuilt-binaries[version_prefix=postgres-]"
+
+[tools]
+postgres = "18.7-1"
+```
+
+That build, from [Aysnc-Labs/prebuilt-binaries](https://github.com/Aysnc-Labs/prebuilt-binaries), has pgvector, PostGIS, pg_repack and more. To run another build or version, change those lines: any tool works that gives the six programs, such as `"conda:postgresql" = "17"`. `mise outdated --bump` shows a newer version, and `mise upgrade --bump` moves to it, as for your other tools.
+
+mise keeps one install folder per tool name and version. A `postgres` tool at a version already installed from another source, such as an older registry `postgres@18.7`, is reused as it is, whichever source the config names.
+
+`up` never trusts a mise config for you. In a project whose `mise.toml` isn't trusted, `up` prints mise's error and the command to run, `mise trust <project>/mise.toml`. To trust every project in a folder once, set `trusted_config_paths` in your global mise config, `~/.config/mise/config.toml`. mise trusts a git worktree of a trusted checkout by itself.
 
 ### Postgres with Neon's proxy
 
-`db: postgresWithNeonProxy()` is for an app that talks to Postgres through Neon's serverless driver, `@neondatabase/serverless`. It is the Postgres above, with [Neon's local proxy](https://neon.com/guides/local-development-with-neon) in front of it, so the driver connects locally as it does to Neon, with one code path. It takes `postgres()`'s options, `version` and `worktree`.
+`db: postgresWithNeonProxy()` is for an app that talks to Postgres through Neon's serverless driver, `@neondatabase/serverless`. It is the Postgres above, with [Neon's local proxy](https://neon.com/guides/local-development-with-neon) in front of it, so the driver connects locally as it does to Neon, with one code path. It takes `postgres()`'s option, `worktree`.
 
 | Output      | What it is                                                                                  |
 | ----------- | ------------------------------------------------------------------------------------------- |
@@ -229,13 +257,23 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 - Its port comes from the project's name, as Postgres's does; when something else holds it, `up` takes the next free one and rewrites your env files.
 - It speaks plain WebSocket on `127.0.0.1`, with no certificate, hence `useSecureWebSocket = false`.
 - It checks the `postgres` role's password, `basepad`, against Postgres. `up` creates the table the proxy reads in the `postgres` database, `neon_control_plane.endpoints`.
-- It comes from mise, as `github:aysnc-labs/prebuilt-binaries@neon-proxy-<version>`, pinned by basepad. On Linux it needs glibc 2.39 or newer (Ubuntu 24.04, Debian 13); on an older one, `up` says so.
+- Its program, `neon-proxy`, comes from the project's mise config, as Postgres's do. When the config gives none, `up` prints the lines to add:
+
+  ```toml
+  [tool_alias]
+  neon-proxy = "github:aysnc-labs/prebuilt-binaries[version_prefix=neon-proxy-]"
+
+  [tools]
+  neon-proxy = "8853"
+  ```
+
+  On Linux that build needs glibc 2.39 or newer (Ubuntu 24.04, Debian 13); on an older one, `up` says so.
 
 It is not a copy of Neon, so passing locally is not passing on Neon:
 
 - The driver connects as `postgres`, a superuser; on Neon your role is not one.
 - There is no pooler: no PgBouncer, as Neon's `-pooler` hosts have.
-- The extensions are basepad's (Postgres's standard ones and pgvector), not Neon's list.
+- The extensions are your Postgres build's, not Neon's list.
 - There are no cold starts.
 - The WebSocket is plain, not TLS.
 
@@ -480,7 +518,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 ```
 
-Postgres's standard extensions (`pg_trgm`, `citext`, `hstore` and the rest) and [pgvector](https://github.com/pgvector/pgvector) are installed, on 17 and 18.
+Which extensions are installed is up to the Postgres build in your mise config. The default, `postgres = "18.7-1"` from prebuilt-binaries, has Postgres's standard extensions (`pg_trgm`, `citext`, `hstore` and the rest), [pgvector](https://github.com/pgvector/pgvector) and [PostGIS](https://postgis.net), among others.
 
 ### Your own database
 

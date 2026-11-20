@@ -113,10 +113,10 @@ Paths: src/forward.ts, src/supervisor.ts, src/layout.ts
 
 ### Postgres
 
-Purpose: a Postgres 17 or 18 server per project, with its database stamped to the owning checkout, pgvector available, and connection values for `env`. `postgresWithNeonProxy()` is the same server with Neon's local proxy in front of it, as its own daemon `<key>-neon-proxy` (an extra daemon of the Kind; `up` stops it once the config no longer asks for it), so `@neondatabase/serverless` connects through `url` and `wsProxy`; `directUrl` goes straight to Postgres.
-Entry: `services: { db: postgres({ version }) }` or `services: { db: postgresWithNeonProxy({ version }) }` in the config
-Paths: src/catalogue.ts, src/catalogue/postgres.ts, src/internal/service-user.ts, src/layout.ts
-Decisions: [0002](adr/0002-a-kind-owns-its-companion-processes.md)
+Purpose: a Postgres server per project, run from the programs the project's mise config gives in main's checkout (`programsIn` in `src/tools.ts`: trust read, `mise install`, `mise which`; a missing program fails `up` with the lines to add), its major version read from `postgres --version`, with its database stamped to the owning checkout, and connection values for `env`. `postgresWithNeonProxy()` is the same server with Neon's local proxy in front of it, as its own daemon `<key>-neon-proxy` (an extra daemon of the Kind; `up` stops it once the config no longer asks for it), so `@neondatabase/serverless` connects through `url` and `wsProxy`; `directUrl` goes straight to Postgres.
+Entry: `services: { db: postgres() }` or `services: { db: postgresWithNeonProxy() }` in the config, and `postgres`/`neon-proxy` in the project's `mise.toml`
+Paths: src/catalogue.ts, src/catalogue/postgres.ts, src/tools.ts, src/internal/service-user.ts, src/layout.ts
+Decisions: [0002](adr/0002-a-kind-owns-its-companion-processes.md), [0003](adr/0003-services-run-the-projects-mise-tools.md)
 
 ### Redis
 

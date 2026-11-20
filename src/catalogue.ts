@@ -20,6 +20,8 @@ export type Place<N = unknown> = {
 	name: string;
 	key: string;
 	owner: string;
+	/** The checkout whose mise config gives the service's programs: main's for a service in main's namespace. */
+	checkout: string;
 	suffix?: string;
 	dir: string;
 	port: number;

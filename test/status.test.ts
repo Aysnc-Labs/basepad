@@ -9,7 +9,7 @@ afterAll(() => box.dispose());
 
 const twoApps = configFile(`{
 	name: "shop",
-	services: { db: postgres({ version: 18 }) },
+	services: { db: postgres() },
 	apps: {
 		web: { run: "next dev" },
 		cms: { run: "npm run dev", cwd: "apps/cms" },
