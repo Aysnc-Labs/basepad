@@ -67,6 +67,25 @@ export function setKeys(text: string, keys: Record<string, string | number>): st
 	return `${out.join("")}${gap}${missing.map(([key, value]) => `${key}=${quote(value)}${newline}`).join("")}`;
 }
 
+export function valuesOf(text: string, keys: string[]): Record<string, string> {
+	const wanted = new Set(keys);
+	const values: Record<string, string> = {};
+	const lines = text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+	for (let i = 0; i < lines.length; i++) {
+		let assignment = lines[i] as string;
+		const match = ASSIGNMENT.exec(assignment);
+		const key = match?.[2];
+		if (!match || key === undefined) continue;
+		while (opensQuote(assignment.slice(match[0].length)) && i + 1 < lines.length) {
+			i++;
+			assignment += lines[i];
+		}
+		if (!wanted.has(key)) continue;
+		values[key] = readValue(assignment.slice(match[0].length).replace(/\r?\n$/, ""));
+	}
+	return values;
+}
+
 function opensQuote(raw: string): boolean {
 	const q = raw[0];
 	if (q !== '"' && q !== "'") return false;

@@ -1,4 +1,4 @@
-import { ofDaemon } from "../layout.ts";
+import { daemonId, ofDaemon } from "../layout.ts";
 
 export type PartState = "running" | "starting" | "failed" | "stopped" | "idle";
 
@@ -113,8 +113,11 @@ export function streamIds(snapshot: Snapshot, view: View): string[] {
 	const env = selectedOf(snapshot, view);
 	const parts = partsOf(env);
 	const focused = parts.find((part) => part.id === view.focus);
-	return focused === undefined ? parts.map((part) => part.id) : [focused.id];
+	if (focused !== undefined) return [focused.id];
+	return env === undefined ? [] : [...parts.map((part) => part.id), hooksId(env.namespace)];
 }
+
+export const hooksId = (namespace: string): string => daemonId(namespace, "hooks");
 
 export function streamLines(snapshot: Snapshot, view: View): LogLine[] {
 	return streamIds(snapshot, view)

@@ -150,6 +150,7 @@ export default defineConfig({
 | `services` | no       | The services basepad provides, by key: [Postgres](#postgres), `postgres()`, Postgres with [Neon's proxy](#postgres-with-neons-proxy), `postgresWithNeonProxy()`, Redis, `redis()` or `redis({ worktree: "shared" })`, and [Mailpit](#mailpit), `mailpit()`. |
 | `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config, `port: false` for one that listens on nothing, and `domain: false` for one served at `https://localhost:$PORT`. |
 | `env`      | no       | A function from every service's and app's outputs to the env files to write: each file's path, relative to the config, to its keys.       |
+| `hooks`    | no       | Shell commands run around `up`, `down` and other events, by name: `beforeUp`, `afterUp` and so on. See [Hooks](#hooks). |
 | `worktrees` | no      | How [worktrees](#worktrees) are made: `prefix` (default `worktree`) names them `<prefix>-<n>`; `dir`, relative to the config, is where they are checked out (default `<repository>/../<name>.worktrees`); `clone` lists untracked paths copied from main, such as `node_modules`; `setup` lists shell commands run once in each new worktree. |
 
 Keys of `services` and `apps` are lowercase DNS labels, and one key can't be both. A name that would make a domain label or a database name longer than 63 characters is rejected with the reason, counting a worktree's names (up to `<prefix>-999`); basepad never shortens one.
@@ -364,6 +365,39 @@ Claude Code makes worktrees for `claude --worktree`, background sessions and sub
 - `worktree rm --claude` removes the worktree at the input's `worktree_path` as `worktree rm --force` does, since Claude Code asks before discarding work. The branch is kept.
 - Claude Code removes the worktree of a session you exit. It keeps a subagent's: remove it with `basepad worktree rm`.
 
+### Hooks
+
+Hooks run your own commands when an environment changes, such as migrations once services are up:
+
+```ts
+hooks: {
+	beforeUp: "php artisan migrate --force",
+	afterUp: ["php artisan db:seed --force", "scripts/warm-cache.sh"],
+	beforeDown: "php artisan queue:clear",
+},
+```
+
+| Hook         | Runs                                                                                                       |
+| ------------ | ---------------------------------------------------------------------------------------------------------- |
+| `beforeUp`   | in `basepad up`, once the services are ready and the env files written, before the apps start             |
+| `afterUp`    | in `basepad up`, once the apps have started; skipped when an app fails to start                           |
+| `beforeDown` | in `basepad down`, before anything stops                                                                   |
+| `afterDown`  | in `basepad down`, once everything has stopped                                                             |
+| `beforeSave`, `afterSave`, `beforeLoad`, `afterLoad`, `beforeDelete`, `afterDelete` | around `db save`, `db load` and `db rm` |
+| `beforeImport`, `afterImport`, `beforeExport`, `afterExport` | around `db import` and `db export` |
+
+The config also takes `before` and `after` hooks for Create and Remove. This version doesn't run those yet.
+
+- A hook is one shell command or a list of them. The commands run in order through `sh`, from the folder of the environment's config: main's, or the worktree's.
+- They run through `mise exec`, so `php`, `psql` and `node` are the ones the checkout's `mise.toml` pins.
+- stdin is closed, so a hook can't ask a question. A command that waits for an answer reads end of file.
+- Each command gets the keys of the env files basepad writes, as `env` sets them, so `$DB_HOST` and `$DB_PORT` work directly. It also gets `BASEPAD_EVENT`, the hook's name (`afterUp`), and `BASEPAD_ENVIRONMENT`: `main`, or the worktree's suffix.
+- `db` hooks also get `BASEPAD_SERVICE`, the database service's key, and per command: `BASEPAD_LABEL` (save, load, rm), `BASEPAD_SOURCE` (import: the file's full path, or the URL) and `BASEPAD_FILE` (export: the file's full path, empty for standard output).
+- A `db` command's `before…` hook runs only once basepad has checked the command can go ahead: the service isn't `shared` in this worktree, the snapshot exists, the import source reads and you said yes. A command refused there runs no hook.
+- A hook's output is printed where basepad's own lines go: standard error for `db export` to standard output, so the dump stays clean. With mission control open, it shows in the environment's logs as a `hooks` row, and a failure shows as a notice.
+- The first command that fails stops the hook, and the rest of its commands don't run. A failed `beforeUp` cancels `up`: no app starts. A failed `afterUp` makes `up` exit 1 and leaves the apps running. A failed `beforeDown` or `afterDown` only prints a warning: `down` still stops everything. A failed `before…` hook of a `db` command cancels it, and a failed `after…` one makes it exit 1, keeping what it did. basepad never runs a failed hook again by itself.
+- Only the `up` and `down` commands run Up and Down hooks. `worktree add --start`, an app started by the first request to its domain, and mission control's start and stop run none.
+
 ### The local file
 
 `basepad.config.local.ts`, beside the config, adjusts it for your machine only, so add it to `.gitignore`. When it exists, basepad loads it after the config. Its default export is a function that gets the project's config and returns the changed one:
@@ -379,14 +413,16 @@ const local: LocalConfig = (config) => ({
 export default local;
 ```
 
+It can add or replace hooks the same way: `hooks: { ...config.hooks, afterUp: "make seed" }`.
+
 ## Commands
 
 Run them anywhere in the project, as `npx basepad <command>`. `basepad --help` lists them, and `basepad <command> --help` gives a command's flags. A mistyped command or flag names the nearest one and exits 1.
 
 | Command          | What it changes                                                                                                                                                                        | What it never touches                                                             |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `basepad up`     | Installs what it needs through mise, starts the services, creates their databases, sets the env files' keys, starts the apps, prints the tables above and, on a terminal, opens mission control.                              | Any other file in the project, any other line of an env file, your own pitchfork. |
-| `basepad down`   | Stops the project's apps and services. Its apps stay stopped, whatever opens their domains, until `up`.                                                                               | Data and env files: it deletes nothing.                                           |
+| `basepad up`     | Installs what it needs through mise, starts the services, creates their databases, sets the env files' keys, runs `beforeUp`, starts the apps, runs `afterUp`, prints the tables above and, on a terminal, opens mission control.                              | Any other file in the project, any other line of an env file, your own pitchfork. |
+| `basepad down`   | Runs `beforeDown`, stops the project's apps and services, then runs `afterDown`. Its apps stay stopped, whatever opens their domains, until `up`.                                                                               | Data and env files: it deletes nothing.                                           |
 | `basepad status` | Nothing. Prints each app with its URL and each service with its address, and their state: `running`, `starting`, `failed` or `stopped`. In main, then each worktree's.               | Anything: it starts nothing.                                                      |
 | `basepad worktree add` | Checks out a git worktree beside the project, copies `worktrees.clone` into it, creates its databases from main's, writes its env files from main's and runs `worktrees.setup`. Starts main's services. Ends main's database sessions for the copy. | Main's data and env files, apart from what `up` in main would set. It starts no app, unless `--start`. |
 | `basepad worktree ls` | Nothing. Lists main's worktrees with their branch and folder. | Anything. |

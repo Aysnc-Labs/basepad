@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { setKeys } from "../src/env-files.ts";
+import { setKeys, valuesOf } from "../src/env-files.ts";
 
 test("a key the file has is set in place; every other line stays as it was", () => {
 	const text = "# secrets\nSECRET=hunter2\nAPP_URL=http://old\n\nOTHER=1\n";
@@ -43,4 +43,16 @@ test("a multi-line quoted value is replaced whole", () => {
 
 test("a key written empty is set on its own line", () => {
 	expect(setKeys("A=1\nEMPTY=\nB=2\n", { EMPTY: "x" })).toBe("A=1\nEMPTY=x\nB=2\n");
+});
+
+test("the values of the keys asked for are read back as they were set, quoted or multi-line ones too", () => {
+	const keys = { URL: "postgres://a@b/c", SPACED: "two words", LINES: "one\ntwo", N: 5 };
+	const text = setKeys('export OTHER="x"\nURL=old # note\n', keys);
+	expect(valuesOf(text, ["URL", "SPACED", "LINES", "N", "MISSING"])).toEqual({
+		URL: "postgres://a@b/c",
+		SPACED: "two words",
+		LINES: "one\ntwo",
+		N: "5",
+	});
+	expect(valuesOf("# URL=no\nURL = 'kept' # note\n", ["URL"])).toEqual({ URL: "kept" });
 });
