@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { basepadHome } from "./home.ts";
 import { MISE_MIN_VERSION, NODE_MAJOR } from "./versions.ts";
 
 const INSTALL_MISE = "https://mise.jdx.dev/getting-started.html";
@@ -48,10 +50,19 @@ if (major >= NODE_MAJOR) {
 	await import("./cli.ts");
 } else {
 	const cli = fileURLToPath(new URL("./cli.js", import.meta.url));
+	const home = basepadHome(process.env);
+	mkdirSync(home, { recursive: true });
 	const child = spawnSync(
 		"mise",
 		["exec", `node@${NODE_MAJOR}`, "--", "node", cli].concat(process.argv.slice(2)),
-		{ stdio: "inherit", env: Object.assign({}, process.env, { BASEPAD_PATH: process.env.PATH }) },
+		{
+			stdio: "inherit",
+			cwd: home,
+			env: Object.assign({}, process.env, {
+				BASEPAD_PATH: process.env.PATH,
+				BASEPAD_CWD: process.cwd(),
+			}),
+		},
 	);
 	if (child.error)
 		fail(`could not run basepad on Node ${NODE_MAJOR} through mise: ${child.error.message}`);

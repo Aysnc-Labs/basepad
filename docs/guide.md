@@ -38,10 +38,10 @@ mise use node@24
 npm init -y
 echo "allow-git=root" >> .npmrc
 npm install --save-dev github:Aysnc-Labs/basepad
-npx basepad init
+echo "basepad.config.local.ts" >> .gitignore
 ```
 
-`init` writes a starter `basepad.config.ts`, named after the folder, and adds `basepad.config.local.ts` to `.gitignore`. Give the project a database and an app:
+`npm install --save-dev` adds basepad to `package.json`'s devDependencies, and the `.gitignore` line keeps [the local file](#the-local-file) out of git. Write `basepad.config.ts` to give the project a database and an app:
 
 ```ts
 import { defineConfig, postgres } from "basepad";
@@ -327,7 +327,7 @@ Claude Code makes worktrees for `claude --worktree`, background sessions and sub
 
 ### The local file
 
-`basepad.config.local.ts`, beside the config, adjusts it for your machine only; `basepad init` adds it to `.gitignore`. When it exists, basepad loads it after the config. Its default export is a function that gets the project's config and returns the changed one:
+`basepad.config.local.ts`, beside the config, adjusts it for your machine only, so add it to `.gitignore`. When it exists, basepad loads it after the config. Its default export is a function that gets the project's config and returns the changed one:
 
 ```ts
 import type { LocalConfig } from "basepad";
@@ -346,7 +346,6 @@ Run them anywhere in the project, as `npx basepad <command>`. `basepad --help` l
 
 | Command          | What it changes                                                                                                                                                                        | What it never touches                                                             |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `basepad init`   | Writes `basepad.config.ts`, named after the folder. Adds `basepad.config.local.ts` to `.gitignore`, creating it. Adds basepad to `package.json`'s devDependencies when it isn't there. | An existing config: it refuses to overwrite one. It installs nothing.             |
 | `basepad up`     | Installs what it needs through mise, starts the services, creates their databases, sets the env files' keys, starts the apps, prints the tables above and, on a terminal, opens mission control.                              | Any other file in the project, any other line of an env file, your own pitchfork. |
 | `basepad down`   | Stops the project's apps and services. Its apps stay stopped, whatever opens their domains, until `up`.                                                                               | Data and env files: it deletes nothing.                                           |
 | `basepad status` | Nothing. Prints each app with its URL and each service with its address, and their state: `running`, `starting`, `failed` or `stopped`. In main, then each worktree's.               | Anything: it starts nothing.                                                      |
@@ -488,7 +487,7 @@ As root on Linux (most cloud sandboxes and containers), `up` needs no human:
 - The proxy listens on port 443 itself, and `up` trusts its certificate authority in the system store and the browsers' stores, so URLs are port-free with no `basepad setup` and no prompt.
 - Where `*.localhost` doesn't resolve for server-side code (glibc without systemd's resolver, as in most containers), `up` adds the project's domains to `/etc/hosts`, in a block marked `# >>> basepad <name>`. When it can't write the file, it prints the lines to add.
 
-`postgresWithNeonProxy()` installs Neon's proxy from GitHub releases through mise, which checks its attestation. A GitHub Actions job needs `GITHUB_TOKEN` in its env and the `attestations: read` permission:
+mise installs a `github:` tool from the project's `mise.toml` from GitHub releases, and checks the release's attestation with GitHub's API. In GitHub Actions, any project with a `github:` tool needs the `attestations: read` permission and `GITHUB_TOKEN` in its env:
 
 ```yaml
 permissions:
@@ -497,5 +496,9 @@ permissions:
 env:
   GITHUB_TOKEN: ${{ github.token }}
 ```
+
+A job with its own `permissions` replaces the workflow's, so repeat `attestations: read` in it.
+
+mise treats every config as trusted in CI (`CI` is set), so a job needs no `mise trust`. In a sandbox, the setup script's `mise install` trusts the project's config. mise holds back a release under 24 hours old (`minimum_release_age`) when it chooses a version for a prefix such as `postgres = "18"`; an exact version such as `postgres = "18.7-1"` installs at once.
 
 As a user, as on a hosted CI runner, URLs keep their port, and tools basepad doesn't start (a test runner, say) need its certificate authority, `~/.basepad/pitchfork/state/proxy/ca.pem`: for Node, set `NODE_EXTRA_CA_CERTS` to it.

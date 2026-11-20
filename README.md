@@ -57,9 +57,10 @@ Mail it sends lands in a local inbox at `https://mail.shop.localhost`, and `base
 ```sh
 curl https://mise.run | sh                 # basepad installs everything else through mise
 npm install --save-dev basepad
-npx basepad init                           # writes a starter config
 npx basepad up
 ```
+
+`up` needs a `basepad.config.ts`: the [guide's first project](docs/guide.md#a-first-project) shows one.
 
 Run `npx basepad setup` once per machine so your browser trusts the local HTTPS domains.
 
