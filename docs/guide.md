@@ -345,12 +345,12 @@ hooks: {
 | `afterUp`    | in `basepad up`, once the apps have started; skipped when an app fails to start                           |
 | `beforeDown` | in `basepad down`, before anything stops                                                                   |
 | `afterDown`  | in `basepad down`, once everything has stopped                                                             |
+| `beforeSave`, `afterSave`, `beforeLoad`, `afterLoad`, `beforeDelete`, `afterDelete` | around `db save`, `db load` and `db rm` |
+| `beforeImport`, `afterImport`, `beforeExport`, `afterExport` | around `db import` and `db export` |
 | `beforeCreate` | in a new worktree, from `worktree add` or the first `up` in a git worktree made by hand, before its databases and env files are made |
 | `afterCreate`  | in a new worktree, once its databases and env files are made, before `--start`'s apps                      |
 | `beforeRemove` | in `worktree rm`, and in `prune` for each worktree whose folder is gone, before its apps, databases and git worktree go |
 | `afterRemove`  | in `worktree rm` and `prune`, once they have gone                                                          |
-
-The config also takes `before` and `after` hooks for Save, Load, Import, Export and Delete, such as `afterImport`. This version doesn't run those yet.
 
 Create hooks run only for worktrees, never for main: put main's commands in `afterUp`. A worktree's Create hooks run once. If `beforeCreate` fails, the worktree's next `basepad up` runs them again, since it was never made ready.
 
@@ -360,8 +360,10 @@ Remove hooks are main's, from main's config, and run from main's folder, so remo
 - They run through `mise exec`, so `php`, `psql` and `node` are the ones the checkout's `mise.toml` pins.
 - stdin is closed, so a hook can't ask a question. A command that waits for an answer reads end of file.
 - Each command gets the keys of the env files basepad writes, as `env` sets them, so `$DB_HOST` and `$DB_PORT` work directly. It also gets `BASEPAD_EVENT`, the hook's name (`afterUp`), and `BASEPAD_ENVIRONMENT`: `main`, or the worktree's suffix.
-- A hook's output is printed where basepad's own lines go. With mission control open, it shows in the environment's logs as a `hooks` row, and a failure shows as a notice.
-- The first command that fails stops the hook, and the rest of its commands don't run. A failed `beforeUp` cancels `up`: no app starts. A failed `afterUp` makes `up` exit 1 and leaves the apps running. A failed `beforeCreate` or `afterCreate` makes the command exit 1 and keeps the worktree. A failed Down or Remove hook only prints a warning: `down` still stops everything, and `worktree rm` and `prune` still remove it. basepad never runs a failed hook again by itself.
+- `db` hooks also get `BASEPAD_SERVICE`, the database service's key, and per command: `BASEPAD_LABEL` (save, load, rm), `BASEPAD_SOURCE` (import: the file's full path, or the URL) and `BASEPAD_FILE` (export: the file's full path, empty for standard output).
+- A `db` command's `before…` hook runs only once basepad has checked the command can go ahead: the service isn't `shared` in this worktree, the snapshot exists, the import source reads and you said yes. A command refused there runs no hook.
+- A hook's output is printed where basepad's own lines go: standard error for `db export` to standard output and under `--json` and `--claude`, so that output stays clean. With mission control open, it shows in the environment's logs as a `hooks` row, and a failure shows as a notice.
+- The first command that fails stops the hook, and the rest of its commands don't run. A failed `beforeUp` cancels `up`: no app starts. A failed `afterUp` makes `up` exit 1 and leaves the apps running. A failed `beforeCreate` or `afterCreate` makes the command exit 1 and keeps the worktree. A failed Down or Remove hook only prints a warning: `down` still stops everything, and `worktree rm` and `prune` still remove it. A failed `before…` hook of a `db` command cancels it, and a failed `after…` one makes it exit 1, keeping what it did. basepad never runs a failed hook again by itself.
 - Only the `up` and `down` commands run Up and Down hooks. `worktree add --start`, an app started by the first request to its domain, and mission control's start and stop run none.
 
 ### The local file
