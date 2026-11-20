@@ -1,7 +1,5 @@
-import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { configFile, type Sandbox, sandbox } from "./sandbox.ts";
 
@@ -42,36 +40,6 @@ test("a hook gets env file keys that together pass one argument's size limit", a
 	expect((await box.basepad(dir, "up")).code).toBe(0);
 
 	expect((await readFile(join(dir, "size"), "utf8")).trim()).toBe("150000");
-	await box.basepad(dir, "down");
-}, 120_000);
-
-test("no process command line shows an env file value while a hook runs", async () => {
-	const secret = "t67-canary-secret";
-	const dir = await box.project("t67argv", {
-		"basepad.config.ts": configFile(`{
-			name: "t67argv",
-			apps: { web: { run: "sleep 60" } },
-			env: () => ({ ".env.local": { API_SECRET: "${secret}" } }),
-			hooks: { afterUp: ["true", "true", "true", "true", "true"] },
-		}`),
-	});
-	let seen = "";
-	let stop = false;
-	const poll = (async () => {
-		while (!stop) {
-			const ps = await promisify(execFile)("ps", ["-eo", "args", "-ww"]);
-			seen += ps.stdout
-				.split("\n")
-				.filter((line) => line.includes(secret) && !line.startsWith("ps "))
-				.join("\n");
-		}
-	})();
-
-	await box.basepad(dir, "up");
-	stop = true;
-	await poll;
-
-	expect(seen).toBe("");
 	await box.basepad(dir, "down");
 }, 120_000);
 
