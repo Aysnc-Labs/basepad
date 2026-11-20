@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { CONFIG_FILE, type Project } from "./config.ts";
+import { runCommands } from "./hooks.ts";
 import { BasepadError, exec, must } from "./internal/exec.ts";
 import { nextSuffix, worktreeFolder } from "./layout.ts";
 
@@ -102,18 +103,16 @@ export async function runSetup(
 	commands: string[],
 	say: (line: string) => void,
 ): Promise<void> {
-	const env = { ...process.env };
-	if (env.BASEPAD_PATH) env.PATH = env.BASEPAD_PATH;
-	delete env.BASEPAD_PATH;
-	for (const command of commands) {
+	const output: string[] = [];
+	const failed = await runCommands(dir, commands, {}, (command) => {
 		say(`Running \`${command}\``);
-		const out = await exec("sh", ["-c", command], { cwd: dir, env });
-		if (out.code === 0) continue;
-		const output = `${out.stdout}${out.stderr}`.trimEnd();
-		throw new BasepadError(
-			`Setup command \`${command}\` failed (exit ${out.code}). Its output:\n${(output || "(none)").replace(/^/gm, "  ")}`,
-		);
-	}
+		output.length = 0;
+		return (line) => output.push(line);
+	});
+	if (failed === undefined) return;
+	throw new BasepadError(
+		`Setup command \`${failed.command}\` failed (exit ${failed.code}). Its output:\n${(output.join("\n").trimEnd() || "(none)").replace(/^/gm, "  ")}`,
+	);
 }
 
 export interface Listed {

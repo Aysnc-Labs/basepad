@@ -88,6 +88,22 @@ test("worktrees default to the prefix `worktree`; a set `dir` resolves from the 
 	expect(project.services.db).toMatchObject({ worktree: "empty" });
 });
 
+test("hooks are each a list of commands, a single command taken as one", async () => {
+	const plain = await loadProject(await scratch({ "basepad.config.ts": twoApps }));
+	expect(plain.hooks).toEqual({});
+	const dir = await scratch({
+		"basepad.config.ts": configFile(`{
+			name: "shop",
+			hooks: { afterUp: "php artisan migrate --force", beforeDown: ["a", "b"], afterImport: [] },
+		}`),
+	});
+	expect((await loadProject(dir)).hooks).toEqual({
+		afterUp: ["php artisan migrate --force"],
+		beforeDown: ["a", "b"],
+		afterImport: [],
+	});
+});
+
 describe("errors name the file and key, with no stack", () => {
 	const invalid: [string, string, string][] = [
 		["an unknown key", `{ name: "shop", app: {} }`, "unknown key `app`"],
@@ -131,6 +147,21 @@ describe("errors name the file and key, with no stack", () => {
 			"a bad Postgres version",
 			`{ name: "shop", services: { db: postgres({ version: 16 as 17 }) } }`,
 			"`services.db.version`: Postgres version must be 17 or 18",
+		],
+		[
+			"an unknown hook",
+			`{ name: "shop", hooks: { afterStart: "x" } }`,
+			"unknown key `hooks.afterStart`",
+		],
+		[
+			"an empty hook command",
+			`{ name: "shop", hooks: { beforeUp: ["ok", ""] } }`,
+			"`hooks.beforeUp.1`: a hook is a shell command or a list of them",
+		],
+		[
+			"a hook that is no command",
+			`{ name: "shop", hooks: { beforeUp: 3 as unknown as string } }`,
+			"`hooks.beforeUp`: a hook is a shell command or a list of them",
 		],
 		[
 			"a key that is both a service and an app",
@@ -191,6 +222,24 @@ export default local;
 		const project = await loadProject(dir);
 		expect(project.apps.web?.run).toBe("next dev --turbo");
 		expect(project.apps.cms?.run).toBe("npm run dev");
+	});
+
+	test("can add and replace hooks", async () => {
+		const dir = await scratch({
+			"basepad.config.ts": configFile(
+				`{ name: "shop", hooks: { afterUp: "team", beforeDown: "team" } }`,
+			),
+			"basepad.config.local.ts": `export default (config) => ({
+	...config,
+	hooks: { ...config.hooks, afterUp: "mine", afterCreate: ["mine too"] },
+});
+`,
+		});
+		expect((await loadProject(dir)).hooks).toEqual({
+			afterUp: ["mine"],
+			beforeDown: ["team"],
+			afterCreate: ["mine too"],
+		});
 	});
 
 	test("that throws gives an error naming it", async () => {

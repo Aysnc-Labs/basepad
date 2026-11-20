@@ -1,0 +1,121 @@
+import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { createInterface } from "node:readline";
+import type { Project } from "./config.ts";
+import { valuesOf } from "./env-files.ts";
+import { BasepadError } from "./internal/exec.ts";
+import { throughMise } from "./internal/mise.ts";
+
+export const HOOK_EVENTS = [
+	"Create",
+	"Up",
+	"Down",
+	"Remove",
+	"Save",
+	"Load",
+	"Import",
+	"Export",
+	"Delete",
+] as const;
+
+export type HookEvent = (typeof HOOK_EVENTS)[number];
+export type HookName = `before${HookEvent}` | `after${HookEvent}`;
+
+export const HOOK_NAMES: HookName[] = HOOK_EVENTS.flatMap((event) => [
+	`before${event}` as const,
+	`after${event}` as const,
+]);
+
+export interface HookRun {
+	environment: string | undefined;
+	say(line: string): void;
+	dir?: string;
+	variables?: Record<string, string>;
+	warn?(line: string): void;
+}
+
+export async function runHook(project: Project, name: HookName, run: HookRun): Promise<void> {
+	const commands = project.hooks[name] ?? [];
+	if (commands.length === 0) return;
+	const env = {
+		...(await envFileKeys(project)),
+		...run.variables,
+		BASEPAD_EVENT: name,
+		BASEPAD_ENVIRONMENT: run.environment ?? "main",
+	};
+	const failed = await runCommands(run.dir ?? project.root, commands, env, (command) => {
+		run.say(`Running ${name} \`${command}\``);
+		return (line) => run.say(`  ${line}`);
+	});
+	if (failed === undefined) return;
+	const message = `${name} \`${failed.command}\` failed (exit ${failed.code}).`;
+	if (run.warn === undefined) throw new BasepadError(message);
+	run.warn(`${message} Going on.`);
+}
+
+export async function runCommands(
+	dir: string,
+	commands: string[],
+	variables: Record<string, string>,
+	starting: (command: string) => (line: string) => void,
+): Promise<{ command: string; code: number } | undefined> {
+	const env: NodeJS.ProcessEnv = { ...process.env, ...variables };
+	if (env.BASEPAD_PATH) env.PATH = env.BASEPAD_PATH;
+	delete env.BASEPAD_PATH;
+	for (const command of commands) {
+		const code = await streamed(dir, command, env, starting(command));
+		if (code !== 0) return { command, code };
+	}
+	return undefined;
+}
+
+function streamed(
+	dir: string,
+	command: string,
+	env: NodeJS.ProcessEnv,
+	line: (text: string) => void,
+): Promise<number> {
+	return new Promise((done, fail) => {
+		const child = spawn("sh", ["-c", throughMise(command)], {
+			cwd: dir,
+			env,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		for (const stream of [child.stdout, child.stderr]) {
+			createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY }).on("line", line);
+		}
+		child.on("error", fail);
+		child.on("close", (code) => done(code ?? 1));
+	});
+}
+
+async function envFileKeys(project: Project): Promise<Record<string, string>> {
+	const keys: Record<string, string> = {};
+	for (const [path, names] of Object.entries(envFileNames(project))) {
+		const text = await readFile(resolve(project.root, path), "utf8").catch(() => undefined);
+		if (text !== undefined) Object.assign(keys, valuesOf(text, names));
+	}
+	return keys;
+}
+
+function envFileNames(project: Project): Record<string, string[]> {
+	let files: unknown;
+	try {
+		files = project.env(anyOutputs as Parameters<Project["env"]>[0]);
+	} catch {
+		return {};
+	}
+	if (typeof files !== "object" || files === null) return {};
+	return Object.fromEntries(
+		Object.entries(files).flatMap(([path, keys]) =>
+			typeof keys === "object" && keys !== null ? [[path, Object.keys(keys)]] : [],
+		),
+	);
+}
+
+const anyValue: unknown = new Proxy(
+	{},
+	{ get: (_, key) => (key === Symbol.toPrimitive ? () => "" : "") },
+);
+const anyOutputs: unknown = new Proxy({}, { get: () => anyValue });
