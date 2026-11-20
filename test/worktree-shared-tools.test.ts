@@ -69,3 +69,32 @@ test("a worktree whose shared service resolves another program than main's fails
 	expect((await box.basepad(tree, "status")).code).toBe(0);
 	expect((await box.basepad(tree, "down")).code).toBe(0);
 }, 300_000);
+
+test("a worktree whose mise config isn't trusted fails before beforeCreate runs", async () => {
+	const main = await box.project("t57trust", {
+		"basepad.config.ts": configFile(
+			`{ name: "t57trust", hooks: { beforeCreate: "touch created" } }`,
+		),
+		".gitignore": "node_modules\ncreated\n",
+	});
+	await git(main, "init", "--quiet", "--initial-branch=main");
+	await git(main, "add", ".");
+	await git(main, "commit", "--quiet", "-m", "init");
+	const onlyMainTrusted = {
+		CI: undefined,
+		CONTINUOUS_INTEGRATION: undefined,
+		GITHUB_ACTIONS: undefined,
+		BUILD_NUMBER: undefined,
+		RUN_ID: undefined,
+		MISE_PARANOID: "1",
+		MISE_TRUSTED_CONFIG_PATHS: main,
+	};
+
+	const add = await box.basepadWith({ env: onlyMainTrusted }, main, "worktree", "add");
+
+	const tree = join(box.root, "t57trust.worktrees/worktree-1");
+	expect(add.code).toBe(1);
+	expect(add.stderr).toContain(`Config files in ${join(tree, "mise.toml")} are not trusted.`);
+	expect(add.stderr).toContain(`\`mise trust ${join(tree, "mise.toml")}\``);
+	expect(existsSync(join(tree, "created"))).toBe(false);
+}, 120_000);
