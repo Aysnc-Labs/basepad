@@ -1,13 +1,15 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:https";
 import { createConnection, createServer } from "node:net";
 import { constants, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { inject } from "vitest";
 import { shellQuote } from "../src/internal/exec.ts";
 import { PITCHFORK_VERSION } from "../src/versions.ts";
+import { PROJECT_MISE_TOML } from "./mise-tools.ts";
 
 const run = promisify(execFile);
 const repo = resolve(import.meta.dirname, "..");
@@ -21,6 +23,7 @@ export interface Result {
 
 export interface Sandbox {
 	root: string;
+	toolsDir: string;
 	env: NodeJS.ProcessEnv;
 	proxyPort: number;
 	ca(): Promise<string>;
@@ -52,11 +55,17 @@ export async function sandbox(): Promise<Sandbox> {
 		BASEPAD_HOME: join(root, "home"),
 		MISE_STATE_DIR: join(root, "mise-state"),
 		MISE_CONFIG_DIR: join(root, "mise-config"),
+		MISE_DATA_DIR: inject("miseDataDir"),
+		MISE_CACHE_DIR: inject("miseCacheDir"),
+		MISE_TRUSTED_CONFIG_PATHS: root,
 		PITCHFORK_STATE_DIR: join(root, "pf-state"),
 		PITCHFORK_CONFIG_DIR: join(root, "pf-config"),
 		PITCHFORK_LOGS_DIR: join(root, "pf-logs"),
 		NO_COLOR: "1",
 	};
+	const toolsDir = join(root, ".tools");
+	await mkdir(toolsDir);
+	await writeFile(join(toolsDir, "mise.toml"), MISE_TOML);
 	const proxyPort = await freePort();
 	env.BASEPAD_PROXY_PORT = String(proxyPort);
 
@@ -91,18 +100,20 @@ export async function sandbox(): Promise<Sandbox> {
 
 	const ca = () => readFile(join(root, "home/pitchfork/state/proxy/ca.pem"), "utf8");
 	const psql = (args: string[], sql: string) =>
-		exec("mise", ["exec", "postgres@18", "--", "psql", ...args, "-tAX", "-c", sql], root, {
+		exec("mise", ["exec", "postgres@18", "--", "psql", ...args, "-tAX", "-c", sql], toolsDir, {
 			PGCONNECT_TIMEOUT: "5",
 		});
 
 	const box: Sandbox = {
 		root,
+		toolsDir,
 		env,
 		proxyPort,
 		ca,
 		async project(name, files = {}) {
 			const dir = join(root, name);
 			await mkdir(dir, { recursive: true });
+			await writeFile(join(dir, "mise.toml"), MISE_TOML);
 			for (const [path, content] of Object.entries(files)) {
 				await mkdir(dirname(join(dir, path)), { recursive: true });
 				await writeFile(join(dir, path), content);
@@ -115,7 +126,7 @@ export async function sandbox(): Promise<Sandbox> {
 		run: (file, args) => exec(file, args, root),
 		psql,
 		redis: (url, ...args) =>
-			exec("mise", ["exec", "redis@8", "--", "redis-cli", "-u", url, ...args], root, {
+			exec("mise", ["exec", "redis@8", "--", "redis-cli", "-u", url, ...args], toolsDir, {
 				MISE_SKILLS_FETCH: "false",
 			}),
 		async sql(project, sql) {
@@ -238,6 +249,8 @@ export async function readEnv(dir: string, file: string): Promise<Record<string,
 			.map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
 	);
 }
+
+export const MISE_TOML = readFileSync(PROJECT_MISE_TOML, "utf8");
 
 export function configFile(body: string): string {
 	return `import { defineConfig, mailpit, postgres, postgresWithNeonProxy, redis } from "basepad";\n\nexport default defineConfig(${body});\n`;

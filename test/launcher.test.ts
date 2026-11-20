@@ -30,7 +30,11 @@ test("on a Node older than 24, basepad runs again on mise's Node 24 without trus
 	const where = await box.run("mise", ["where", "node@18"]);
 	const node18 = join(where.stdout.trim(), "bin/node");
 
-	const out = await box.basepadWith({ via: [node18], env: notCi }, dir, "status");
+	const out = await box.basepadWith(
+		{ via: [node18], env: { ...notCi, MISE_TRUSTED_CONFIG_PATHS: undefined } },
+		dir,
+		"status",
+	);
 
 	expect(out.stdout).toContain(`web  https://web.shop.localhost:${box.proxyPort}  stopped`);
 	expect(out.code).toBe(0);

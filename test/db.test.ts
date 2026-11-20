@@ -64,7 +64,7 @@ async function ok(dir: string, ...args: string[]): Promise<string> {
 async function holdOpen(dir: string): Promise<ChildProcess> {
 	const db = await url(dir);
 	const client = spawn("mise", ["exec", "postgres@18", "--", "psql", db, "-tAX"], {
-		cwd: box.root,
+		cwd: box.toolsDir,
 		env: box.env,
 		stdio: ["pipe", "ignore", "ignore"],
 	});
