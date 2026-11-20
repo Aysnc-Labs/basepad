@@ -50,6 +50,8 @@ export const mailpitKind: Kind<MailpitService, MailpitOutputs, MailpitNames> = {
 
 	web: true,
 
+	programs: () => MAILPIT_TOOLS,
+
 	names(_service, { dir, suffix }) {
 		return { user: suffix ?? "main", data: join(dir, "mailpit.db"), pid: join(dir, "mailpit.pid") };
 	},

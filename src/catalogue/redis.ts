@@ -57,6 +57,8 @@ export const redisKind: Kind<RedisService, RedisOutputs, RedisNames> = {
 		return service.worktree !== "shared";
 	},
 
+	programs: () => REDIS_TOOLS,
+
 	names(service, { dir, suffix }) {
 		const worktrees = join(dir, "worktrees");
 		const own = suffix !== undefined && service.worktree !== "shared";
