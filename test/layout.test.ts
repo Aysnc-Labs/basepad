@@ -230,6 +230,10 @@ test("a namespace of the project's worktree gives its suffix; any other gives no
 test("a worktree's suffix is its checkout folder's name, also when the config sits in a subfolder", () => {
 	expect(worktreeSuffix("/code/shop.worktrees/worktree-1")).toBe("worktree-1");
 	expect(worktreeSuffix("/code/shop.worktrees/fix-login/apps/web", "apps/web")).toBe("fix-login");
+	expect(worktreeSuffix("/code/shop.worktrees/fix-login/apps/web/", "./apps/web/")).toBe(
+		"fix-login",
+	);
+	expect(worktreeSuffix("/code/shop.worktrees/worktree-1/", ".")).toBe("worktree-1");
 });
 
 test("a daemon's id gives back its namespace and name, a worktree's too", () => {

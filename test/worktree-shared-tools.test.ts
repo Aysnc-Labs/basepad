@@ -71,9 +71,9 @@ test("a worktree whose shared service resolves another program than main's fails
 }, 300_000);
 
 test("a worktree whose mise config isn't trusted fails before beforeCreate runs", async () => {
-	const main = await box.project("t57trust", {
+	const main = await box.project("untrusted-tree", {
 		"basepad.config.ts": configFile(
-			`{ name: "t57trust", hooks: { beforeCreate: "touch created" } }`,
+			`{ name: "untrusted-tree", hooks: { beforeCreate: "touch created" } }`,
 		),
 		".gitignore": "node_modules\ncreated\n",
 	});
@@ -92,7 +92,7 @@ test("a worktree whose mise config isn't trusted fails before beforeCreate runs"
 
 	const add = await box.basepadWith({ env: onlyMainTrusted }, main, "worktree", "add");
 
-	const tree = join(box.root, "t57trust.worktrees/worktree-1");
+	const tree = join(box.root, "untrusted-tree.worktrees/worktree-1");
 	expect(add.code).toBe(1);
 	expect(add.stderr).toContain(`Config files in ${join(tree, "mise.toml")} are not trusted.`);
 	expect(add.stderr).toContain(`\`mise trust ${join(tree, "mise.toml")}\``);

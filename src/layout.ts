@@ -1,4 +1,4 @@
-import { dirname, join, sep } from "node:path";
+import { dirname, join, normalize, sep } from "node:path";
 import {
 	EXTRA_DAEMONS,
 	type ExtraDaemon,
@@ -260,9 +260,12 @@ export function suffixOf(name: string, namespace: string): string | undefined {
 }
 
 export function worktreeSuffix(root: string, configDir = ""): string {
-	const below = configDir === "" ? 0 : configDir.split(sep).length;
-	const folders = root.split(sep);
-	return folders[folders.length - 1 - below] ?? "";
+	const segments = (path: string) =>
+		normalize(path)
+			.split(sep)
+			.filter((s) => s !== "" && s !== ".");
+	const folders = segments(root);
+	return folders[folders.length - 1 - segments(configDir).length] ?? "";
 }
 
 export function worktreeFolder(

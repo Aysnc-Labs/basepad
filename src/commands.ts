@@ -253,14 +253,10 @@ interface Context {
 async function ready(
 	environment: Environment,
 	context: Context,
-	{
-		start = () => true,
-		toolsChecked = false,
-	}: { start?: (key: string) => boolean; toolsChecked?: boolean } = {},
+	{ start = () => true }: { start?: (key: string) => boolean } = {},
 ): Promise<Layout> {
 	const { project, suffix, main } = environment;
 	const { here, supervisor, print } = context;
-	if (!toolsChecked) await checkTools(environment, here);
 	const ports = layout(project, here, suffix);
 	const services = Object.keys(project.services);
 	const owner = await supervisor.owner(ports.namespace);
@@ -448,6 +444,7 @@ async function open(
 	const supervisor = opened ?? (await openSupervisor(here, print));
 	const context: Context = { here, supervisor, claim: flags.claim === true, print };
 	if (environment.main !== undefined) {
+		await checkTools({ project: environment.main }, here);
 		await ready({ project: environment.main }, { ...context, claim: false });
 	}
 	return context;
@@ -547,10 +544,14 @@ async function readyOrCreate(
 	say: (line: string) => void,
 ): Promise<Layout> {
 	const { project, suffix } = environment;
-	if (suffix === undefined) return ready(environment, context);
-	const registered = await context.supervisor.owner(namespaceOf(project.name, suffix));
-	if (registered !== undefined) return ready(environment, context);
-	return create(environment, suffix, context, say);
+	if (
+		suffix !== undefined &&
+		(await context.supervisor.owner(namespaceOf(project.name, suffix))) === undefined
+	) {
+		return create(environment, suffix, context, say);
+	}
+	await checkTools(environment, context.here);
+	return ready(environment, context);
 }
 
 async function create(
@@ -569,10 +570,7 @@ async function create(
 		await before();
 		await checkTools(environment, context.here);
 		await hook("beforeCreate");
-		return ready(environment, context, {
-			toolsChecked: true,
-			...(start === undefined ? {} : { start }),
-		});
+		return ready(environment, context, start === undefined ? {} : { start });
 	});
 	await keptOnFailure(tree, "run the rest of `afterCreate` there", () => hook("afterCreate"));
 	return lay;
@@ -628,6 +626,7 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	const at = await environmentAt(input?.cwd ?? cwd);
 	const main = at.main ?? at.project;
 	const context = await open({ project: main }, {}, say);
+	await checkTools({ project: main }, context.here);
 	await ready({ project: main }, context);
 	const requested = input?.name ?? (typeof flags.branch === "string" ? flags.branch : undefined);
 	const { suffix, branch, root } = await checkOutWorktree(main, requested);
@@ -937,6 +936,7 @@ async function removeWorktree(
 	print: Invocation["print"],
 ): Promise<void> {
 	const context = await open({ project: main }, {}, print);
+	await checkTools({ project: main }, context.here);
 	await ready({ project: main }, context);
 	const hook = removeHook(main, tree, print);
 	await hook("beforeRemove");
@@ -1045,6 +1045,7 @@ async function removedServices(main: Project, here: Machine): Promise<[string, s
 async function prune({ cwd, flags, print }: Invocation): Promise<void> {
 	const main = await mainAt(cwd);
 	const context = await open({ project: main }, {}, print);
+	await checkTools({ project: main }, context.here);
 	await ready({ project: main }, context);
 	const { here, supervisor } = context;
 	const left = await leftoversOf(main, here, supervisor);
@@ -1200,6 +1201,7 @@ async function readyFor(
 ): Promise<(service: DatabaseService) => DatabaseTarget> {
 	const keys = services.map(({ key }) => key);
 	const context = await open(environment, {}, print);
+	await checkTools(environment, context.here);
 	const lay = await ready(environment, context, { start: (key) => keys.includes(key) });
 	return (service) => ({
 		...service,
