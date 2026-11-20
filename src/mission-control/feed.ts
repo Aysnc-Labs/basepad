@@ -26,7 +26,7 @@ export async function openFeed(options: {
 	supervisor: Supervisor;
 	work: string;
 	changed(): void;
-	told?: Told;
+	hookLog?: HookLog;
 }): Promise<Feed> {
 	const { main, machine, supervisor, changed } = options;
 	const arrivals: number[] = [];
@@ -40,7 +40,7 @@ export async function openFeed(options: {
 	});
 	let running: Running[] = [];
 	const notices: string[] = [];
-	options.told?.pipe(book.write);
+	options.hookLog?.pipe(book.write);
 
 	const configOf = async (root: string): Promise<Project | string> => {
 		let config = configs.get(root);
@@ -191,12 +191,12 @@ export function logBook(
 	};
 }
 
-export interface Told {
+export interface HookLog {
 	say(text: string): void;
 	pipe(to: (entry: LogEntry) => void): void;
 }
 
-export function told(id: string): Told {
+export function hookLog(id: string): HookLog {
 	const waiting: LogEntry[] = [];
 	let to: ((entry: LogEntry) => void) | undefined;
 	return {

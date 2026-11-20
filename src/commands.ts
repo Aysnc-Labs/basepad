@@ -42,7 +42,7 @@ import {
 	supervisorPaths,
 	worktreeSuffix,
 } from "./layout.ts";
-import { told } from "./mission-control/feed.ts";
+import { hookLog } from "./mission-control/feed.ts";
 import { hooksId } from "./mission-control/model.ts";
 import { setup, trustAsRoot } from "./setup.ts";
 import {
@@ -458,7 +458,7 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const { project } = environment;
 	const context = await open(environment, flags, print);
 	const { supervisor, here } = context;
-	const lay = await readyOrMade(environment, context, print);
+	const lay = await readyOrCreate(environment, context, print);
 	const hook = upHooks(environment, print);
 	await hook("beforeUp");
 	const { states, failure } = await startApps(supervisor, project, lay);
@@ -491,10 +491,10 @@ async function upOnTerminal(
 	const say = (line: string) => held.push(line);
 	const supervisor = await openSupervisor(here, say);
 	const selected = layout(project, here, environment.suffix).namespace;
-	const hookLog = told(hooksId(selected));
+	const hooksRow = hookLog(hooksId(selected));
 	const hook = upHooks(environment, (line) => {
 		say(line);
-		hookLog.say(line);
+		hooksRow.say(line);
 	});
 	let served = here;
 	let outcome: { lay: Layout; states: Record<string, DaemonState>; failure?: string } | undefined;
@@ -503,9 +503,9 @@ async function upOnTerminal(
 	let notice: string | undefined;
 	const readying = (async () => {
 		const context = await open(environment, flags, say, supervisor);
-		const lay = await readyOrMade(environment, { ...context, print: say }, (line) => {
+		const lay = await readyOrCreate(environment, { ...context, print: say }, (line) => {
 			say(line);
-			hookLog.say(line);
+			hooksRow.say(line);
 		});
 		served = await machineWithPortFree(here, supervisor);
 		await hook("beforeUp");
@@ -530,7 +530,7 @@ async function upOnTerminal(
 			notice = undefined;
 			return shown;
 		},
-		told: hookLog,
+		hookLog: hooksRow,
 		selected,
 		basepad: [process.execPath, ...process.execArgv, process.argv[1] as string],
 	});
@@ -545,7 +545,7 @@ async function upOnTerminal(
 	if (afterUp !== undefined) throw afterUp;
 }
 
-async function readyOrMade(
+async function readyOrCreate(
 	environment: Environment,
 	context: Context,
 	say: (line: string) => void,
@@ -554,10 +554,10 @@ async function readyOrMade(
 	if (suffix === undefined) return ready(environment, context);
 	const registered = await context.supervisor.owner(namespaceOf(project.name, suffix));
 	if (registered !== undefined) return ready(environment, context);
-	return made(environment, suffix, context, say);
+	return create(environment, suffix, context, say);
 }
 
-async function made(
+async function create(
 	environment: Environment,
 	suffix: string,
 	context: Context,
@@ -638,7 +638,7 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	const { suffix, branch, root } = await checkOutWorktree(main, requested);
 	say(`${checkedOut(suffix, root)}.`);
 	const environment = await keptOnFailure(suffix, root, UP_THERE, () => environmentAt(root));
-	const lay = await made(environment, suffix, context, say, {
+	const lay = await create(environment, suffix, context, say, {
 		start: () => flags.start === true,
 		before: async () => {
 			const { project } = environment;
