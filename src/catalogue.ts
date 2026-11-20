@@ -82,18 +82,25 @@ export interface Snapshot {
 }
 
 export interface Database<S, N> {
-	save(service: S, place: Place<N>, label: string): Promise<void>;
-	load(service: S, place: Place<N>, label: string): Promise<void>;
+	save(service: S, place: Place<N>, label: string, validated: Validated): Promise<void>;
+	load(service: S, place: Place<N>, label: string, validated: Validated): Promise<void>;
 	snapshots(service: S, place: Place<N>): Promise<Snapshot[]>;
-	remove(service: S, place: Place<N>, label: string): Promise<void>;
+	remove(service: S, place: Place<N>, label: string, validated: Validated): Promise<void>;
 	import(
 		service: S,
 		place: Place<N>,
 		source: string,
 		confirm: (database: string) => Promise<void>,
 	): Promise<string>;
-	export(service: S, place: Place<N>, file: string | undefined): Promise<string>;
+	export(
+		service: S,
+		place: Place<N>,
+		file: string | undefined,
+		validated: Validated,
+	): Promise<string>;
 }
+
+export type Validated = () => Promise<void>;
 
 const CATALOGUE = {
 	postgres: postgresKind,
