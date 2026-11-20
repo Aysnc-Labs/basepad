@@ -31,6 +31,7 @@ export interface HookRun {
 	environment: string | undefined;
 	say(line: string): void;
 	dir?: string;
+	keysFrom?: string;
 	variables?: Record<string, string>;
 	warn?(line: string): void;
 }
@@ -39,7 +40,7 @@ export async function runHook(project: Project, name: HookName, run: HookRun): P
 	const commands = project.hooks[name] ?? [];
 	if (commands.length === 0) return;
 	const env = {
-		...(await envFileKeys(project)),
+		...(await envFileKeys(project, run.keysFrom ?? project.root)),
 		...run.variables,
 		BASEPAD_EVENT: name,
 		BASEPAD_ENVIRONMENT: run.environment ?? "main",
@@ -54,7 +55,7 @@ export async function runHook(project: Project, name: HookName, run: HookRun): P
 	run.warn(`${message} Going on.`);
 }
 
-export async function runCommands(
+async function runCommands(
 	dir: string,
 	commands: string[],
 	variables: Record<string, string>,
@@ -90,10 +91,10 @@ function streamed(
 	});
 }
 
-async function envFileKeys(project: Project): Promise<Record<string, string>> {
+async function envFileKeys(project: Project, root: string): Promise<Record<string, string>> {
 	const keys: Record<string, string> = {};
 	for (const [path, names] of Object.entries(envFileNames(project))) {
-		const text = await readFile(resolve(project.root, path), "utf8").catch(() => undefined);
+		const text = await readFile(resolve(root, path), "utf8").catch(() => undefined);
 		if (text !== undefined) Object.assign(keys, valuesOf(text, names));
 	}
 	return keys;

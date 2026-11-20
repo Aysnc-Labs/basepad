@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { CONFIG_FILE, type Project } from "./config.ts";
-import { runCommands } from "./hooks.ts";
 import { BasepadError, exec, must } from "./internal/exec.ts";
 import { nextSuffix, worktreeFolder } from "./layout.ts";
 
@@ -96,23 +95,6 @@ export async function clonePaths(from: string, to: string, paths: string[]): Pro
 async function copyOnWrite(args: string[]): Promise<void> {
 	const clone = process.platform === "darwin" ? "-c" : "--reflink=auto";
 	await must("cp", [clone, "-R", ...args]);
-}
-
-export async function runSetup(
-	dir: string,
-	commands: string[],
-	say: (line: string) => void,
-): Promise<void> {
-	const output: string[] = [];
-	const failed = await runCommands(dir, commands, {}, (command) => {
-		say(`Running \`${command}\``);
-		output.length = 0;
-		return (line) => output.push(line);
-	});
-	if (failed === undefined) return;
-	throw new BasepadError(
-		`Setup command \`${failed.command}\` failed (exit ${failed.code}). Its output:\n${(output.join("\n").trimEnd() || "(none)").replace(/^/gm, "  ")}`,
-	);
 }
 
 export interface Listed {

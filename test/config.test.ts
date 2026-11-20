@@ -69,13 +69,13 @@ test("takes postgresWithNeonProxy() as a service, with postgres()'s options", as
 
 test("worktrees default to the prefix `worktree`; a set `dir` resolves from the config", async () => {
 	const plain = await loadProject(await scratch({ "basepad.config.ts": twoApps }));
-	expect(plain.worktrees).toEqual({ prefix: "worktree", clone: [], setup: [] });
+	expect(plain.worktrees).toEqual({ prefix: "worktree", clone: [] });
 	expect(plain.services.db).toMatchObject({ worktree: "copy" });
 	const dir = await scratch({
 		"basepad.config.ts": configFile(`{
 			name: "shop",
 			services: { db: postgres({ worktree: "empty" }) },
-			worktrees: { prefix: "wt", dir: "../trees", clone: ["node_modules"], setup: ["npm ci"] },
+			worktrees: { prefix: "wt", dir: "../trees", clone: ["node_modules"] },
 		}`),
 	});
 	const project = await loadProject(dir);
@@ -83,7 +83,6 @@ test("worktrees default to the prefix `worktree`; a set `dir` resolves from the 
 		prefix: "wt",
 		dir: join(dir, "../trees"),
 		clone: ["node_modules"],
-		setup: ["npm ci"],
 	});
 	expect(project.services.db).toMatchObject({ worktree: "empty" });
 });
@@ -137,6 +136,11 @@ describe("errors name the file and key, with no stack", () => {
 			"a cloned path outside the config's folder",
 			`{ name: "shop", worktrees: { clone: ["../elsewhere"] } }`,
 			"`worktrees.clone.0`: each must be a path inside the config's folder",
+		],
+		[
+			"`worktrees.setup`, which `hooks.afterCreate` replaced",
+			`{ name: "shop", worktrees: { setup: ["npm ci"] } as {} }`,
+			"unknown key `worktrees.setup`",
 		],
 		[
 			"a bad Postgres worktree option",
