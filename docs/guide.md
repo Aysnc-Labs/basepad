@@ -179,6 +179,7 @@ basepad sets exactly the keys `env` returns, in the files it names:
 ### Apps
 
 - Each app runs from its `cwd` (the config's folder by default), through `sh`, with its own and the project's `node_modules/.bin` first on `PATH`, as `npm run` does. So `next dev` works without `npx`.
+- Each app runs through `mise exec` in its checkout, so its tools are the ones the checkout's `mise.toml` pins: `php artisan serve` runs the project's PHP even when Homebrew's comes first on your `PATH`, and an app in a worktree gets the worktree's tools. A tool the config names but hasn't installed is installed on start.
 - Each app is given a free port as `PORT`, and must listen on it.
 - Each app answers at `https://<key>.<name>.localhost`, through pitchfork's proxy. Hot reload and WebSockets work through it.
 - An app with `domain: false`, such as Vite serving another app's assets, gets `PORT` but no domain and no `url` in `env`. It serves HTTPS itself at `https://localhost:$PORT`, with a certificate for `localhost` from basepad's certificate authority, given as `BASEPAD_TLS_CERT` and `BASEPAD_TLS_KEY`, and starts whenever another of the environment's apps does. Safari keeps a page's requests to `localhost` on your Mac, where iCloud Private Relay sends requests to another app's domain away from it. basepad makes the certificate with `openssl`, which must be on `PATH`, and makes it again before it expires or once its certificate authority changes.
