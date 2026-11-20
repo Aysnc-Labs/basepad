@@ -52,7 +52,7 @@ import {
 	startFailure,
 } from "./supervisor.ts";
 import { ensureLocalhostCertificate } from "./tls.ts";
-import { programsIn } from "./tools.ts";
+import { programsIn, trustedIn } from "./tools.ts";
 import {
 	checkedOut,
 	checkOutWorktree,
@@ -255,6 +255,7 @@ async function ready(
 ): Promise<Layout> {
 	const { project, suffix, main } = environment;
 	const { here, supervisor, print } = context;
+	await checkTools(environment, here);
 	const ports = layout(project, here, suffix);
 	const services = Object.keys(project.services);
 	const owner = await supervisor.owner(ports.namespace);
@@ -263,13 +264,6 @@ async function ready(
 			`"${ports.namespace}" is the name of the checkout at ${owner}. Two checkouts under one name would share its databases and domains, so basepad stops here.\nIf that checkout moved here, or this one should take over, run \`basepad up --claim\`.`,
 		);
 	}
-	const missing = services.filter((key) => main !== undefined && !(key in main.services));
-	if (missing.length > 0) {
-		throw new BasepadError(
-			`This worktree's config has ${missing.map((key) => `\`${key}\``).join(", ")}, which main's has not. A worktree's services run on main's servers: add ${missing.length > 1 ? "them" : "it"} to main's config and run \`basepad up\` there first.`,
-		);
-	}
-	if (main !== undefined) await sameProgramsAsMain(project, main, ports);
 	const daemons: Record<string, Daemon> = {};
 	for (const key of ownServers(ports)) {
 		const service = project.services[key] as Service;
@@ -386,6 +380,19 @@ async function ready(
 	if (main !== undefined) await copyEnvFiles(main.root, project.root, Object.keys(files));
 	await writeEnvFiles(project.root, files);
 	return lay;
+}
+
+async function checkTools(environment: Environment, here: Machine): Promise<void> {
+	const { project, suffix, main } = environment;
+	await trustedIn(project.root);
+	if (main === undefined) return;
+	const missing = Object.keys(project.services).filter((key) => !(key in main.services));
+	if (missing.length > 0) {
+		throw new BasepadError(
+			`This worktree's config has ${missing.map((key) => `\`${key}\``).join(", ")}, which main's has not. A worktree's services run on main's servers: add ${missing.length > 1 ? "them" : "it"} to main's config and run \`basepad up\` there first.`,
+		);
+	}
+	await sameProgramsAsMain(project, main, layout(project, here, suffix));
 }
 
 async function sameProgramsAsMain(project: Project, main: Project, ports: Layout): Promise<void> {
@@ -563,6 +570,7 @@ async function made(
 		runHook(environment.project, name, { environment: suffix, say });
 	const lay = await keptOnFailure(suffix, root, UP_THERE, async () => {
 		await before();
+		await checkTools(environment, context.here);
 		await hook("beforeCreate");
 		return ready(environment, context, start === undefined ? {} : { start });
 	});

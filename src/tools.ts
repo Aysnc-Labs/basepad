@@ -47,6 +47,7 @@ export function prebuilt(name: string, version: string): MiseTool {
 	return { name, version, alias: `github:aysnc-labs/prebuilt-binaries[version_prefix=${name}-]` };
 }
 
+const trusted = new Map<string, Promise<void>>();
 const readied = new Map<string, Promise<void>>();
 const found = new Map<string, Promise<string | undefined>>();
 
@@ -82,7 +83,11 @@ function once<T>(cache: Map<string, Promise<T>>, key: string, make: () => Promis
 
 const MISE_NOISE = /^mise ERROR (Version:|Run with --verbose)/;
 
-async function readyTools(checkout: string): Promise<void> {
+export function trustedIn(checkout: string): Promise<void> {
+	return once(trusted, checkout, () => probe(checkout));
+}
+
+async function probe(checkout: string): Promise<void> {
 	const read = await exec("mise", ["ls", "--current"], { cwd: checkout });
 	if (read.code !== 0) {
 		const error = read.stderr
@@ -97,6 +102,10 @@ async function readyTools(checkout: string): Promise<void> {
 			`mise doesn't trust the mise config at ${checkout}, and basepad never trusts one for you:\n${error}\nTrust it with \`mise trust ${untrusted}\`, or trust every project in a folder with \`trusted_config_paths\` in your global mise config (~/.config/mise/config.toml).`,
 		);
 	}
+}
+
+async function readyTools(checkout: string): Promise<void> {
+	await trustedIn(checkout);
 	await must("mise", ["install", "--quiet"], {
 		cwd: checkout,
 		env: { ...process.env, ...TOOL_ONLY_NO_SKILLS },
