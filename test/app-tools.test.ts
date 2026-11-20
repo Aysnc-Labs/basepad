@@ -29,7 +29,6 @@ const git = (cwd: string, ...args: string[]) =>
 
 beforeAll(async () => {
 	box = await sandbox();
-	box.env.MISE_TRUSTED_CONFIG_PATHS = box.root;
 	main = await box.project("t60tools", {
 		"basepad.config.ts": configFile(`{
 			name: "t60tools",
