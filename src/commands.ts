@@ -18,6 +18,7 @@ import { dropHosts, syncHosts } from "./hosts.ts";
 import type { EnvFiles } from "./index.ts";
 import { init } from "./init.ts";
 import { BasepadError, shellQuote } from "./internal/exec.ts";
+import { throughMise } from "./internal/mise.ts";
 import { Stopped } from "./internal/ports.ts";
 import { table } from "./internal/table.ts";
 import {
@@ -288,10 +289,11 @@ async function ready(
 		const run = withLocalBins(project, app.cwd, app.run);
 		const port = ports.apps[key]?.port;
 		daemons[key] = {
-			run:
+			run: throughMise(
 				app.domain === false
 					? `export BASEPAD_TLS_CERT=${shellQuote(tls.cert)} BASEPAD_TLS_KEY=${shellQuote(tls.key)} && ${run}`
 					: run,
+			),
 			dir: app.cwd,
 			port,
 			...(app.domain === false ? { proxy: false as const } : {}),
