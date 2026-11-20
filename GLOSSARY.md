@@ -25,7 +25,7 @@ What sets a worktree apart: its git worktree's folder name, combined with the ma
 _Avoid_: Label, slug, worktree name
 
 **Service**:
-Something basepad provides to an environment from its catalogue, such as a Postgres database.
+Something basepad provides to an environment from its catalogue, such as a Postgres database, run with the tool the project's mise config names.
 _Avoid_: Daemon, dependency, backing service
 
 **Snapshot**:
@@ -35,3 +35,7 @@ _Avoid_: Backup, dump, checkpoint
 **App**:
 A process of the project's own that basepad runs and gives a domain, unless it listens on nothing, as a queue worker does, or serves another app's page from `localhost`, as Vite can.
 _Avoid_: Daemon, server, service
+
+**Hook**:
+Commands from the config that run in an environment when something happens to it, such as its data being created or a snapshot being loaded.
+_Avoid_: Callback, script, setup
