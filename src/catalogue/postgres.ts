@@ -740,7 +740,7 @@ export async function stampOwnerAndCheck(sql: Sql, name: string, owner: string):
 	}
 }
 
-const POSTGRES_TOOL = prebuilt("postgres", "18.7-1");
+const POSTGRES_TOOL = prebuilt("postgres", "18.7-3");
 
 const POSTGRES_TOOLS = {
 	initdb: POSTGRES_TOOL,
@@ -751,7 +751,7 @@ const POSTGRES_TOOLS = {
 	pg_restore: POSTGRES_TOOL,
 };
 
-const NEON_PROXY_TOOLS = { [NEON_PROXY]: prebuilt(NEON_PROXY, "8853") };
+const NEON_PROXY_TOOLS = { [NEON_PROXY]: prebuilt(NEON_PROXY, "8853-1") };
 
 const POSTGRES_WITH_NEON_PROXY_TOOLS = { ...POSTGRES_TOOLS, ...NEON_PROXY_TOOLS };
 

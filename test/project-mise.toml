@@ -1,9 +1,9 @@
 [tool_alias]
 postgres = "github:aysnc-labs/prebuilt-binaries[version_prefix=postgres-]"
 neon-proxy = "github:aysnc-labs/prebuilt-binaries[version_prefix=neon-proxy-]"
+redis = "github:aysnc-labs/prebuilt-binaries[version_prefix=redis-]"
 [tools]
-postgres = "18.7-1"
-neon-proxy = "8853"
+postgres = "18.7-3"
+neon-proxy = "8853-1"
+redis = "8.10.3-1"
 mailpit = "1.33.1"
-# Prebuilt redis-8.10.3 needs glibc 2.43, newer than CI's Ubuntu 24.04.
-"conda:redis-server" = "8.10.3"

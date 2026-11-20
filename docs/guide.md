@@ -49,7 +49,7 @@ postgres = "github:aysnc-labs/prebuilt-binaries[version_prefix=postgres-]"
 
 [tools]
 node = "24"
-postgres = "18.7-1"
+postgres = "18.7-3"
 ```
 
 Write `basepad.config.ts` to give the project a database and an app:
@@ -214,7 +214,7 @@ When the mise config gives none of these programs, `up` stops before it starts a
 postgres = "github:aysnc-labs/prebuilt-binaries[version_prefix=postgres-]"
 
 [tools]
-postgres = "18.7-1"
+postgres = "18.7-3"
 ```
 
 That build, from [Aysnc-Labs/prebuilt-binaries](https://github.com/Aysnc-Labs/prebuilt-binaries), has pgvector, PostGIS, pg_repack and more. To run another build or version, change those lines: any tool works that gives the six programs, such as `"conda:postgresql" = "17"`. `mise outdated --bump` shows a newer version, and `mise upgrade --bump` moves to it, as for your other tools.
@@ -264,10 +264,8 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   neon-proxy = "github:aysnc-labs/prebuilt-binaries[version_prefix=neon-proxy-]"
 
   [tools]
-  neon-proxy = "8853"
+  neon-proxy = "8853-1"
   ```
-
-  On Linux that build needs glibc 2.39 or newer (Ubuntu 24.04, Debian 13); on an older one, `up` says so.
 
 It is not a copy of Neon, so passing locally is not passing on Neon:
 
@@ -313,10 +311,10 @@ When the mise config gives no `redis-server`, `up` stops before it starts anythi
 redis = "github:aysnc-labs/prebuilt-binaries[version_prefix=redis-]"
 
 [tools]
-redis = "8.10.3"
+redis = "8.10.3-1"
 ```
 
-On Linux, that build needs glibc 2.43 (Ubuntu 26.04) for now, so it doesn't start on Ubuntu 24.04 or Debian 12. There, use conda's build instead: `"conda:redis-server" = "8.10.3"` under `[tools]`. Any tool that gives `redis-server` works. As with Postgres, mise keeps one install folder per tool name and version, so a `redis` at a version already installed from another source is reused as it is.
+Any tool that gives `redis-server` works, such as conda's: `"conda:redis-server" = "8.10.3"`. As with Postgres, mise keeps one install folder per tool name and version, so a `redis` at a version already installed from another source is reused as it is.
 
 ### Mailpit
 
@@ -580,7 +578,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 ```
 
-Which extensions are installed is up to the Postgres build in your mise config. The default, `postgres = "18.7-1"` from prebuilt-binaries, has Postgres's standard extensions (`pg_trgm`, `citext`, `hstore` and the rest), [pgvector](https://github.com/pgvector/pgvector) and [PostGIS](https://postgis.net), among others.
+Which extensions are installed is up to the Postgres build in your mise config. The default, `postgres = "18.7-3"` from prebuilt-binaries, has Postgres's standard extensions (`pg_trgm`, `citext`, `hstore` and the rest), [pgvector](https://github.com/pgvector/pgvector) and [PostGIS](https://postgis.net), among others.
 
 ### Your own database
 
@@ -642,6 +640,6 @@ env:
 
 A job with its own `permissions` replaces the workflow's, so repeat `attestations: read` in it.
 
-mise treats every config as trusted in CI (`CI` is set), so a job needs no `mise trust`. In a sandbox, the setup script's `mise install` trusts the project's config. mise holds back a release under 24 hours old (`minimum_release_age`) when it chooses a version for a prefix such as `postgres = "18"`; an exact version such as `postgres = "18.7-1"` installs at once.
+mise treats every config as trusted in CI (`CI` is set), so a job needs no `mise trust`. In a sandbox, the setup script's `mise install` trusts the project's config. mise holds back a release under 24 hours old (`minimum_release_age`) when it chooses a version for a prefix such as `postgres = "18"`; an exact version such as `postgres = "18.7-3"` installs at once.
 
 As a user, as on a hosted CI runner, URLs keep their port, and tools basepad doesn't start (a test runner, say) need its certificate authority, `~/.basepad/pitchfork/state/proxy/ca.pem`: for Node, set `NODE_EXTRA_CA_CERTS` to it.

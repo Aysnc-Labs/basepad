@@ -11,7 +11,7 @@ import { prebuilt, programsIn } from "../tools.ts";
 
 const HOST = "127.0.0.1";
 const READY_MS = 30_000;
-const REDIS_TOOLS = { "redis-server": prebuilt("redis", "8.10.3") };
+const REDIS_TOOLS = { "redis-server": prebuilt("redis", "8.10.3-1") };
 
 /** What a worktree's Redis is: its own, empty one, or main's (`shared`). */
 export type RedisWorktree = "empty" | "shared";

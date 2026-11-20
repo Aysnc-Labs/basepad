@@ -24,8 +24,8 @@ const git = (cwd: string, ...args: string[]) =>
 		},
 	});
 
-const redisServer = (version: string) =>
-	new RegExp(`/conda-redis-server/${version.replaceAll(".", "\\.")}/\\S*redis-server`);
+const mainRedis = /\/installs\/redis\/8\.10\.3-1\/\S*redis-server/;
+const treeRedis = /\/installs\/conda-redis-server\/8\.10\.2\/\S*redis-server/;
 
 test("a worktree whose shared service resolves another program than main's fails to come up, naming both", async () => {
 	const main = await box.project("t57tools", {
@@ -43,7 +43,7 @@ test("a worktree whose shared service resolves another program than main's fails
 	await git(main, "checkout", "--quiet", "-b", "older");
 	await writeFile(
 		join(main, "mise.toml"),
-		MISE_TOML.replace('"conda:redis-server" = "8.10.3"', '"conda:redis-server" = "8.10.2"'),
+		MISE_TOML.replace('redis = "8.10.3-1"', '"conda:redis-server" = "8.10.2"'),
 	);
 	await git(main, "commit", "--quiet", "-am", "older redis");
 	await git(main, "checkout", "--quiet", "main");
@@ -54,8 +54,8 @@ test("a worktree whose shared service resolves another program than main's fails
 	const add = await box.basepad(main, "worktree", "add", "--branch", "older");
 	expect(add.code).toBe(1);
 	expect(add.stderr).toContain("`cache`");
-	expect(add.stderr).toMatch(redisServer("8.10.2"));
-	expect(add.stderr).toMatch(redisServer("8.10.3"));
+	expect(add.stderr).toMatch(treeRedis);
+	expect(add.stderr).toMatch(mainRedis);
 	expect(add.stderr).toContain("main");
 	const tree = join(box.root, "t57tools.worktrees/worktree-1");
 	expect(existsSync(join(tree, "created"))).toBe(false);
@@ -63,8 +63,8 @@ test("a worktree whose shared service resolves another program than main's fails
 	const up = await box.basepad(tree, "up", "-d");
 	expect(up.code).toBe(1);
 	expect(up.stderr).toContain("`cache`");
-	expect(up.stderr).toMatch(redisServer("8.10.2"));
-	expect(up.stderr).toMatch(redisServer("8.10.3"));
+	expect(up.stderr).toMatch(treeRedis);
+	expect(up.stderr).toMatch(mainRedis);
 
 	expect((await box.basepad(tree, "status")).code).toBe(0);
 	expect((await box.basepad(tree, "down")).code).toBe(0);
