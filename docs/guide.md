@@ -488,7 +488,7 @@ As root on Linux (most cloud sandboxes and containers), `up` needs no human:
 - The proxy listens on port 443 itself, and `up` trusts its certificate authority in the system store and the browsers' stores, so URLs are port-free with no `basepad setup` and no prompt.
 - Where `*.localhost` doesn't resolve for server-side code (glibc without systemd's resolver, as in most containers), `up` adds the project's domains to `/etc/hosts`, in a block marked `# >>> basepad <name>`. When it can't write the file, it prints the lines to add.
 
-`postgresWithNeonProxy()` installs Neon's proxy from GitHub releases through mise, which checks its attestation. A GitHub Actions job needs `GITHUB_TOKEN` in its env and the `attestations: read` permission:
+mise installs a `github:` tool from the project's `mise.toml` from GitHub releases, and checks the release's attestation with GitHub's API. In GitHub Actions, any project with a `github:` tool needs the `attestations: read` permission and `GITHUB_TOKEN` in its env:
 
 ```yaml
 permissions:
@@ -497,5 +497,9 @@ permissions:
 env:
   GITHUB_TOKEN: ${{ github.token }}
 ```
+
+A job with its own `permissions` replaces the workflow's, so repeat `attestations: read` in it.
+
+mise treats every config as trusted in CI (`CI` is set), so a job needs no `mise trust`. In a sandbox, the setup script's `mise install` trusts the project's config. mise holds back a release under 24 hours old (`minimum_release_age`) when it chooses a version for a prefix such as `postgres = "18"`; an exact version such as `postgres = "18.7-1"` installs at once.
 
 As a user, as on a hosted CI runner, URLs keep their port, and tools basepad doesn't start (a test runner, say) need its certificate authority, `~/.basepad/pitchfork/state/proxy/ca.pem`: for Node, set `NODE_EXTRA_CA_CERTS` to it.

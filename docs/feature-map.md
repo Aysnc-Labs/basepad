@@ -25,7 +25,7 @@ flowchart LR
   MissionControl --> Worktrees
   MissionControl -- "worktree add, rm" --> Commands
   Commands --> EnvFiles["env files"]
-  Supervisor -- "mise exec" --> Pitchfork["pitchfork (isolated)"]
+  Supervisor -- "runs" --> Pitchfork["pitchfork (isolated)"]
   Catalogue --> Tools
   Supervisor --> Tools
   Tools -- "exec" --> Mise["mise"]
@@ -62,7 +62,7 @@ Paths: src/init.ts
 Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.localhost`, starts services, sets the env keys the config names; stops them (on a terminal, the landing in `src/mission-control/launch.ts` shows them coming down); shows their state.
 Entry: `basepad up [-d] [--claim]`, `basepad down`, `basepad status`
 Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts, src/internal/processes.ts, src/mission-control/launch.ts, src/tls.ts
-Decisions: [0001](adr/0001-config-is-the-only-interface.md)
+Decisions: [0001](adr/0001-config-is-the-only-interface.md), [0003](adr/0003-services-run-the-projects-mise-tools.md)
 
 ### Mission control
 
@@ -99,12 +99,6 @@ Paths: src/commands.ts, src/catalogue.ts, src/catalogue/postgres.ts
 Purpose: one-time machine setup: trusts basepad's CA, and on Linux makes URLs port-free; adds domains to `/etc/hosts` where `*.localhost` doesn't resolve. On a terminal, its plan is a checklist beside a rocket on its pad (`launch.ts`), which lifts off once URLs are port-free.
 Entry: `basepad setup [--dry-run] [--yes]`
 Paths: src/setup.ts, src/hosts.ts, src/mission-control/launch.ts
-
-### Port 443 on macOS
-
-Purpose: port-free URLs on macOS with no privilege and no pf (pf turns off iCloud Private Relay): `serve` starts a forwarder on the wildcard address's port 443 that passes connections from this Mac to the proxy, refuses the network's, and stops with the supervisor. Off when `BASEPAD_PROXY_PORT` is set, or something else answers on 443.
-Entry: `basepad up` on macOS
-Paths: src/forward.ts, src/supervisor.ts, src/layout.ts
 
 ### Port 443 on macOS
 

@@ -37,5 +37,5 @@ A process of the project's own that basepad runs and gives a domain, unless it l
 _Avoid_: Daemon, server, service
 
 **Hook**:
-Commands from the config that run in an environment when something happens to it, such as its data being created or a snapshot being loaded.
-_Avoid_: Callback, script, setup
+Commands from the config that run in an environment when something happens to it, such as it being created or a snapshot being loaded.
+_Avoid_: Callback, script, setup. Claude Code's `WorktreeCreate` and `WorktreeRemove` hooks are always "Claude Code's worktree hooks"
