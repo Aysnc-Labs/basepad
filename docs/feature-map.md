@@ -25,7 +25,7 @@ flowchart LR
   MissionControl --> Worktrees
   MissionControl -- "worktree add, rm" --> Commands
   Commands --> EnvFiles["env files"]
-  Commands -- "up, down" --> Hooks["hooks"]
+  Commands -- "up, down, db" --> Hooks["hooks"]
   Hooks -- "sh, mise x" --> Mise
   Supervisor -- "runs" --> Pitchfork["pitchfork (isolated)"]
   Pitchfork -- "apps: mise x" --> Mise
@@ -48,9 +48,9 @@ Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### Hooks
 
-Purpose: the project's own shell commands run around events that change an environment (`beforeUp`, `afterDown`, …), through mise in the environment's checkout, with stdin closed, the env files' keys, `BASEPAD_EVENT` and `BASEPAD_ENVIRONMENT`; a failed `before…` cancels, a failed `after…` exits 1, Down hooks only warn. `runHook` is the one runner every event calls; `worktrees.setup` runs through its `runCommands`. On a terminal, output streams into mission control's `hooks` log row (`told` in the feed). Today `up` and `down` run Up and Down hooks; the other events' keys are accepted.
+Purpose: the project's own shell commands run around events that change an environment (`beforeUp`, `afterDown`, …), through mise in the environment's checkout, with stdin closed, the env files' keys, `BASEPAD_EVENT` and `BASEPAD_ENVIRONMENT`; a failed `before…` cancels, a failed `after…` exits 1, Down hooks only warn. `runHook` is the one runner every event calls; `worktrees.setup` runs through its `runCommands`. On a terminal, output streams into mission control's `hooks` log row (`told` in the feed). Today `up` and `down` run Up and Down hooks, and each `db` command its own, with `BASEPAD_SERVICE` and its label, source or file; a `db` command's `before…` runs once the Postgres Kind's verb calls its `validated` (or import's `confirm`) step. Create and Remove keys are accepted.
 Entry: `hooks: { beforeUp, afterUp, beforeDown, afterDown, … }` in the config
-Paths: src/hooks.ts, src/config.ts, src/commands.ts, src/env-files.ts, src/mission-control/feed.ts
+Paths: src/hooks.ts, src/config.ts, src/commands.ts, src/env-files.ts, src/mission-control/feed.ts, src/catalogue/postgres.ts
 
 ## Commands
 

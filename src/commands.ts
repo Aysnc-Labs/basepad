@@ -1095,11 +1095,29 @@ async function readyFor(
 	});
 }
 
-async function databaseAt({ cwd, flags, print }: Invocation): Promise<DatabaseTarget> {
+async function databaseAt({
+	cwd,
+	flags,
+	print,
+}: Invocation): Promise<DatabaseTarget & { environment: Environment }> {
 	const { environment, services } = await databaseServicesAt(cwd);
 	const service = chosen(environment.project, services, flags.service);
 	const onServer = await readyFor(environment, print, [service]);
-	return onServer(service);
+	return { ...onServer(service), environment };
+}
+
+function dbHooks(
+	{ environment, key }: { environment: Environment; key: string },
+	event: "Save" | "Load" | "Delete" | "Import" | "Export",
+	say: (line: string) => void,
+	variables: Record<string, string>,
+) {
+	return (when: "before" | "after") =>
+		runHook(environment.project, `${when}${event}`, {
+			environment: environment.suffix,
+			say,
+			variables: { BASEPAD_SERVICE: key, ...variables },
+		});
 }
 
 function labelOf(args: string[]): string {
@@ -1114,23 +1132,32 @@ function labelOf(args: string[]): string {
 
 async function dbSave(invocation: Invocation): Promise<void> {
 	const label = labelOf(invocation.args);
-	const { key, service, place, database } = await databaseAt(invocation);
-	await database.save(service, place, label);
+	const target = await databaseAt(invocation);
+	const { key, service, place, database } = target;
+	const hook = dbHooks(target, "Save", invocation.print, { BASEPAD_LABEL: label });
+	await database.save(service, place, label, () => hook("before"));
 	invocation.print(`Saved \`${key}\` as snapshot ${label}.`);
+	await hook("after");
 }
 
 async function dbLoad(invocation: Invocation): Promise<void> {
 	const label = labelOf(invocation.args);
-	const { key, service, place, database } = await databaseAt(invocation);
-	await database.load(service, place, label);
+	const target = await databaseAt(invocation);
+	const { key, service, place, database } = target;
+	const hook = dbHooks(target, "Load", invocation.print, { BASEPAD_LABEL: label });
+	await database.load(service, place, label, () => hook("before"));
 	invocation.print(`Loaded snapshot ${label} into \`${key}\`.`);
+	await hook("after");
 }
 
 async function dbRm(invocation: Invocation): Promise<void> {
 	const label = labelOf(invocation.args);
-	const { key, service, place, database } = await databaseAt(invocation);
-	await database.remove(service, place, label);
+	const target = await databaseAt(invocation);
+	const { key, service, place, database } = target;
+	const hook = dbHooks(target, "Delete", invocation.print, { BASEPAD_LABEL: label });
+	await database.remove(service, place, label, () => hook("before"));
 	invocation.print(`Deleted snapshot ${label} of \`${key}\`.`);
+	await hook("after");
 }
 
 async function dbSnapshots({ cwd, print }: Invocation): Promise<void> {
@@ -1168,22 +1195,29 @@ function size(bytes: number): string {
 
 async function dbImport(invocation: Invocation): Promise<void> {
 	const [given = ""] = invocation.args;
-	const { key, service, place, database } = await databaseAt(invocation);
+	const target = await databaseAt(invocation);
+	const { key, service, place, database } = target;
 	const file = resolve(invocation.cwd, given);
 	const source = existsSync(file) ? file : given;
+	const hook = dbHooks(target, "Import", invocation.print, { BASEPAD_SOURCE: source });
 	let replaced = "";
 	const read = await database.import(service, place, source, async (name) => {
 		replaced = name;
-		if (invocation.flags.yes === true) return;
-		const yes = await ask(`Replace \`${key}\`'s database ${name}? Its data is lost.`);
-		if (yes === undefined) {
-			throw new BasepadError(
-				`Import replaces \`${key}\`'s database ${name}, and there is no terminal to ask. Run it again with \`--yes\` to replace it.`,
-			);
-		}
-		if (!yes) throw new BasepadError(`Nothing imported; ${name} is unchanged.`);
+		if (invocation.flags.yes !== true) await confirmImport(key, name);
+		await hook("before");
 	});
 	invocation.print(`Imported ${read} into \`${key}\`'s database ${replaced}.`);
+	await hook("after");
+}
+
+async function confirmImport(key: string, name: string): Promise<void> {
+	const yes = await ask(`Replace \`${key}\`'s database ${name}? Its data is lost.`);
+	if (yes === undefined) {
+		throw new BasepadError(
+			`Import replaces \`${key}\`'s database ${name}, and there is no terminal to ask. Run it again with \`--yes\` to replace it.`,
+		);
+	}
+	if (!yes) throw new BasepadError(`Nothing imported; ${name} is unchanged.`);
 }
 
 async function dbExport(invocation: Invocation): Promise<void> {
@@ -1194,8 +1228,11 @@ async function dbExport(invocation: Invocation): Promise<void> {
 		);
 	}
 	const say = given === undefined ? (line: string) => console.error(line) : invocation.print;
-	const { key, service, place, database } = await databaseAt({ ...invocation, print: say });
+	const target = await databaseAt({ ...invocation, print: say });
+	const { key, service, place, database } = target;
 	const file = given === undefined ? undefined : resolve(invocation.cwd, given);
-	const format = await database.export(service, place, file);
+	const hook = dbHooks(target, "Export", say, { BASEPAD_FILE: file ?? "" });
+	const format = await database.export(service, place, file, () => hook("before"));
 	if (file !== undefined) invocation.print(`Exported \`${key}\` to ${file} as ${format}.`);
+	await hook("after");
 }

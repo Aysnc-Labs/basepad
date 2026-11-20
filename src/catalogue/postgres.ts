@@ -205,9 +205,10 @@ const server = {
 	},
 
 	database: {
-		async save(service, place, label) {
+		async save(service, place, label, validated) {
 			const name = place.snapshot(label);
 			const { pg, port, sql } = await own(service, place);
+			await validated();
 			const swap = {
 				target: name,
 				staging: place.staging(),
@@ -219,7 +220,7 @@ const server = {
 			);
 		},
 
-		async load(service, place, label) {
+		async load(service, place, label, validated) {
 			const name = place.snapshot(label);
 			const { pg, port, sql } = await own(service, place);
 			const found = await snapshotsOf(sql, place);
@@ -236,6 +237,7 @@ const server = {
 				owner: place.owner,
 				failed: `Could not load snapshot \`${label}\`; \`${place.database}\` is as it was.`,
 			};
+			await validated();
 			await replace(sql, swap, (staging, owner) => copyDatabase(pg, port, name, staging, owner));
 		},
 
@@ -244,13 +246,14 @@ const server = {
 			return snapshotsOf(sql, place);
 		},
 
-		async remove(service, place, label) {
+		async remove(service, place, label, validated) {
 			const name = place.snapshot(label);
 			const { sql } = await own(service, place);
 			const found = await snapshotsOf(sql, place);
 			if (!found.some((snapshot) => snapshot.label === label)) {
 				throw new BasepadError(noSnapshot(place, label, found));
 			}
+			await validated();
 			await sql(`drop database ${identifier(name)} with (force)`);
 		},
 
@@ -273,8 +276,9 @@ const server = {
 			return from.description;
 		},
 
-		async export(service, place, file) {
+		async export(service, place, file, validated) {
 			const { pg, port } = await own(service, place);
+			await validated();
 			const plain = file !== undefined && /\.sql$/i.test(file);
 			const args = [
 				...connection(port, place.database),
