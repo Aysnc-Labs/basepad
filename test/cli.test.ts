@@ -19,7 +19,6 @@ test("--help lists every command and the top flags", async () => {
 			"Usage: basepad <command> [flags]",
 			"",
 			"Commands:",
-			"  init          Write a starter basepad.config.ts in this folder",
 			"  setup         Once per machine: trust basepad's certificate and drop the port from URLs",
 			"  up            Start this project's services and apps, set its env files, then open mission control",
 			"  down          Stop this project's apps and services; nothing is deleted",
