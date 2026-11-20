@@ -464,7 +464,6 @@ fi
 ```
 
 - Main gets `shop_db_testing` on its next `up`, and each worktree its own, such as `shop_db_worktree_1_testing`, when it is made. `afterUp` makes it again if it was dropped.
-- Every hook gets its own environment's env file keys, Remove hooks included, so in a worktree `$DB_TEST_DATABASE` is the worktree's, never main's.
 - basepad drops only the databases it made. Without `beforeRemove`, `worktree rm` leaves the test database on main's server. A worktree whose folder is already gone has no env file left, so `prune` can't drop its test database: drop it with `psql`.
 
 ### The local file
