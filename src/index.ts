@@ -5,7 +5,6 @@ export { mailpit } from "./catalogue/mailpit.ts";
 export type {
 	PostgresOutputs,
 	PostgresService,
-	PostgresVersion,
 	PostgresWithNeonProxyOutputs,
 	PostgresWithNeonProxyService,
 	PostgresWorktree,
