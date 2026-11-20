@@ -10,14 +10,6 @@ beforeAll(async () => {
 });
 afterAll(() => box?.dispose());
 
-const notCi = {
-	CI: undefined,
-	CONTINUOUS_INTEGRATION: undefined,
-	GITHUB_ACTIONS: undefined,
-	BUILD_NUMBER: undefined,
-	RUN_ID: undefined,
-};
-
 const withNeonProxy = configFile(`{
 	name: "tools-shop",
 	services: { db: postgresWithNeonProxy() },
@@ -95,12 +87,7 @@ test("an untrusted mise config fails up with mise's error and how to trust it, a
 		"basepad.config.ts": configFile(`{ name: "tools-untrusted", services: { db: postgres() } }`),
 	});
 
-	const up = await box.basepadWith(
-		{ env: { ...notCi, MISE_TRUSTED_CONFIG_PATHS: undefined } },
-		dir,
-		"up",
-		"-d",
-	);
+	const up = await box.basepadWith({ env: box.untrusted() }, dir, "up", "-d");
 
 	expect(up.code).toBe(1);
 	expect(up.stderr).toContain(`Config files in ${join(dir, "mise.toml")} are not trusted.`);
@@ -119,12 +106,7 @@ test("an untrusted mise config fails up before any hook or app runs, even with n
 		}`),
 	});
 
-	const up = await box.basepadWith(
-		{ env: { ...notCi, MISE_TRUSTED_CONFIG_PATHS: undefined } },
-		dir,
-		"up",
-		"-d",
-	);
+	const up = await box.basepadWith({ env: box.untrusted() }, dir, "up", "-d");
 
 	expect(up.code).toBe(1);
 	expect(up.stderr).toContain(`Config files in ${join(dir, "mise.toml")} are not trusted.`);

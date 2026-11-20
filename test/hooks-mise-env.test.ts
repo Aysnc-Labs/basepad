@@ -12,14 +12,6 @@ beforeAll(async () => {
 });
 afterAll(() => box?.dispose());
 
-const notCi = {
-	CI: undefined,
-	CONTINUOUS_INTEGRATION: undefined,
-	GITHUB_ACTIONS: undefined,
-	BUILD_NUMBER: undefined,
-	RUN_ID: undefined,
-};
-
 const git = (cwd: string, ...args: string[]) =>
 	promisify(execFile)("git", args, {
 		cwd,
@@ -41,11 +33,7 @@ test("`down` runs no hook through an untrusted mise config, and trusts nothing",
 		"mise.toml": `${MISE_TOML}\n[env]\nRAN = "{{ exec(command='touch from-mise && echo x') }}"\n`,
 	});
 
-	const down = await box.basepadWith(
-		{ env: { ...notCi, MISE_TRUSTED_CONFIG_PATHS: undefined } },
-		dir,
-		"down",
-	);
+	const down = await box.basepadWith({ env: box.untrusted() }, dir, "down");
 
 	expect(down.code).toBe(0);
 	expect(down.stderr).toContain(`basepad: mise doesn't trust the mise config at ${dir}`);

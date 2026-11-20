@@ -35,6 +35,7 @@ export interface Sandbox {
 	sql(project: string, sql: string): Promise<Result>;
 	get<T = unknown>(url: string): Promise<T>;
 	getOnceRouted<T = unknown>(url: string, withinMs?: number): Promise<T>;
+	untrusted(): NodeJS.ProcessEnv;
 	onTerminal(cwd: string, input: string, ...args: string[]): Promise<Result>;
 	basepadWith(
 		options: { env?: NodeJS.ProcessEnv; via?: string[]; input?: string },
@@ -50,8 +51,8 @@ export async function sandbox(): Promise<Sandbox> {
 	const root = await realpath(
 		await mkdtemp(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "bp-")),
 	);
-	const env: NodeJS.ProcessEnv = {
-		...stripMise(process.env),
+	const proxyPort = await freePort();
+	const ownEnv: NodeJS.ProcessEnv = {
 		BASEPAD_HOME: join(root, "home"),
 		MISE_STATE_DIR: join(root, "mise-state"),
 		MISE_CONFIG_DIR: join(root, "mise-config"),
@@ -62,12 +63,12 @@ export async function sandbox(): Promise<Sandbox> {
 		PITCHFORK_CONFIG_DIR: join(root, "pf-config"),
 		PITCHFORK_LOGS_DIR: join(root, "pf-logs"),
 		NO_COLOR: "1",
+		BASEPAD_PROXY_PORT: String(proxyPort),
 	};
+	const env: NodeJS.ProcessEnv = { ...stripMise(process.env), ...ownEnv };
 	const toolsDir = join(root, ".tools");
 	await mkdir(toolsDir);
 	await writeFile(join(toolsDir, "mise.toml"), MISE_TOML);
-	const proxyPort = await freePort();
-	env.BASEPAD_PROXY_PORT = String(proxyPort);
 
 	const exec = async (
 		file: string,
@@ -177,6 +178,14 @@ export async function sandbox(): Promise<Sandbox> {
 				}
 			}
 		},
+		untrusted: () => ({
+			...Object.fromEntries(
+				Object.keys(env)
+					.filter((key) => !(key in ownEnv) && !KEPT_FROM_HOST.test(key))
+					.map((key) => [key, undefined]),
+			),
+			MISE_TRUSTED_CONFIG_PATHS: undefined,
+		}),
 		onTerminal(cwd, input, ...args) {
 			const command = [process.execPath, cli, ...args].map(shellQuote).join(" ");
 			const shell = `cd ${shellQuote(cwd)} && ${command}`;
@@ -235,6 +244,9 @@ export function freePort(): Promise<number> {
 		});
 	});
 }
+
+const KEPT_FROM_HOST =
+	/^(PATH|HOME|TMPDIR|TMP|TEMP|USER|LOGNAME|SHELL|TERM|TZ|LANG|LC_\w+|(HTTPS?|NO|ALL)_PROXY|(https?|no|all)_proxy|SSL_CERT_(FILE|DIR)|NODE_EXTRA_CA_CERTS|GITHUB_TOKEN)$/;
 
 function stripMise(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	return Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith("__MISE")));
