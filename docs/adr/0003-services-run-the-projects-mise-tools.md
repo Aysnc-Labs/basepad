@@ -17,6 +17,6 @@ This is no exception to [0001](0001-config-is-the-only-interface.md): the config
 
 ## Consequences
 
-- A command that runs the project's tools or hooks (`up`, `worktree add`, `worktree rm`, `prune`, a `db` command's hooks) fails in a project whose mise config isn't trusted, passing on mise's error; `down` passes it on, skips its Down hooks and still stops everything. basepad never trusts a config for the user.
+- A command that runs the project's tools or hooks (`up`, `worktree add`, `worktree rm`, `prune`, every `db` command) fails in a project whose mise config isn't trusted, passing on mise's error; `down` passes it on, skips its Down hooks and still stops everything. basepad never trusts a config for the user.
 - A worktree whose config resolves a shared service's program to another path than main's fails, since it would run mismatched programs against main's server.
 - Postgres's major version comes from the binary, not the config.
