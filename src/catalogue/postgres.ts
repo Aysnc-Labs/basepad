@@ -107,6 +107,8 @@ const schemaOf = <K extends AnyPostgres["kind"]>(kind: K) =>
 	});
 
 const server = {
+	programs: toolsOf,
+
 	names(service, { name, key, dir, suffix }) {
 		const main = `${name}_${key}`.replaceAll("-", "_");
 		const mainBytes = Buffer.byteLength(main);
@@ -288,14 +290,12 @@ const server = {
 	},
 } satisfies Pick<
 	Kind<AnyPostgres, unknown, PostgresNames>,
-	"names" | "worktreeData" | "address" | "database"
+	"programs" | "names" | "worktreeData" | "address" | "database"
 >;
 
 export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames> = {
 	...server,
 	schema: schemaOf("postgres"),
-
-	programs: () => POSTGRES_TOOLS,
 
 	async prepare(service, place) {
 		const { daemon } = await prepareServer(service, place);
@@ -315,13 +315,11 @@ export const postgresWithNeonProxyKind: Kind<
 	...server,
 	schema: schemaOf("postgresWithNeonProxy"),
 
-	programs: () => POSTGRES_WITH_NEON_PROXY_TOOLS,
-
 	extraDaemons: [NEON_PROXY],
 
 	async prepare(service, place) {
 		const { port: postgresPort, daemon } = await prepareServer(service, place);
-		const proxy = await programsIn(place.checkout, NEON_PROXY_TOOLS);
+		const proxy = await programsIn(place.programsCheckout, NEON_PROXY_TOOLS);
 		const extra = neonProxyOf(place);
 		const running = await runningProxy(extra.pid);
 		const proxyPort = running?.proxy ?? (await freePort(extra.port));
@@ -759,11 +757,12 @@ const POSTGRES_WITH_NEON_PROXY_TOOLS = { ...POSTGRES_TOOLS, ...NEON_PROXY_TOOLS 
 
 type Pg = Record<keyof typeof POSTGRES_TOOLS, string>;
 
+function toolsOf(service: AnyPostgres): typeof POSTGRES_TOOLS {
+	return service.kind === "postgresWithNeonProxy" ? POSTGRES_WITH_NEON_PROXY_TOOLS : POSTGRES_TOOLS;
+}
+
 function programsOf(service: AnyPostgres, place: Place<PostgresNames>): Promise<Pg> {
-	return programsIn(
-		place.checkout,
-		service.kind === "postgresWithNeonProxy" ? POSTGRES_WITH_NEON_PROXY_TOOLS : POSTGRES_TOOLS,
-	);
+	return programsIn(place.programsCheckout, toolsOf(service));
 }
 
 async function majorVersion(postgres: string): Promise<string> {

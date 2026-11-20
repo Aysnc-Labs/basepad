@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import type { Project } from "../src/config.ts";
 import { postgresWithNeonProxy } from "../src/index.ts";
-import { environmentOf, logBook, told } from "../src/mission-control/feed.ts";
+import { environmentOf, hookLog, logBook } from "../src/mission-control/feed.ts";
 import type { DaemonInfo, LogEntry } from "../src/supervisor.ts";
 
 function supervisor() {
@@ -136,9 +136,9 @@ test("a service's extra daemon is a part of its own, with its address and state,
 	await rm(home, { recursive: true, force: true });
 });
 
-test("lines told before the feed opens wait for it, then arrive in order with those told after", () => {
+test("hook lines said before the feed opens wait for it, then arrive in order with those said after", () => {
 	const book = logBook(supervisor().follow, 200, () => {});
-	const hooks = told("shop/hooks");
+	const hooks = hookLog("shop/hooks");
 	hooks.say("Running beforeUp `migrate`");
 	hooks.pipe(book.write);
 	hooks.say("  done");

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -32,8 +33,9 @@ test("a worktree whose shared service resolves another program than main's fails
 			name: "t57tools",
 			services: { cache: redis({ worktree: "shared" }) },
 			env: ({ cache }) => ({ ".env.local": { REDIS_URL: cache.url } }),
+			hooks: { beforeCreate: "touch created" },
 		}`),
-		".gitignore": "node_modules\n.env.local\n",
+		".gitignore": "node_modules\n.env.local\ncreated\n",
 	});
 	await git(main, "init", "--quiet", "--initial-branch=main");
 	await git(main, "add", ".");
@@ -55,8 +57,9 @@ test("a worktree whose shared service resolves another program than main's fails
 	expect(add.stderr).toMatch(redisServer("8.10.2"));
 	expect(add.stderr).toMatch(redisServer("8.10.3"));
 	expect(add.stderr).toContain("main");
-
 	const tree = join(box.root, "t57tools.worktrees/worktree-1");
+	expect(existsSync(join(tree, "created"))).toBe(false);
+
 	const up = await box.basepad(tree, "up", "-d");
 	expect(up.code).toBe(1);
 	expect(up.stderr).toContain("`cache`");

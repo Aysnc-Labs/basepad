@@ -57,7 +57,7 @@ export const mailpitKind: Kind<MailpitService, MailpitOutputs, MailpitNames> = {
 	},
 
 	async prepare(_service, place) {
-		const bin = (await programsIn(place.checkout, MAILPIT_TOOLS)).mailpit;
+		const bin = (await programsIn(place.programsCheckout, MAILPIT_TOOLS)).mailpit;
 		await mkdir(place.dir, { recursive: true });
 		const smtp = (await runningPort(place.pid)) ?? (await freePort(place.port));
 		const argv = [

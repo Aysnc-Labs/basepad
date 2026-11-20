@@ -110,6 +110,32 @@ test("an untrusted mise config fails up with mise's error and how to trust it, a
 	expect(existsSync(trusted) ? await readdir(trusted) : []).toEqual([]);
 }, 120_000);
 
+test("an untrusted mise config fails up before any hook or app runs, even with no services", async () => {
+	const dir = await box.project("untrusted-apps", {
+		"basepad.config.ts": configFile(`{
+			name: "tools-untrusted-apps",
+			apps: { web: { run: "touch started && sleep 60" } },
+			hooks: { beforeUp: "touch hooked" },
+		}`),
+	});
+
+	const up = await box.basepadWith(
+		{ env: { ...notCi, MISE_TRUSTED_CONFIG_PATHS: undefined } },
+		dir,
+		"up",
+		"-d",
+	);
+
+	expect(up.code).toBe(1);
+	expect(up.stderr).toContain(`Config files in ${join(dir, "mise.toml")} are not trusted.`);
+	expect(up.stderr).toContain(`\`mise trust ${join(dir, "mise.toml")}\``);
+	expect(up.stderr).toContain("`trusted_config_paths`");
+	expect(existsSync(join(dir, "hooked"))).toBe(false);
+	expect(existsSync(join(dir, "started"))).toBe(false);
+	const trusted = join(box.env.MISE_STATE_DIR as string, "trusted-configs");
+	expect(existsSync(trusted) ? await readdir(trusted) : []).toEqual([]);
+}, 120_000);
+
 test("data from another Postgres major version is refused, naming the program", async () => {
 	const dir = await box.project("switched", {
 		"basepad.config.ts": configFile(`{ name: "tools-switched", services: { db: postgres() } }`),

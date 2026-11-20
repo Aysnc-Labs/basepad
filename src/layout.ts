@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import {
 	EXTRA_DAEMONS,
 	type ExtraDaemon,
@@ -204,8 +204,16 @@ export function placeOf(
 	const service = lay.services[key] as ServicePlace;
 	const suffix = lay.suffix === undefined ? {} : { suffix: lay.suffix };
 	const inMain = ofDaemon(service.daemon).namespace === lay.mainNamespace;
-	const checkout = inMain ? mainRoot : project.root;
-	return { name: project.name, key, owner: project.root, checkout, machine, ...suffix, ...service };
+	const programsCheckout = inMain ? mainRoot : project.root;
+	return {
+		name: project.name,
+		key,
+		owner: project.root,
+		programsCheckout,
+		machine,
+		...suffix,
+		...service,
+	};
 }
 
 export function ownServers(lay: Pick<Layout, "namespace" | "services">): string[] {
@@ -249,6 +257,10 @@ export function ofDaemon(id: string): { namespace: string; name: string } {
 
 export function suffixOf(name: string, namespace: string): string | undefined {
 	return namespace.startsWith(`${name}.`) ? namespace.slice(name.length + 1) : undefined;
+}
+
+export function worktreeSuffix(root: string, configDir = ""): string {
+	return basename(resolve(root, relative(resolve("/", configDir), "/")));
 }
 
 export function worktreeFolder(

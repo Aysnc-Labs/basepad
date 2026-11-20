@@ -41,14 +41,14 @@ flowchart LR
 
 ### The config file
 
-Purpose: one committed, typed `basepad.config.ts` that names the project, its services (with each one's `worktree` option: copy, empty or shared), apps (each served at a domain, or with `port: false` for one that listens on nothing, or `domain: false` for one served at `https://localhost:$PORT`), env files, `hooks` and `worktrees` (prefix, folder, clone, setup); `basepad.config.local.ts` adjusts it per machine.
+Purpose: one committed, typed `basepad.config.ts` that names the project, its services (with each one's `worktree` option: copy, empty or shared), apps (each served at a domain, or with `port: false` for one that listens on nothing, or `domain: false` for one served at `https://localhost:$PORT`), env files, `hooks` and `worktrees` (prefix, folder, clone); `basepad.config.local.ts` adjusts it per machine.
 Entry: `import { defineConfig, postgres } from "basepad"`
 Paths: src/index.ts, src/config.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### Hooks
 
-Purpose: the project's own shell commands run around events that change an environment (`beforeUp`, `afterDown`, …), through mise in the environment's checkout, with stdin closed, the env files' keys, `BASEPAD_EVENT` and `BASEPAD_ENVIRONMENT`; a failed `before…` cancels, a failed `after…` exits 1, Down and Remove hooks only warn. `runHook` is the one runner every event calls. On a terminal, output streams into mission control's `hooks` log row (`told` in the feed). `up` and `down` run Up and Down hooks; each `db` command its own, with `BASEPAD_SERVICE` and its label, source or file; a `db` command's `before…` runs once the Postgres Kind's verb calls its `validated` (or import's `confirm`) step. `worktree add`, and `up` in a worktree not registered with the supervisor yet, run Create hooks (never main); `worktree rm` and `prune` run main's Remove hooks from main's folder, with `BASEPAD_WORKTREE` and the worktree's env file keys while its folder has them.
+Purpose: the project's own shell commands run around events that change an environment (`beforeUp`, `afterDown`, …), through mise in the environment's checkout, with stdin closed, the env files' keys, `BASEPAD_EVENT` and `BASEPAD_ENVIRONMENT`; a failed `before…` cancels, a failed `after…` exits 1, Down and Remove hooks only warn. `hooksOf` binds the one runner to an environment, and every event calls it. On a terminal, output streams into mission control's `hooks` log row (`hookLog` in the feed). `up` and `down` run Up and Down hooks; each `db` command its own, with `BASEPAD_SERVICE` and its label, source or file; a `db` command's `before…` runs once the Postgres Kind's verb calls its `validated` (or import's `confirm`) step. `worktree add`, and `up` in a worktree not registered with the supervisor yet, run Create hooks (never main); `worktree rm` and `prune` run main's Remove hooks from main's folder, with `BASEPAD_WORKTREE` and the worktree's env file keys while its folder has them.
 Entry: `hooks: { beforeUp, afterUp, beforeDown, afterDown, … }` in the config
 Paths: src/hooks.ts, src/config.ts, src/commands.ts, src/env-files.ts, src/mission-control/feed.ts, src/catalogue/postgres.ts
 

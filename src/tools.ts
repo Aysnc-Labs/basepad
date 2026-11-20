@@ -10,7 +10,6 @@ export interface Tool {
 	bin(program: string): string;
 }
 
-/** Installs a tool basepad itself runs, in basepad's home, outside any project's mise config. */
 export async function install(tool: string, version: string, basepadHome: string): Promise<Tool> {
 	const spec = `${tool}@${version}`;
 	await mkdir(basepadHome, { recursive: true });
@@ -34,27 +33,20 @@ export async function install(tool: string, version: string, basepadHome: string
 	};
 }
 
-/** A tool line of a mise config, as `up` suggests it when a program is missing. */
 export interface MiseTool {
 	name: string;
 	version: string;
-	/** The `[tool_alias]` that `name` stands for, when it is no tool of mise's registry. */
 	alias?: string;
 }
 
-/** A tool of Aysnc-Labs/prebuilt-binaries, under its own name through a `[tool_alias]`. */
 export function prebuilt(name: string, version: string): MiseTool {
 	return { name, version, alias: `github:aysnc-labs/prebuilt-binaries[version_prefix=${name}-]` };
 }
 
+const trusted = new Map<string, Promise<void>>();
 const readied = new Map<string, Promise<void>>();
 const found = new Map<string, Promise<string | undefined>>();
 
-/**
- * Finds programs the way the shell does in `checkout`: the mise config there must be trusted, its
- * tools are installed, and each program is `mise which <program>`. `needed` maps each program to
- * the tool that gives it by default, which a missing program's error asks the user to add.
- */
 export async function programsIn<P extends string>(
 	checkout: string,
 	needed: Record<P, MiseTool>,
@@ -82,7 +74,11 @@ function once<T>(cache: Map<string, Promise<T>>, key: string, make: () => Promis
 
 const MISE_NOISE = /^mise ERROR (Version:|Run with --verbose)/;
 
-async function readyTools(checkout: string): Promise<void> {
+export function trustedIn(checkout: string): Promise<void> {
+	return once(trusted, checkout, () => probe(checkout));
+}
+
+async function probe(checkout: string): Promise<void> {
 	const read = await exec("mise", ["ls", "--current"], { cwd: checkout });
 	if (read.code !== 0) {
 		const error = read.stderr
@@ -97,6 +93,10 @@ async function readyTools(checkout: string): Promise<void> {
 			`mise doesn't trust the mise config at ${checkout}, and basepad never trusts one for you:\n${error}\nTrust it with \`mise trust ${untrusted}\`, or trust every project in a folder with \`trusted_config_paths\` in your global mise config (~/.config/mise/config.toml).`,
 		);
 	}
+}
+
+async function readyTools(checkout: string): Promise<void> {
+	await trustedIn(checkout);
 	await must("mise", ["install", "--quiet"], {
 		cwd: checkout,
 		env: { ...process.env, ...TOOL_ONLY_NO_SKILLS },
