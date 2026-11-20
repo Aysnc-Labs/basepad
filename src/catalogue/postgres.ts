@@ -321,7 +321,7 @@ export const postgresWithNeonProxyKind: Kind<
 
 	async prepare(service, place) {
 		const { port: postgresPort, daemon } = await prepareServer(service, place);
-		const proxy = await programsIn(place.checkout, NEON_PROXY_TOOLS);
+		const proxy = await programsIn(place.programsCheckout, NEON_PROXY_TOOLS);
 		const extra = neonProxyOf(place);
 		const running = await runningProxy(extra.pid);
 		const proxyPort = running?.proxy ?? (await freePort(extra.port));
@@ -761,7 +761,7 @@ type Pg = Record<keyof typeof POSTGRES_TOOLS, string>;
 
 function programsOf(service: AnyPostgres, place: Place<PostgresNames>): Promise<Pg> {
 	return programsIn(
-		place.checkout,
+		place.programsCheckout,
 		service.kind === "postgresWithNeonProxy" ? POSTGRES_WITH_NEON_PROXY_TOOLS : POSTGRES_TOOLS,
 	);
 }

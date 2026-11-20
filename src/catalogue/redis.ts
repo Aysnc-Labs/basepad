@@ -66,7 +66,7 @@ export const redisKind: Kind<RedisService, RedisOutputs, RedisNames> = {
 	},
 
 	async prepare(_service, place) {
-		const programs = await programsIn(place.checkout, REDIS_TOOLS);
+		const programs = await programsIn(place.programsCheckout, REDIS_TOOLS);
 		const { server } = place;
 		await mkdir(server, { recursive: true });
 		const port = (await runningPort(pidFile(server))) ?? (await freePort(place.port));

@@ -10,7 +10,6 @@ export interface Tool {
 	bin(program: string): string;
 }
 
-/** Installs a tool basepad itself runs, in basepad's home, outside any project's mise config. */
 export async function install(tool: string, version: string, basepadHome: string): Promise<Tool> {
 	const spec = `${tool}@${version}`;
 	await mkdir(basepadHome, { recursive: true });
@@ -34,15 +33,12 @@ export async function install(tool: string, version: string, basepadHome: string
 	};
 }
 
-/** A tool line of a mise config, as `up` suggests it when a program is missing. */
 export interface MiseTool {
 	name: string;
 	version: string;
-	/** The `[tool_alias]` that `name` stands for, when it is no tool of mise's registry. */
 	alias?: string;
 }
 
-/** A tool of Aysnc-Labs/prebuilt-binaries, under its own name through a `[tool_alias]`. */
 export function prebuilt(name: string, version: string): MiseTool {
 	return { name, version, alias: `github:aysnc-labs/prebuilt-binaries[version_prefix=${name}-]` };
 }
@@ -51,11 +47,6 @@ const trusted = new Map<string, Promise<void>>();
 const readied = new Map<string, Promise<void>>();
 const found = new Map<string, Promise<string | undefined>>();
 
-/**
- * Finds programs the way the shell does in `checkout`: the mise config there must be trusted, its
- * tools are installed, and each program is `mise which <program>`. `needed` maps each program to
- * the tool that gives it by default, which a missing program's error asks the user to add.
- */
 export async function programsIn<P extends string>(
 	checkout: string,
 	needed: Record<P, MiseTool>,

@@ -204,8 +204,16 @@ export function placeOf(
 	const service = lay.services[key] as ServicePlace;
 	const suffix = lay.suffix === undefined ? {} : { suffix: lay.suffix };
 	const inMain = ofDaemon(service.daemon).namespace === lay.mainNamespace;
-	const checkout = inMain ? mainRoot : project.root;
-	return { name: project.name, key, owner: project.root, checkout, machine, ...suffix, ...service };
+	const programsCheckout = inMain ? mainRoot : project.root;
+	return {
+		name: project.name,
+		key,
+		owner: project.root,
+		programsCheckout,
+		machine,
+		...suffix,
+		...service,
+	};
 }
 
 export function ownServers(lay: Pick<Layout, "namespace" | "services">): string[] {

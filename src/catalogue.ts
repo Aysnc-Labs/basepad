@@ -21,8 +21,7 @@ export type Place<N = unknown> = {
 	name: string;
 	key: string;
 	owner: string;
-	/** The checkout whose mise config gives the service's programs: main's for a service in main's namespace. */
-	checkout: string;
+	programsCheckout: string;
 	suffix?: string;
 	dir: string;
 	port: number;
@@ -55,7 +54,6 @@ export interface Kind<S extends ServiceBase, O, N> {
 	extraDaemons?: readonly string[];
 	perEnvironment?(service: S): boolean;
 	names(service: S, input: NameInput): N;
-	/** The programs the service runs, each with the tool that gives it by default. */
 	programs(service: S): Record<string, MiseTool>;
 	prepare(service: S, place: Place<N>): Promise<Record<string, Daemon>>;
 	provision(
