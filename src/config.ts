@@ -73,6 +73,9 @@ export async function loadProject(cwd: string): Promise<Project> {
 	};
 }
 
+const GUIDE_FIRST_PROJECT =
+	"https://github.com/Aysnc-Labs/basepad/blob/main/docs/guide.md#a-first-project";
+
 function findConfig(cwd: string): string {
 	for (let dir = resolve(cwd); ; dir = dirname(dir)) {
 		const file = join(dir, CONFIG_FILE);
@@ -80,7 +83,7 @@ function findConfig(cwd: string): string {
 		if (dirname(dir) === dir) break;
 	}
 	throw new BasepadError(
-		`No ${CONFIG_FILE} in ${cwd} or any folder above it. Run \`basepad init\` to write one.`,
+		`No ${CONFIG_FILE} in ${cwd} or any folder above it. Create one: ${GUIDE_FIRST_PROJECT}`,
 	);
 }
 
