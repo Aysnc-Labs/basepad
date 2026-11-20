@@ -297,9 +297,9 @@ async function readyOnceChecked(
 		const port = ports.apps[key]?.port;
 		daemons[key] = {
 			run: throughMise(
-				app.domain === false
-					? `export BASEPAD_TLS_CERT=${shellQuote(tls.cert)} BASEPAD_TLS_KEY=${shellQuote(tls.key)} && ${run}`
-					: run,
+				run,
+				app.domain === false ? { BASEPAD_TLS_CERT: tls.cert, BASEPAD_TLS_KEY: tls.key } : {},
+				port === undefined ? [] : ["PORT"],
 			),
 			dir: app.cwd,
 			port,

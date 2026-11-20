@@ -64,11 +64,11 @@ async function runCommands(
 	variables: Record<string, string>,
 	starting: (command: string) => (line: string) => void,
 ): Promise<{ command: string; code: number } | undefined> {
-	const env: NodeJS.ProcessEnv = { ...process.env, ...variables };
+	const env: NodeJS.ProcessEnv = { ...process.env };
 	if (env.BASEPAD_PATH) env.PATH = env.BASEPAD_PATH;
 	delete env.BASEPAD_PATH;
 	for (const command of commands) {
-		const code = await streamed(dir, command, env, starting(command));
+		const code = await streamed(dir, throughMise(command, variables), env, starting(command));
 		if (code !== 0) return { command, code };
 	}
 	return undefined;
@@ -76,12 +76,12 @@ async function runCommands(
 
 function streamed(
 	dir: string,
-	command: string,
+	script: string,
 	env: NodeJS.ProcessEnv,
 	line: (text: string) => void,
 ): Promise<number> {
 	return new Promise((done, fail) => {
-		const child = spawn("sh", ["-c", throughMise(command)], {
+		const child = spawn("sh", ["-c", script], {
 			cwd: dir,
 			env,
 			stdio: ["ignore", "pipe", "pipe"],
