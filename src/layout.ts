@@ -260,12 +260,14 @@ export function suffixOf(name: string, namespace: string): string | undefined {
 }
 
 export function worktreeSuffix(root: string, configDir = ""): string {
-	const segments = (path: string) =>
-		normalize(path)
-			.split(sep)
-			.filter((s) => s !== "" && s !== ".");
 	const folders = segments(root);
 	return folders[folders.length - 1 - segments(configDir).length] ?? "";
+}
+
+function segments(path: string): string[] {
+	return normalize(path)
+		.split(sep)
+		.filter((segment) => segment !== "" && segment !== ".");
 }
 
 export function worktreeFolder(
