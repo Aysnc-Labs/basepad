@@ -3,7 +3,7 @@
 Everything basepad does, in detail. New here? Start with the [README](../README.md).
 
 - [Install](#install) · [A first project](#a-first-project)
-- [The config](#the-config): [what `env` gets](#what-env-gets), [env files](#env-files), [apps](#apps), [Postgres](#postgres), [Postgres with Neon's proxy](#postgres-with-neons-proxy), [worktrees](#worktrees), [the local file](#the-local-file)
+- [The config](#the-config): [what `env` gets](#what-env-gets), [env files](#env-files), [apps](#apps), [Postgres](#postgres), [Postgres with Neon's proxy](#postgres-with-neons-proxy), [worktrees](#worktrees), [hooks](#hooks) and [a test database](#a-test-database), [the local file](#the-local-file)
 - [Commands](#commands) and mission control's keys
 - [Port-free URLs: `basepad setup`](#port-free-urls-basepad-setup)
 - [Notes](#notes): apps that ignore `PORT`, frameworks behind the proxy, extensions, your own database
@@ -414,7 +414,7 @@ Create hooks run only for worktrees, never for main: put main's commands in `aft
 
 Remove hooks are main's, from main's config, and run from main's folder, so removing a worktree whose folder or config is gone still runs them. They get `BASEPAD_WORKTREE`, the worktree's folder, which may be gone, and the keys of the worktree's env files while its folder still has them, never main's.
 
-- A hook is one shell command or a list of them. The commands run in order through `sh`, from the folder of the environment's config: main's, or the worktree's.
+- A hook is one shell command or a list of them. The commands run in order through `sh`, from the folder that holds the environment's `basepad.config.ts` (main's, or the worktree's), where apps run by default. When the config sits in a subfolder of the repository, that subfolder is where hooks run, not the repository's top.
 - They run through `mise exec`, so `php`, `psql` and `node` are the ones the checkout's `mise.toml` pins.
 - stdin is closed, so a hook can't ask a question. A command that waits for an answer reads end of file.
 - Each command gets the keys of the env files basepad writes, as `env` sets them, so `$DB_HOST` and `$DB_PORT` work directly. It also gets `BASEPAD_EVENT`, the hook's name (`afterUp`), and `BASEPAD_ENVIRONMENT`: `main`, or the worktree's suffix.
@@ -423,6 +423,49 @@ Remove hooks are main's, from main's config, and run from main's folder, so remo
 - A hook's output is printed where basepad's own lines go: standard error for `db export` to standard output and under `--json` and `--claude`, so that output stays clean. With mission control open, it shows in the environment's logs as a `hooks` row, and a failure shows as a notice.
 - The first command that fails stops the hook, and the rest of its commands don't run. A failed `beforeUp` cancels `up`: no app starts. A failed `afterUp` makes `up` exit 1 and leaves the apps running. A failed `beforeCreate` or `afterCreate` makes the command exit 1 and keeps the worktree. A failed Down or Remove hook only prints a warning: `down` still stops everything, and `worktree rm` and `prune` still remove it. A failed `before…` hook of a `db` command cancels it, and a failed `after…` one makes it exit 1, keeping what it did. basepad never runs a failed hook again by itself.
 - Only the `up` and `down` commands run Up and Down hooks. `worktree add --start`, an app started by the first request to its domain, and mission control's start and stop run none.
+
+#### A test database
+
+basepad makes one database per Postgres service and environment. For a second one, such as the database a Laravel test suite runs against, name it in `env` and let hooks make and drop it:
+
+```ts
+services: { db: postgres() },
+apps: { www: { run: "php artisan serve --port=$PORT" } },
+env: ({ db }) => ({
+	".env": {
+		DB_HOST: db.host,
+		DB_PORT: db.port,
+		DB_USERNAME: db.user,
+		DB_PASSWORD: db.password,
+		DB_DATABASE: db.database,
+		DB_TEST_DATABASE: `${db.database}_testing`,
+	},
+}),
+hooks: {
+	afterCreate: "scripts/test-db.sh",
+	afterUp: ["php artisan migrate --force", "scripts/test-db.sh"],
+	afterImport: "php artisan migrate --force",
+	beforeRemove: "scripts/test-db.sh drop",
+},
+```
+
+`scripts/test-db.sh` makes the test database when it is missing, or drops it:
+
+```sh
+#!/bin/sh
+set -e
+[ -n "$DB_TEST_DATABASE" ] || exit 0
+export PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$DB_USERNAME" PGPASSWORD="$DB_PASSWORD"
+if [ "$1" = drop ]; then
+	psql -d postgres -c "drop database if exists \"$DB_TEST_DATABASE\""
+elif ! psql -d postgres -tAc "select 1 from pg_database where datname = '$DB_TEST_DATABASE'" | grep -q 1; then
+	psql -d postgres -c "create database \"$DB_TEST_DATABASE\""
+fi
+```
+
+- Main gets `shop_db_testing` on its next `up`, and each worktree its own, such as `shop_db_worktree_1_testing`, when it is made. `afterUp` makes it again if it was dropped.
+- Every hook gets its own environment's env file keys, Remove hooks included, so in a worktree `$DB_TEST_DATABASE` is the worktree's, never main's.
+- basepad drops only the databases it made. Without `beforeRemove`, `worktree rm` leaves the test database on main's server. A worktree whose folder is already gone has no env file left, so `prune` can't drop its test database: drop it with `psql`.
 
 ### The local file
 
