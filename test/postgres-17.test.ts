@@ -28,22 +28,16 @@ test("a project on Postgres 17 gets 17, and pgvector can be created", async () =
 	expect(vector.stdout).toContain("5");
 }, 300_000);
 
-const ownInstalls = Boolean(process.env.CI || process.env.MISE_DATA_DIR);
-
-test.runIf(ownInstalls)(
-	"pgvector can still be created after Postgres is removed and reinstalled",
-	async () => {
-		expect((await box.basepad(blog, "down")).code).toBe(0);
-		const mise = (...args: string[]) => box.run("mise", args);
-		const where = (await mise("where", "postgres@17")).stdout.trim();
-		expect((await mise("uninstall", "postgres@17")).code).toBe(0);
-		expect((await mise("where", "postgres@17")).code).not.toBe(0);
-		const up = await box.basepad(blog, "up");
-		expect(up.stderr).toBe("");
-		expect((await mise("where", "postgres@17")).stdout.trim()).toBe(where);
-		const vector = await sql("drop extension vector; create extension vector");
-		expect(vector.stderr).toBe("");
-		expect(vector.code).toBe(0);
-	},
-	300_000,
-);
+test("pgvector can still be created after Postgres is removed and reinstalled", async () => {
+	expect((await box.basepad(blog, "down")).code).toBe(0);
+	const mise = (...args: string[]) => box.run("mise", args);
+	const where = (await mise("where", "postgres@17")).stdout.trim();
+	expect((await mise("uninstall", "postgres@17")).code).toBe(0);
+	expect((await mise("where", "postgres@17")).code).not.toBe(0);
+	const up = await box.basepad(blog, "up");
+	expect(up.stderr).toBe("");
+	expect((await mise("where", "postgres@17")).stdout.trim()).toBe(where);
+	const vector = await sql("drop extension vector; create extension vector");
+	expect(vector.stderr).toBe("");
+	expect(vector.code).toBe(0);
+}, 300_000);

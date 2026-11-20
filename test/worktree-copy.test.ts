@@ -47,7 +47,7 @@ async function sql(dir: string, query: string): Promise<string> {
 async function holdOpen(dir: string): Promise<ChildProcess> {
 	const db = await url(dir);
 	const client = spawn("mise", ["exec", "postgres@18", "--", "psql", db, "-tAX"], {
-		cwd: box.root,
+		cwd: box.toolsDir,
 		env: box.env,
 		stdio: ["pipe", "ignore", "ignore"],
 	});
@@ -134,6 +134,8 @@ test.runIf(process.platform === "darwin")(
 	async () => {
 		const big = await project("t16big", 18);
 		const init = await box.run("mise", [
+			"-C",
+			box.toolsDir,
 			"exec",
 			"postgres@18",
 			"--",
