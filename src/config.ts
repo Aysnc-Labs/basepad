@@ -24,7 +24,6 @@ export interface Project {
 		prefix: string;
 		dir?: string;
 		clone: string[];
-		setup: string[];
 	};
 	hooks: Partial<Record<HookName, string[]>>;
 }
@@ -69,7 +68,6 @@ export async function loadProject(cwd: string): Promise<Project> {
 		worktrees: {
 			prefix: config.worktrees?.prefix ?? "worktree",
 			clone: config.worktrees?.clone ?? [],
-			setup: config.worktrees?.setup ?? [],
 			...(config.worktrees?.dir === undefined ? {} : { dir: resolve(root, config.worktrees.dir) }),
 		},
 		hooks: Object.fromEntries(
@@ -197,13 +195,6 @@ const ConfigSchema = z
 								(path) => !isAbsolute(path) && !normalize(path).startsWith(".."),
 								"each must be a path inside the config's folder",
 							),
-					)
-					.optional(),
-				setup: z
-					.array(
-						z
-							.string({ error: "each must be a shell command" })
-							.min(1, "each must be a shell command"),
 					)
 					.optional(),
 			})

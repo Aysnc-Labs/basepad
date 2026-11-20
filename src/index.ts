@@ -80,8 +80,6 @@ export interface Config<
 		dir?: string;
 		/** Untracked paths, relative to the config, copied from main into each new worktree (copy-on-write where the filesystem can). */
 		clone?: string[];
-		/** Shell commands run in order in each new worktree, after its env files are written. */
-		setup?: string[];
 	};
 	/** Commands run around `up`, `down` and the other events that change an environment. */
 	hooks?: Hooks;

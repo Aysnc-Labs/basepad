@@ -8,13 +8,14 @@ import { configFile, type Result, type Sandbox, sandbox } from "./sandbox.ts";
 
 const echo = join(import.meta.dirname, "apps/echo.mjs");
 const web = `web: { run: ${JSON.stringify(`exec '${process.execPath}' '${echo}'`)} }`;
-const config = (setup: string[]) =>
+const config = (afterCreate: string[]) =>
 	configFile(`{
 	name: "t17shop",
 	services: { db: postgres() },
 	apps: { ${web} },
 	env: ({ db }) => ({ ".env.local": { DATABASE_URL: db.url } }),
-	worktrees: { clone: ["deps", "gone"], setup: ${JSON.stringify(setup)} },
+	worktrees: { clone: ["deps", "gone"] },
+	hooks: { afterCreate: ${JSON.stringify(afterCreate)} },
 }`);
 
 let box: Sandbox;
@@ -54,7 +55,7 @@ beforeAll(async () => {
 		join(main, "basepad.config.ts"),
 		config(["echo first > marker", "echo boom; echo bad >&2; exit 3", "echo never > never"]),
 	);
-	await git(main, "commit", "--quiet", "-am", "broken setup");
+	await git(main, "commit", "--quiet", "-am", "broken afterCreate");
 	await git(main, "checkout", "--quiet", "main");
 	added = await box.basepad(main, "worktree", "add");
 	tree = join(box.root, "t17shop.worktrees/worktree-1");
@@ -76,16 +77,16 @@ test("a write under a cloned path in the worktree leaves main's files alone", as
 	expect(existsSync(join(main, "deps/new"))).toBe(false);
 });
 
-test("`worktrees.setup` runs in order in the worktree, after its env files are written", async () => {
+test("afterCreate runs in order in the worktree, after its env files are written", async () => {
 	const marker = await readFile(join(tree, "marker"), "utf8");
 	expect(marker).toMatch(/^DATABASE_URL=\S+\/t17shop_db_worktree_1\nsecond\n$/);
 });
 
-test("worktree add names the worktree it checked out before its setup runs, so one killed partway can be named", () => {
+test("worktree add names the worktree it checked out before its afterCreate runs, so one killed partway can be named", () => {
 	const lines = added.stdout.split("\n");
 	const checkedOut = lines.indexOf(`Worktree worktree-1 is checked out at ${tree}.`);
 	expect(checkedOut).not.toBe(-1);
-	expect(checkedOut).toBeLessThan(lines.indexOf("Running `echo second >> marker`"));
+	expect(checkedOut).toBeLessThan(lines.indexOf("Running afterCreate `echo second >> marker`"));
 });
 
 test("worktree add starts no app, and the first request starts it even with main's database server stopped", async () => {
@@ -99,12 +100,11 @@ test("worktree add starts no app, and the first request starts it even with main
 	await expect(box.get(url("web.t17shop.localhost"))).rejects.toThrow();
 });
 
-test("--branch checks out an existing branch; a failing setup command is reported with its output, stops the rest, and keeps the worktree", async () => {
+test("--branch checks out an existing branch; a failing afterCreate command is reported after its output, stops the rest, and keeps the worktree", async () => {
 	const out = await box.basepad(main, "worktree", "add", "--branch", "broken");
 	expect(out.code).toBe(1);
-	expect(out.stderr).toContain("`echo boom; echo bad >&2; exit 3` failed (exit 3)");
-	expect(out.stderr).toContain("boom");
-	expect(out.stderr).toContain("bad");
+	expect(out.stderr).toContain("afterCreate `echo boom; echo bad >&2; exit 3` failed (exit 3)");
+	expect(out.stdout).toContain("  boom\n  bad\n");
 	const broken = join(box.root, "t17shop.worktrees/worktree-2");
 	expect(out.stderr).toContain(`Worktree worktree-2 is checked out at ${broken}`);
 	expect(await git(broken, "branch", "--show-current")).toBe("broken");

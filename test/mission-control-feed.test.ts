@@ -115,7 +115,7 @@ test("a service's extra daemon is a part of its own, with its address and state,
 		services: { db: postgresWithNeonProxy() },
 		apps: {},
 		env: () => ({}),
-		worktrees: { prefix: "worktree", clone: [], setup: [] },
+		worktrees: { prefix: "worktree", clone: [] },
 		hooks: {},
 	};
 	const daemons = new Map<string, DaemonInfo>(

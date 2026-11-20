@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readdir, realpath, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { z } from "zod";
 import {
@@ -61,7 +61,6 @@ import {
 	type Listed,
 	listWorktrees,
 	removeCheckout,
-	runSetup,
 } from "./worktrees.ts";
 
 export interface Flag {
@@ -420,7 +419,7 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const { project } = environment;
 	const context = await open(environment, flags, print);
 	const { supervisor, here } = context;
-	const lay = await ready(environment, context);
+	const lay = await readyOrMade(environment, context, print);
 	const hook = upHooks(environment, print);
 	await hook("beforeUp");
 	const { states, failure } = await startApps(supervisor, project, lay);
@@ -465,7 +464,10 @@ async function upOnTerminal(
 	let notice: string | undefined;
 	const readying = (async () => {
 		const context = await open(environment, flags, say, supervisor);
-		const lay = await ready(environment, { ...context, print: say });
+		const lay = await readyOrMade(environment, { ...context, print: say }, (line) => {
+			say(line);
+			hookLog.say(line);
+		});
 		served = await machineWithPortFree(here, supervisor);
 		await hook("beforeUp");
 		outcome = { lay, ...(await startApps(supervisor, project, lay)) };
@@ -504,6 +506,60 @@ async function upOnTerminal(
 	if (afterUp !== undefined) throw afterUp;
 }
 
+async function readyOrMade(
+	environment: Environment,
+	context: Context,
+	say: (line: string) => void,
+): Promise<Layout> {
+	const { project, suffix } = environment;
+	if (suffix === undefined) return ready(environment, context);
+	const registered = await context.supervisor.owner(namespaceOf(project.name, suffix));
+	if (registered !== undefined) return ready(environment, context);
+	return made(environment, suffix, context, say);
+}
+
+async function made(
+	environment: Environment,
+	suffix: string,
+	context: Context,
+	say: (line: string) => void,
+	{
+		start,
+		before = async () => {},
+	}: { start?: (key: string) => boolean; before?: () => Promise<void> } = {},
+): Promise<Layout> {
+	const { root } = environment.project;
+	const hook = (name: "beforeCreate" | "afterCreate") =>
+		runHook(environment.project, name, { environment: suffix, say });
+	const lay = await keptOnFailure(suffix, root, UP_THERE, async () => {
+		await before();
+		await hook("beforeCreate");
+		return ready(environment, context, start === undefined ? {} : { start });
+	});
+	await keptOnFailure(suffix, root, "run the rest of `afterCreate` there", () =>
+		hook("afterCreate"),
+	);
+	return lay;
+}
+
+const UP_THERE = "run `basepad up` there";
+
+async function keptOnFailure<T>(
+	suffix: string,
+	root: string,
+	then: string,
+	step: () => Promise<T>,
+): Promise<T> {
+	try {
+		return await step();
+	} catch (error) {
+		if (!(error instanceof BasepadError)) throw error;
+		throw new BasepadError(
+			`${error.message}\n${checkedOut(suffix, root)}; once that is fixed, ${then}.`,
+		);
+	}
+}
+
 const firstLine = (text: string) => text.split("\n")[0] ?? text;
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -540,30 +596,16 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	await ready({ project: main }, context);
 	const requested = input?.name ?? (typeof flags.branch === "string" ? flags.branch : undefined);
 	const { suffix, branch, root } = await checkOutWorktree(main, requested);
-	const kept = checkedOut(suffix, root);
-	say(`${kept}.`);
-	let environment: Environment;
-	let lay: Layout;
-	try {
-		environment = await environmentAt(root);
-		const { project } = environment;
-		for (const note of await clonePaths(main.root, project.root, project.worktrees.clone))
-			say(note);
-		lay = await ready(environment, context, { start: () => flags.start === true });
-	} catch (error) {
-		if (!(error instanceof BasepadError)) throw error;
-		throw new BasepadError(
-			`${error.message}\n${kept}; once that is fixed, run \`basepad up\` there.`,
-		);
-	}
-	try {
-		await runSetup(environment.project.root, environment.project.worktrees.setup, say);
-	} catch (error) {
-		if (!(error instanceof BasepadError)) throw error;
-		throw new BasepadError(
-			`${error.message}\n${kept}; once that is fixed, run the rest of \`worktrees.setup\` there.`,
-		);
-	}
+	say(`${checkedOut(suffix, root)}.`);
+	const environment = await keptOnFailure(suffix, root, UP_THERE, () => environmentAt(root));
+	const lay = await made(environment, suffix, context, say, {
+		start: () => flags.start === true,
+		before: async () => {
+			const { project } = environment;
+			for (const note of await clonePaths(main.root, project.root, project.worktrees.clone))
+				say(note);
+		},
+	});
 	const { states, failure } =
 		flags.start === true
 			? await startApps(context.supervisor, environment.project, lay)
@@ -866,11 +908,29 @@ async function removeWorktree(
 ): Promise<void> {
 	const context = await open({ project: main }, {}, print);
 	await ready({ project: main }, context);
+	const hook = removeHook(main, tree, print);
+	await hook("beforeRemove");
 	await removeEnvironment(main, tree.suffix, tree.root, context);
 	await removeCheckout(main, tree.path);
+	await hook("afterRemove");
 	print(
 		`Removed worktree ${tree.suffix}: its apps, databases and git worktree.${tree.branch === undefined ? "" : ` Its branch ${tree.branch} is kept.`}`,
 	);
+}
+
+function removeHook(
+	main: Project,
+	tree: Pick<Listed, "suffix" | "root">,
+	say: (line: string) => void,
+) {
+	return (name: "beforeRemove" | "afterRemove") =>
+		runHook(main, name, {
+			environment: tree.suffix,
+			say,
+			keysFrom: tree.root,
+			variables: { BASEPAD_WORKTREE: tree.root },
+			warn: (line) => console.error(`basepad: ${line}`),
+		});
 }
 
 async function removeEnvironment(
@@ -978,7 +1038,10 @@ async function prune({ cwd, flags, print }: Invocation): Promise<void> {
 		const yes = flags.yes === true || (await ask("Remove what worktrees left?"));
 		if (yes === undefined) unasked = true;
 		else if (yes) {
+			const hooks = leftoverWorktrees(main, left).map((tree) => removeHook(main, tree, print));
+			for (const hook of hooks) await hook("beforeRemove");
 			await removeLeftovers(main, left, context);
+			for (const hook of hooks) await hook("afterRemove");
 			print("Removed what worktrees left.");
 		} else print("Kept what worktrees left.");
 	}
@@ -1004,6 +1067,19 @@ async function prune({ cwd, flags, print }: Invocation): Promise<void> {
 			"Nothing worktrees left was removed: there is no terminal to ask. Run `basepad prune --yes` to remove it.",
 		);
 	}
+}
+
+function leftoverWorktrees(main: Project, left: Leftovers): Pick<Listed, "suffix" | "root">[] {
+	const trees = new Map<string, string>();
+	for (const tree of left.checkouts) trees.set(tree.root, tree.suffix);
+	for (const { namespace, dir } of left.registrations) {
+		const suffix = suffixOf(main.name, namespace);
+		if (suffix !== undefined && !trees.has(dir)) trees.set(dir, suffix);
+	}
+	for (const { data } of left.data) {
+		for (const { owner } of data) if (!trees.has(owner)) trees.set(owner, basename(owner));
+	}
+	return [...trees].map(([root, suffix]) => ({ root, suffix }));
 }
 
 async function removeLeftovers(main: Project, left: Leftovers, context: Context): Promise<void> {

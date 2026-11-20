@@ -48,7 +48,7 @@ Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### Hooks
 
-Purpose: the project's own shell commands run around events that change an environment (`beforeUp`, `afterDown`, …), through mise in the environment's checkout, with stdin closed, the env files' keys, `BASEPAD_EVENT` and `BASEPAD_ENVIRONMENT`; a failed `before…` cancels, a failed `after…` exits 1, Down hooks only warn. `runHook` is the one runner every event calls; `worktrees.setup` runs through its `runCommands`. On a terminal, output streams into mission control's `hooks` log row (`told` in the feed). Today `up` and `down` run Up and Down hooks; the other events' keys are accepted.
+Purpose: the project's own shell commands run around events that change an environment (`beforeUp`, `afterDown`, …), through mise in the environment's checkout, with stdin closed, the env files' keys, `BASEPAD_EVENT` and `BASEPAD_ENVIRONMENT`; a failed `before…` cancels, a failed `after…` exits 1, Down hooks only warn. `runHook` is the one runner every event calls. On a terminal, output streams into mission control's `hooks` log row (`told` in the feed). `up` and `down` run Up and Down hooks; `worktree add`, and `up` in a worktree not registered yet, run Create hooks (never main); `worktree rm` and `prune` run main's Remove hooks from main's folder, with `BASEPAD_WORKTREE` and the worktree's env file keys while its folder has them, and only warn. The db events' keys are accepted.
 Entry: `hooks: { beforeUp, afterUp, beforeDown, afterDown, … }` in the config
 Paths: src/hooks.ts, src/config.ts, src/commands.ts, src/env-files.ts, src/mission-control/feed.ts
 
@@ -75,13 +75,13 @@ Paths: src/mission-control/, src/supervisor.ts, src/commands.ts, src/worktrees.t
 
 ### `basepad worktree add`
 
-Purpose: makes a worktree of main, ready to use: a git worktree with suffix `<prefix>-<n>`, beside the project, on a new branch or `--branch`'s, with `worktrees.clone` copied from main, its own databases (copied from main's while its app is connected, by the fastest route the server has; empty or shared), domains `<app>.<suffix>.<name>.localhost`, env files from main's, and `worktrees.setup` run in it. Its apps start on the first request to their domains (the supervisor's proxy, with main's services as dependencies), or at once with `--start`. `up`, `down` and `status` in its folder act on it; `up` in a git worktree made by hand makes it a worktree whose suffix is its folder's name. Worktrees are found from git; nothing is listed.
+Purpose: makes a worktree of main, ready to use: a git worktree with suffix `<prefix>-<n>`, beside the project, on a new branch or `--branch`'s, with `worktrees.clone` copied from main, its own databases (copied from main's while its app is connected, by the fastest route the server has; empty or shared), domains `<app>.<suffix>.<name>.localhost`, env files from main's, and its `beforeCreate` and `afterCreate` hooks run in it. Its apps start on the first request to their domains (the supervisor's proxy, with main's services as dependencies), or at once with `--start`. `up`, `down` and `status` in its folder act on it; `up` in a git worktree made by hand makes it a worktree whose suffix is its folder's name, and runs its Create hooks the first time (the worktree's namespace is not registered with the supervisor yet). Worktrees are found from git; nothing is listed.
 Entry: `basepad worktree add [--json] [--branch <name>] [--start]`, `basepad up` in a git worktree, `worktrees` in the config, `postgres({ worktree })`
 Paths: src/worktrees.ts, src/commands.ts, src/layout.ts, src/catalogue/postgres.ts
 
 ### `basepad worktree ls`, `worktree rm` and `prune`
 
-Purpose: lists worktrees (and `status` in main shows each); removes one from its suffix alone (apps, registration, databases, git worktree; branch kept; refuses uncommitted changes unless `--force`); clears what worktrees whose folder is gone left, and asks before deleting a removed service's data. Never drops main's databases.
+Purpose: lists worktrees (and `status` in main shows each); removes one from its suffix alone (apps, registration, databases, git worktree; branch kept; refuses uncommitted changes unless `--force`); clears what worktrees whose folder is gone left, and asks before deleting a removed service's data; runs main's Remove hooks around each removal. Never drops main's databases.
 Entry: `basepad worktree ls`, `basepad worktree rm <worktree> [--force]`, `basepad prune [--yes]`, `basepad status` in main
 Paths: src/commands.ts, src/worktrees.ts, src/catalogue.ts, src/catalogue/postgres.ts, src/supervisor.ts, src/hosts.ts
 
