@@ -49,6 +49,47 @@ neon-proxy = "8853"
 	expect(status.stdout).toMatch(/^db-neon-proxy +\S+ +stopped$/m);
 }, 120_000);
 
+test("a project whose mise config has no Redis gets the prebuilt Redis lines", async () => {
+	const dir = await box.project("no-redis", {
+		"basepad.config.ts": configFile(`{ name: "tools-no-redis", services: { cache: redis() } }`),
+		"mise.toml": '[tools]\nmailpit = "1.33.1"\n',
+	});
+
+	const up = await box.basepad(dir, "up", "-d");
+
+	expect(up.code).toBe(1);
+	expect(up.stderr).toContain(
+		`No tool in the mise config at ${dir} gives \`redis-server\`. Add these lines to ${join(dir, "mise.toml")}:
+
+[tool_alias]
+redis = "github:aysnc-labs/prebuilt-binaries[version_prefix=redis-]"
+
+[tools]
+redis = "8.10.3"
+`,
+	);
+	expect((await box.basepad(dir, "status")).stdout).toMatch(/^cache +\S+ +stopped$/m);
+}, 120_000);
+
+test("a project whose mise config has no Mailpit gets the Mailpit line", async () => {
+	const dir = await box.project("no-mailpit", {
+		"basepad.config.ts": configFile(`{ name: "tools-no-mailpit", services: { mail: mailpit() } }`),
+		"mise.toml": '[tools]\n"conda:redis-server" = "8.10.3"\n',
+	});
+
+	const up = await box.basepad(dir, "up", "-d");
+
+	expect(up.code).toBe(1);
+	expect(up.stderr).toContain(
+		`No tool in the mise config at ${dir} gives \`mailpit\`. Add these lines to ${join(dir, "mise.toml")}:
+
+[tools]
+mailpit = "1.33.1"
+`,
+	);
+	expect((await box.basepad(dir, "status")).stdout).toMatch(/^mail +\S+ +stopped$/m);
+}, 120_000);
+
 test("an untrusted mise config fails up with mise's error and how to trust it, and basepad trusts nothing", async () => {
 	const dir = await box.project("untrusted", {
 		"basepad.config.ts": configFile(`{ name: "tools-untrusted", services: { db: postgres() } }`),

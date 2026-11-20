@@ -7,11 +7,11 @@ import type { Kind } from "../catalogue.ts";
 import { BasepadError, shellQuote } from "../internal/exec.ts";
 import { freePort, waitFor } from "../internal/ports.ts";
 import { recordRunning, runningPort } from "../internal/processes.ts";
-import { install } from "../tools.ts";
-import { REDIS_VERSION } from "../versions.ts";
+import { prebuilt, programsIn } from "../tools.ts";
 
 const HOST = "127.0.0.1";
 const READY_MS = 30_000;
+const REDIS_TOOLS = { "redis-server": prebuilt("redis", "8.10.3") };
 
 /** What a worktree's Redis is: its own, empty one, or main's (`shared`). */
 export type RedisWorktree = "empty" | "shared";
@@ -64,12 +64,12 @@ export const redisKind: Kind<RedisService, RedisOutputs, RedisNames> = {
 	},
 
 	async prepare(_service, place) {
-		const redis = await install("redis", REDIS_VERSION, place.machine.home);
+		const programs = await programsIn(place.checkout, REDIS_TOOLS);
 		const { server } = place;
 		await mkdir(server, { recursive: true });
 		const port = (await runningPort(pidFile(server))) ?? (await freePort(place.port));
 		const argv = [
-			redis.bin("redis-server"),
+			programs["redis-server"],
 			"--port",
 			String(port),
 			"--bind",
