@@ -123,5 +123,5 @@ function missingPrograms<P extends string>(
 		...tools.map(([name, tool]) => `${name} = "${tool.version}"`),
 	];
 	const programs = missing.map((program) => `\`${program}\``).join(", ");
-	return `No tool in the mise config at ${checkout} gives ${programs}. Add these lines to ${join(checkout, "mise.toml")}:\n\n${lines.join("\n")}`;
+	return `No tool in the mise config at ${checkout} gives ${programs}. Put each line under its table in ${join(checkout, "mise.toml")}, adding a table the file lacks; don't repeat a table it has:\n\n${lines.join("\n")}`;
 }

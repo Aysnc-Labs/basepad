@@ -33,7 +33,7 @@ test("a project whose mise config has no Postgres gets the lines to add, and not
 
 	expect(up.code).toBe(1);
 	expect(up.stderr).toContain(
-		`No tool in the mise config at ${dir} gives \`initdb\`, \`pg_ctl\`, \`postgres\`, \`psql\`, \`pg_dump\`, \`pg_restore\`, \`neon-proxy\`. Add these lines to ${join(dir, "mise.toml")}:
+		`No tool in the mise config at ${dir} gives \`initdb\`, \`pg_ctl\`, \`postgres\`, \`psql\`, \`pg_dump\`, \`pg_restore\`, \`neon-proxy\`. Put each line under its table in ${join(dir, "mise.toml")}, adding a table the file lacks; don't repeat a table it has:
 
 [tool_alias]
 postgres = "github:aysnc-labs/prebuilt-binaries[version_prefix=postgres-]"
@@ -59,7 +59,7 @@ test("a project whose mise config has no Redis gets the prebuilt Redis lines", a
 
 	expect(up.code).toBe(1);
 	expect(up.stderr).toContain(
-		`No tool in the mise config at ${dir} gives \`redis-server\`. Add these lines to ${join(dir, "mise.toml")}:
+		`No tool in the mise config at ${dir} gives \`redis-server\`. Put each line under its table in ${join(dir, "mise.toml")}, adding a table the file lacks; don't repeat a table it has:
 
 [tool_alias]
 redis = "github:aysnc-labs/prebuilt-binaries[version_prefix=redis-]"
@@ -81,7 +81,7 @@ test("a project whose mise config has no Mailpit gets the Mailpit line", async (
 
 	expect(up.code).toBe(1);
 	expect(up.stderr).toContain(
-		`No tool in the mise config at ${dir} gives \`mailpit\`. Add these lines to ${join(dir, "mise.toml")}:
+		`No tool in the mise config at ${dir} gives \`mailpit\`. Put each line under its table in ${join(dir, "mise.toml")}, adding a table the file lacks; don't repeat a table it has:
 
 [tools]
 mailpit = "1.33.1"
