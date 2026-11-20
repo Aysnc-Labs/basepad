@@ -189,6 +189,11 @@ function version(): string {
 	return (JSON.parse(pkg) as { version: string }).version;
 }
 
+if (process.env.BASEPAD_CWD) {
+	process.chdir(process.env.BASEPAD_CWD);
+	delete process.env.BASEPAD_CWD;
+}
+
 main(process.argv.slice(2)).then(
 	(code) => {
 		process.exitCode = code;

@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
 	EXTRA_DAEMONS,
@@ -11,6 +10,7 @@ import {
 	type Web,
 } from "./catalogue.ts";
 import type { Project } from "./config.ts";
+import { basepadHome } from "./home.ts";
 import { BasepadError } from "./internal/exec.ts";
 
 export interface Machine {
@@ -34,7 +34,7 @@ export function machine(
 		throw new BasepadError(`BASEPAD_PROXY_PORT must be a port number; got \`${raw}\`.`);
 	}
 	return {
-		home: env.BASEPAD_HOME || join(env.HOME || homedir(), ".basepad"),
+		home: basepadHome(env),
 		proxyPort,
 		portFree: proxyPort === 443,
 		forwards443: unset && platform === "darwin",
