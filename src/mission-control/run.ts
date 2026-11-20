@@ -5,7 +5,7 @@ import type { Project } from "../config.ts";
 import { type Machine, workHome } from "../layout.ts";
 import type { Supervisor } from "../supervisor.ts";
 import { desktopHands, type Hands, perform } from "./act.ts";
-import { type Feed, openFeed } from "./feed.ts";
+import { type Feed, openFeed, type Told } from "./feed.ts";
 import {
 	animating,
 	type Colors,
@@ -30,6 +30,7 @@ export async function missionControl(options: {
 	machine(): Machine;
 	supervisor: Supervisor;
 	failure?: () => string | undefined;
+	told?: Told;
 	selected: string;
 	basepad: string[];
 }): Promise<void> {

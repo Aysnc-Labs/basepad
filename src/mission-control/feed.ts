@@ -3,7 +3,7 @@ import { kindOf, type Service } from "../catalogue.ts";
 import { loadProject, type Project } from "../config.ts";
 import { BasepadError } from "../internal/exec.ts";
 import { daemonId, layout, type Machine, namespaceOf, ofDaemon, placeOf } from "../layout.ts";
-import type { DaemonInfo, Supervisor } from "../supervisor.ts";
+import type { DaemonInfo, LogEntry, Supervisor } from "../supervisor.ts";
 import { hasChanges, listWorktrees, mainBranch } from "../worktrees.ts";
 import type { EnvironmentView, LogLine, Part, Snapshot } from "./model.ts";
 import { type Running, takeWork } from "./work.ts";
@@ -26,6 +26,7 @@ export async function openFeed(options: {
 	supervisor: Supervisor;
 	work: string;
 	changed(): void;
+	told?: Told;
 }): Promise<Feed> {
 	const { main, machine, supervisor, changed } = options;
 	const arrivals: number[] = [];
@@ -39,6 +40,7 @@ export async function openFeed(options: {
 	});
 	let running: Running[] = [];
 	const notices: string[] = [];
+	options.told?.pipe(book.write);
 
 	const configOf = async (root: string): Promise<Project | string> => {
 		let config = configs.get(root);
@@ -135,6 +137,7 @@ export function logBook(
 ): {
 	logs: ReadonlyMap<string, readonly LogLine[]>;
 	follow(ids: readonly string[]): void;
+	write(entry: LogEntry): void;
 	close(): void;
 } {
 	const logs = new Map<string, LogLine[]>();
@@ -148,16 +151,19 @@ export function logBook(
 		const follower: Follower = { ids: new Set(ids), stop: () => {} };
 		for (const id of ids) owner.set(id, follower);
 		follower.stop = follow(ids, lines, (entry) => {
-			if (owner.get(entry.id) !== follower) return;
-			const kept = logs.get(entry.id) ?? [];
-			kept.push({ seq: seq++, id: entry.id, time: entry.time, text: entry.text, at: Date.now() });
-			if (kept.length > KEEP * 1.5) kept.splice(0, kept.length - KEEP);
-			logs.set(entry.id, kept);
-			read();
+			if (owner.get(entry.id) === follower) write(entry);
 		});
+	};
+	const write = (entry: LogEntry) => {
+		const kept = logs.get(entry.id) ?? [];
+		kept.push({ seq: seq++, id: entry.id, time: entry.time, text: entry.text, at: Date.now() });
+		if (kept.length > KEEP * 1.5) kept.splice(0, kept.length - KEEP);
+		logs.set(entry.id, kept);
+		read();
 	};
 	return {
 		logs,
+		write,
 		follow(ids) {
 			const shown = new Set(ids);
 			const shrunk = new Set<Follower>();
@@ -181,6 +187,27 @@ export function logBook(
 		close() {
 			for (const follower of new Set(owner.values())) follower.stop();
 			owner.clear();
+		},
+	};
+}
+
+export interface Told {
+	say(text: string): void;
+	pipe(to: (entry: LogEntry) => void): void;
+}
+
+export function told(id: string): Told {
+	const waiting: LogEntry[] = [];
+	let to: ((entry: LogEntry) => void) | undefined;
+	return {
+		say(text) {
+			const entry = { id, time: new Date().toTimeString().slice(0, 8), text };
+			if (to === undefined) waiting.push(entry);
+			else to(entry);
+		},
+		pipe(next) {
+			to = next;
+			for (const entry of waiting.splice(0)) next(entry);
 		},
 	};
 }

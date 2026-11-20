@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import { createElement as h, type ReactElement, type ReactNode } from "react";
+import { ofDaemon } from "../layout.ts";
 import {
 	type EnvironmentView,
 	type LogLine,
@@ -9,6 +10,7 @@ import {
 	printed,
 	type Snapshot,
 	selectedOf,
+	streamIds,
 	streamLines,
 	type View,
 } from "./model.ts";
@@ -894,10 +896,14 @@ function stream(
 ): ReactElement {
 	const parts = partsOf(env);
 	const focused = parts.find((part) => part.id === view.focus);
-	const ids = focused === undefined ? parts.map((part) => part.id) : [focused.id];
+	const ids = streamIds(snapshot, view);
 	const inner = width - 4;
 	const n = Math.max(0, height - 2);
-	const nameWidth = Math.max(...parts.map((p) => [...p.name].length), 3) + 2;
+	const named = [
+		...parts.map((p) => p.name),
+		...ids.filter((id) => snapshot.logs.has(id)).map((id) => ofDaemon(id).name),
+	];
+	const nameWidth = Math.max(...named.map((name) => [...name].length), 3) + 2;
 	const paused = view.until;
 	const all = paused === undefined ? [] : streamLines(snapshot, view);
 	const end = Math.max(
@@ -909,7 +915,7 @@ function stream(
 	const search = view.search !== undefined && !view.search.typing ? view.search.query : "";
 	const rows = shown.map((l) => {
 		const color = partColor(env, l.id, c);
-		const name = parts.find((part) => part.id === l.id)?.name ?? l.id;
+		const name = parts.find((part) => part.id === l.id)?.name ?? ofDaemon(l.id).name;
 		const match = search !== "" && l.seq === paused;
 		return line(`${l.seq}`, inner, [
 			run(`${l.time} `, c.dim),

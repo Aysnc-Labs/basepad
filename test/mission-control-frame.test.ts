@@ -487,3 +487,20 @@ test("short of room, the parts' headings give way before a part does, and a long
 	expect(out).toMatch(/╭─ worktree-1 ─/);
 	expect(out).not.toMatch(/feature\/JIRA-1234-guest-checkout-flow?…/);
 });
+
+test("hook output shows in the selected environment's logs as a `hooks` row, and only there", () => {
+	const out = draw(
+		snap(
+			[main, worktree(1)],
+			[
+				lines("shop/web", "listening on 20001"),
+				lines("shop/hooks", "Running afterUp `php artisan migrate --force`", "  Migrated: users"),
+				lines("shop.worktree-1/hooks", "from the worktree"),
+			],
+		),
+	);
+	expect(out).toMatch(/▎hooks +Running afterUp `php artisan migrate --force`/);
+	expect(out).toMatch(/▎hooks + {2}Migrated: users/);
+	expect(out).toMatch(/▎web +listening on 20001/);
+	expect(out).not.toContain("from the worktree");
+});

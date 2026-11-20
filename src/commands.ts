@@ -14,6 +14,7 @@ import {
 import { readHookInput } from "./claude-hooks.ts";
 import { CONFIG_FILE, LABEL, loadProject, type Project } from "./config.ts";
 import { copyEnvFiles, writeEnvFiles } from "./env-files.ts";
+import { runHook } from "./hooks.ts";
 import { dropHosts, syncHosts } from "./hosts.ts";
 import type { EnvFiles } from "./index.ts";
 import { BasepadError, shellQuote } from "./internal/exec.ts";
@@ -40,6 +41,8 @@ import {
 	suffixOf,
 	supervisorPaths,
 } from "./layout.ts";
+import { told } from "./mission-control/feed.ts";
+import { hooksId } from "./mission-control/model.ts";
 import { setup, trustAsRoot } from "./setup.ts";
 import {
 	type Daemon,
@@ -413,10 +416,25 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const context = await open(environment, flags, print);
 	const { supervisor, here } = context;
 	const lay = await ready(environment, context);
+	const hook = upHooks(environment, print);
+	await hook("beforeUp");
 	const { states, failure } = await startApps(supervisor, project, lay);
+	const afterUp = failure === undefined ? await failureOf(hook("afterUp")) : undefined;
 	print(await stateTables(environment, lay, here, await withServices(supervisor, lay, states)));
 	if (failure !== undefined) throw new BasepadError(failure);
+	if (afterUp !== undefined) throw afterUp;
 }
+
+function upHooks(environment: Environment, say: (line: string) => void) {
+	return (name: "beforeUp" | "afterUp") =>
+		runHook(environment.project, name, { environment: environment.suffix, say });
+}
+
+const failureOf = (running: Promise<void>): Promise<unknown> =>
+	running.then(
+		() => undefined,
+		(error: unknown) => error,
+	);
 
 async function upOnTerminal(
 	environment: Environment,
@@ -429,33 +447,45 @@ async function upOnTerminal(
 	const held: string[] = [];
 	const say = (line: string) => held.push(line);
 	const supervisor = await openSupervisor(here, say);
+	const selected = layout(project, here, environment.suffix).namespace;
+	const hookLog = told(hooksId(selected));
+	const hook = upHooks(environment, (line) => {
+		say(line);
+		hookLog.say(line);
+	});
 	let served = here;
 	let outcome: { lay: Layout; states: Record<string, DaemonState>; failure?: string } | undefined;
+	let afterUp: unknown;
 	let error: unknown;
 	let notice: string | undefined;
 	const readying = (async () => {
 		const context = await open(environment, flags, say, supervisor);
 		const lay = await ready(environment, { ...context, print: say });
 		served = await machineWithPortFree(here, supervisor);
+		await hook("beforeUp");
 		outcome = { lay, ...(await startApps(supervisor, project, lay)) };
 		if (outcome.failure !== undefined) {
 			const failed = Object.keys(project.apps).filter((key) => outcome?.states[key] === "failed");
 			notice = `${failed.map((key) => `\`${key}\``).join(", ")} exited on start; ${failed.length > 1 ? "their" : "its"} output is in the logs.`;
+			return;
 		}
+		afterUp = await failureOf(hook("afterUp"));
+		if (afterUp !== undefined) notice = firstLine(messageOf(afterUp));
 	})().catch((caught: unknown) => {
 		error = caught;
-		notice = firstLine(caught instanceof Error ? caught.message : String(caught));
+		notice = firstLine(messageOf(caught));
 	});
 	await missionControl({
 		main: environment.main ?? project,
 		machine: () => served,
 		supervisor,
 		failure: () => {
-			const told = notice;
+			const shown = notice;
 			notice = undefined;
-			return told;
+			return shown;
 		},
-		selected: layout(project, here, environment.suffix).namespace,
+		told: hookLog,
+		selected,
 		basepad: [process.execPath, ...process.execArgv, process.argv[1] as string],
 	});
 	if (outcome === undefined && error === undefined) print("Still starting; finishing…");
@@ -466,9 +496,11 @@ async function upOnTerminal(
 	const { lay, states, failure } = outcome;
 	print(await stateTables(environment, lay, here, await withServices(supervisor, lay, states)));
 	if (failure !== undefined) throw new BasepadError(failure);
+	if (afterUp !== undefined) throw afterUp;
 }
 
 const firstLine = (text: string) => text.split("\n")[0] ?? text;
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 async function startApps(
 	supervisor: Supervisor,
@@ -646,6 +678,13 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 	const apps = Object.keys(project.apps);
 	const own = ownServers(lay);
 	const mains = Object.keys(project.services).filter((key) => !own.includes(key));
+	const hook = (name: "beforeDown" | "afterDown") =>
+		runHook(project, name, {
+			environment: suffix,
+			say: print,
+			warn: (line) => console.error(`basepad: ${line}`),
+		});
+	await hook("beforeDown");
 	const landed = process.stdout.isTTY
 		? await startLanding(project.name, suffix, [...apps, ...own], mains)
 		: undefined;
@@ -658,6 +697,7 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 	}
 	if (landed !== undefined) {
 		await landed.land();
+		await hook("afterDown");
 		return;
 	}
 	const names = (keys: string[]) => keys.map((key) => `\`${key}\``).join(", ");
@@ -666,6 +706,7 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 			? `Stopped ${project.name}'s apps and services.`
 			: `Stopped worktree ${suffix}'s apps${own.length > 0 ? ` and ${names(own)}` : ""}.${mains.length > 0 ? ` ${names(mains)} ${mains.length > 1 ? "run" : "runs"} on main's and keep${mains.length > 1 ? "" : "s"} running.` : ""}`,
 	);
+	await hook("afterDown");
 }
 
 async function startLanding(

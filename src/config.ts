@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { FACTORIES, SCHEMAS, type Service } from "./catalogue.ts";
+import { HOOK_NAMES, type HookName } from "./hooks.ts";
 import type { App, Config, EnvFiles, Outputs } from "./index.ts";
 import { BasepadError } from "./internal/exec.ts";
 
@@ -25,6 +26,7 @@ export interface Project {
 		clone: string[];
 		setup: string[];
 	};
+	hooks: Partial<Record<HookName, string[]>>;
 }
 
 export async function loadProject(cwd: string): Promise<Project> {
@@ -70,6 +72,12 @@ export async function loadProject(cwd: string): Promise<Project> {
 			setup: config.worktrees?.setup ?? [],
 			...(config.worktrees?.dir === undefined ? {} : { dir: resolve(root, config.worktrees.dir) }),
 		},
+		hooks: Object.fromEntries(
+			Object.entries(config.hooks ?? {}).map(([name, commands]) => [
+				name,
+				typeof commands === "string" ? [commands] : commands,
+			]),
+		),
 	};
 }
 
@@ -152,6 +160,10 @@ const AppSchema = z.strictObject({
 		.optional(),
 });
 
+const HOOK = "a hook is a shell command or a list of them";
+const hookCommand = z.string({ error: HOOK }).min(1, HOOK);
+const HookSchema = z.union([hookCommand, z.array(hookCommand)], { error: HOOK });
+
 const ConfigSchema = z
 	.strictObject({
 		name: label,
@@ -195,6 +207,9 @@ const ConfigSchema = z
 					)
 					.optional(),
 			})
+			.optional(),
+		hooks: z
+			.strictObject(Object.fromEntries(HOOK_NAMES.map((name) => [name, HookSchema.optional()])))
 			.optional(),
 	})
 	.superRefine((config, ctx) => {
