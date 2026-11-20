@@ -40,8 +40,8 @@ postgres = "github:aysnc-labs/prebuilt-binaries[version_prefix=postgres-]"
 neon-proxy = "github:aysnc-labs/prebuilt-binaries[version_prefix=neon-proxy-]"
 
 [tools]
-postgres = "18.7-1"
-neon-proxy = "8853"
+postgres = "18.7-3"
+neon-proxy = "8853-1"
 `,
 	);
 	const status = await box.basepad(dir, "status");
@@ -65,7 +65,7 @@ test("a project whose mise config has no Redis gets the prebuilt Redis lines", a
 redis = "github:aysnc-labs/prebuilt-binaries[version_prefix=redis-]"
 
 [tools]
-redis = "8.10.3"
+redis = "8.10.3-1"
 `,
 	);
 	expect((await box.basepad(dir, "status")).stdout).toMatch(/^cache +\S+ +stopped$/m);
@@ -74,7 +74,7 @@ redis = "8.10.3"
 test("a project whose mise config has no Mailpit gets the Mailpit line", async () => {
 	const dir = await box.project("no-mailpit", {
 		"basepad.config.ts": configFile(`{ name: "tools-no-mailpit", services: { mail: mailpit() } }`),
-		"mise.toml": '[tools]\n"conda:redis-server" = "8.10.3"\n',
+		"mise.toml": "[tools]\n",
 	});
 
 	const up = await box.basepad(dir, "up", "-d");

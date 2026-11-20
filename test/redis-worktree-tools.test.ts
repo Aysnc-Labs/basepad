@@ -45,7 +45,7 @@ test("a worktree's own Redis runs the redis-server its own mise config gives", a
 	await git(main, "worktree", "add", "--quiet", "-b", "older", tree);
 	await writeFile(
 		join(tree, "mise.toml"),
-		MISE_TOML.replace('"conda:redis-server" = "8.10.3"', '"conda:redis-server" = "8.10.2"'),
+		MISE_TOML.replace('redis = "8.10.3-1"', '"conda:redis-server" = "8.10.2"'),
 	);
 
 	const mainUp = await box.basepad(main, "up", "-d");
