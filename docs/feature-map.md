@@ -11,7 +11,7 @@ A feature is anything a user starts from: an import, a config key, a command or 
 
 ```mermaid
 flowchart LR
-  CLI["basepad (launcher, cli)"] --> Commands["commands: init, up, down, status, setup, worktree add, ls, rm, prune, db save, load, snapshots, rm, import, export"]
+  CLI["basepad (launcher, cli)"] --> Commands["commands: up, down, status, setup, worktree add, ls, rm, prune, db save, load, snapshots, rm, import, export"]
   Commands --> Worktrees["worktrees"]
   Worktrees -- "git" --> Git["git"]
   Commands --> Config["config: basepad.config.ts"]
@@ -25,7 +25,7 @@ flowchart LR
   MissionControl --> Worktrees
   MissionControl -- "worktree add, rm" --> Commands
   Commands --> EnvFiles["env files"]
-  Supervisor -- "mise exec" --> Pitchfork["pitchfork (isolated)"]
+  Supervisor -- "runs" --> Pitchfork["pitchfork (isolated)"]
   Catalogue --> Tools
   Supervisor --> Tools
   Tools -- "exec" --> Mise["mise"]
@@ -47,22 +47,16 @@ Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 
 ### The `basepad` command
 
-Purpose: runs basepad on mise's Node 24 whatever the project's Node, checks the mise floor, and dispatches commands and help from one table.
+Purpose: runs basepad on mise's Node 24 whatever the project's Node (from basepad's home, so mise never trusts the project's config), checks the mise floor, and dispatches commands and help from one table.
 Entry: `basepad`, `basepad <command> --help`
-Paths: src/launcher.ts, src/cli.ts, src/versions.ts, src/internal/exec.ts, src/internal/files.ts, src/internal/table.ts
-
-### `basepad init`
-
-Purpose: writes a starter config named from the folder, ignores the local file, adds basepad as a devDependency.
-Entry: `basepad init`
-Paths: src/init.ts
+Paths: src/launcher.ts, src/cli.ts, src/home.ts, src/versions.ts, src/internal/exec.ts, src/internal/files.ts, src/internal/table.ts
 
 ### `basepad up`, `down` and `status`
 
 Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.localhost`, starts services, sets the env keys the config names; stops them (on a terminal, the landing in `src/mission-control/launch.ts` shows them coming down); shows their state.
 Entry: `basepad up [-d] [--claim]`, `basepad down`, `basepad status`
 Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts, src/internal/processes.ts, src/mission-control/launch.ts, src/tls.ts
-Decisions: [0001](adr/0001-config-is-the-only-interface.md)
+Decisions: [0001](adr/0001-config-is-the-only-interface.md), [0003](adr/0003-services-run-the-projects-mise-tools.md)
 
 ### Mission control
 
@@ -99,12 +93,6 @@ Paths: src/commands.ts, src/catalogue.ts, src/catalogue/postgres.ts
 Purpose: one-time machine setup: trusts basepad's CA, and on Linux makes URLs port-free; adds domains to `/etc/hosts` where `*.localhost` doesn't resolve. On a terminal, its plan is a checklist beside a rocket on its pad (`launch.ts`), which lifts off once URLs are port-free.
 Entry: `basepad setup [--dry-run] [--yes]`
 Paths: src/setup.ts, src/hosts.ts, src/mission-control/launch.ts
-
-### Port 443 on macOS
-
-Purpose: port-free URLs on macOS with no privilege and no pf (pf turns off iCloud Private Relay): `serve` starts a forwarder on the wildcard address's port 443 that passes connections from this Mac to the proxy, refuses the network's, and stops with the supervisor. Off when `BASEPAD_PROXY_PORT` is set, or something else answers on 443.
-Entry: `basepad up` on macOS
-Paths: src/forward.ts, src/supervisor.ts, src/layout.ts
 
 ### Port 443 on macOS
 
