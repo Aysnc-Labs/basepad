@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
@@ -10,6 +11,14 @@ beforeAll(async () => {
 	box = await sandbox();
 });
 afterAll(() => box?.dispose());
+
+const notCi = {
+	CI: undefined,
+	CONTINUOUS_INTEGRATION: undefined,
+	GITHUB_ACTIONS: undefined,
+	BUILD_NUMBER: undefined,
+	RUN_ID: undefined,
+};
 
 const git = (cwd: string, ...args: string[]) =>
 	promisify(execFile)("git", args, {
@@ -22,6 +31,32 @@ const git = (cwd: string, ...args: string[]) =>
 			GIT_COMMITTER_EMAIL: "t@example.com",
 		},
 	});
+
+test("`down` runs no hook through an untrusted mise config, and trusts nothing", async () => {
+	const dir = await box.project("untrusted-down", {
+		"basepad.config.ts": configFile(`{
+			name: "t67untrusteddown",
+			hooks: { beforeDown: "touch hooked", afterDown: "touch hooked" },
+		}`),
+		"mise.toml": `${MISE_TOML}\n[env]\nRAN = "{{ exec(command='touch from-mise && echo x') }}"\n`,
+	});
+
+	const down = await box.basepadWith(
+		{ env: { ...notCi, MISE_TRUSTED_CONFIG_PATHS: undefined } },
+		dir,
+		"down",
+	);
+
+	expect(down.code).toBe(0);
+	expect(down.stderr).toContain(`basepad: mise doesn't trust the mise config at ${dir}`);
+	expect(down.stderr).toContain("Skipping beforeDown.");
+	expect(down.stderr).toContain("Skipping afterDown.");
+
+	expect(existsSync(join(dir, "from-mise"))).toBe(false);
+	expect(existsSync(join(dir, "hooked"))).toBe(false);
+	const trusted = join(box.env.MISE_STATE_DIR as string, "trusted-configs");
+	expect(existsSync(trusted) ? await readdir(trusted) : []).toEqual([]);
+}, 120_000);
 
 test("a Remove hook sees the worktree's env file keys even when main's mise config loads main's env file", async () => {
 	const main = await box.project("t67rmkeys", {

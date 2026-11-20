@@ -6,6 +6,7 @@ import type { Project } from "./config.ts";
 import { valuesOf } from "./env-files.ts";
 import { BasepadError } from "./internal/exec.ts";
 import { throughMise } from "./internal/mise.ts";
+import { trustedIn } from "./tools.ts";
 
 export const HOOK_EVENTS = [
 	"Create",
@@ -41,6 +42,13 @@ export function hooksOf(project: Project, run: HookRun): RunHook {
 	return async (name) => {
 		const commands = project.hooks[name] ?? [];
 		if (commands.length === 0) return;
+		try {
+			await trustedIn(project.root);
+		} catch (error) {
+			if (run.warnOnly !== true || !(error instanceof BasepadError)) throw error;
+			console.error(`basepad: ${error.message}\nSkipping ${name}.`);
+			return;
+		}
 		const env = {
 			...(await envFileKeys(project, run.keysFrom ?? project.root)),
 			...run.variables,
