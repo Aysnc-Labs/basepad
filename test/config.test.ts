@@ -161,7 +161,7 @@ describe("errors name the file and key, with no stack", () => {
 		const out = await box.basepad(dir, "status");
 		expect(out.code).toBe(1);
 		expect(out.stderr).toBe(
-			`basepad: No basepad.config.ts in ${dir} or any folder above it. Run \`basepad init\` to write one.\n`,
+			`basepad: No basepad.config.ts in ${dir} or any folder above it. Create one: https://github.com/Aysnc-Labs/basepad/blob/main/docs/guide.md#a-first-project\n`,
 		);
 	});
 

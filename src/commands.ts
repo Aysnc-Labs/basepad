@@ -16,8 +16,8 @@ import { CONFIG_FILE, LABEL, loadProject, type Project } from "./config.ts";
 import { copyEnvFiles, writeEnvFiles } from "./env-files.ts";
 import { dropHosts, syncHosts } from "./hosts.ts";
 import type { EnvFiles } from "./index.ts";
-import { init } from "./init.ts";
 import { BasepadError, shellQuote } from "./internal/exec.ts";
+import { throughMise } from "./internal/mise.ts";
 import { Stopped } from "./internal/ports.ts";
 import { table } from "./internal/table.ts";
 import {
@@ -88,11 +88,6 @@ const SERVICE_FLAG: Flag = {
 };
 
 export const COMMANDS: Record<string, Command> = {
-	init: {
-		summary: `Write a starter ${CONFIG_FILE} in this folder`,
-		flags: {},
-		run: init,
-	},
 	setup: {
 		summary: "Once per machine: trust basepad's certificate and drop the port from URLs",
 		flags: {
@@ -288,10 +283,11 @@ async function ready(
 		const run = withLocalBins(project, app.cwd, app.run);
 		const port = ports.apps[key]?.port;
 		daemons[key] = {
-			run:
+			run: throughMise(
 				app.domain === false
 					? `export BASEPAD_TLS_CERT=${shellQuote(tls.cert)} BASEPAD_TLS_KEY=${shellQuote(tls.key)} && ${run}`
 					: run,
+			),
 			dir: app.cwd,
 			port,
 			...(app.domain === false ? { proxy: false as const } : {}),
