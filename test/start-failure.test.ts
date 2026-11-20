@@ -28,3 +28,24 @@ test("a program missing several glibc versions names the highest", () => {
 		/^`db-neon-proxy` needs glibc 2\.39 or newer \(Ubuntu 24\.04, Debian 13\), and this system's is older\./,
 	);
 });
+
+test("a service names the program that failed to start", () => {
+	const program = "/root/.local/share/mise/installs/postgres/18.7-1/bin/postgres";
+	expect(startFailure("db", ["FATAL: boom"], LOGS, program)).toBe(
+		`\`db\` exited on start. Its last output:\n  FATAL: boom\nIts program: ${program}\nFor more, run: ${LOGS}`,
+	);
+});
+
+test("the glibc advice knows Debian 13 and Ubuntu 26.04, and still names an unknown glibc", () => {
+	const missing = (version: string) =>
+		`/opt/redis-server: /lib/x86_64-linux-gnu/libc.so.6: version \`GLIBC_${version}' not found (required by /opt/redis-server)`;
+	const why = (version: string) =>
+		startFailure("cache", [missing(version)], LOGS).split(" Its last")[0];
+	expect(why("2.41")).toBe(
+		"`cache` needs glibc 2.41 or newer (Debian 13, Ubuntu 26.04), and this system's is older.",
+	);
+	expect(why("2.43")).toBe(
+		"`cache` needs glibc 2.43 or newer (Ubuntu 26.04), and this system's is older.",
+	);
+	expect(why("2.47")).toBe("`cache` needs glibc 2.47 or newer, and this system's is older.");
+});

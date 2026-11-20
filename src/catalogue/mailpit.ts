@@ -73,6 +73,7 @@ export const mailpitKind: Kind<MailpitService, MailpitOutputs, MailpitNames> = {
 		return {
 			[place.daemon]: {
 				run: `${recordRunning(place.pid, smtp)} && exec ${argv.map(shellQuote).join(" ")} --listen "${HOST}:$PORT"`,
+				program: bin,
 				dir: place.dir,
 				port: webOf(place).port,
 			},
