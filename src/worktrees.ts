@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, realpath, stat } from "node:fs/promises";
-import { basename, dirname, join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { CONFIG_FILE, type Project } from "./config.ts";
 import { BasepadError, exec, must } from "./internal/exec.ts";
-import { nextSuffix, worktreeFolder } from "./layout.ts";
+import { nextSuffix, worktreeFolder, worktreeSuffix } from "./layout.ts";
 
 export type Checkout =
 	| { suffix?: undefined }
@@ -17,7 +17,7 @@ export async function checkoutOf(root: string): Promise<Checkout> {
 	if (top === undefined) return {};
 	const [first] = await checkoutsOf(top);
 	if (first === undefined || first.path === top) return {};
-	return { suffix: basename(top), main: join(first.path, relative(top, root)) };
+	return { suffix: worktreeSuffix(top), main: join(first.path, relative(top, root)) };
 }
 
 export function checkedOut(suffix: string, root: string): string {
@@ -47,7 +47,7 @@ export async function checkOutWorktree(
 		.split("\n")
 		.filter(Boolean);
 	const folders = existsSync(dir) ? await readdir(dir) : [];
-	const checkouts = (await checkoutsOf(top)).map(({ path }) => basename(path));
+	const checkouts = (await checkoutsOf(top)).map(({ path }) => worktreeSuffix(path));
 	const suffix = nextSuffix(main.worktrees.prefix, [...branches, ...folders, ...checkouts]);
 	const path = worktreeFolder(main, top, suffix);
 	const on = branch ?? suffix;
@@ -97,25 +97,6 @@ async function copyOnWrite(args: string[]): Promise<void> {
 	await must("cp", [clone, "-R", ...args]);
 }
 
-export async function runSetup(
-	dir: string,
-	commands: string[],
-	say: (line: string) => void,
-): Promise<void> {
-	const env = { ...process.env };
-	if (env.BASEPAD_PATH) env.PATH = env.BASEPAD_PATH;
-	delete env.BASEPAD_PATH;
-	for (const command of commands) {
-		say(`Running \`${command}\``);
-		const out = await exec("sh", ["-c", command], { cwd: dir, env });
-		if (out.code === 0) continue;
-		const output = `${out.stdout}${out.stderr}`.trimEnd();
-		throw new BasepadError(
-			`Setup command \`${command}\` failed (exit ${out.code}). Its output:\n${(output || "(none)").replace(/^/gm, "  ")}`,
-		);
-	}
-}
-
 export interface Listed {
 	suffix: string;
 	path: string;
@@ -128,7 +109,7 @@ export async function listWorktrees(main: Project): Promise<Listed[]> {
 	const top = await toplevel(main.root);
 	if (top === undefined) return [];
 	return (await checkoutsOf(top)).slice(1).map(({ path, branch }) => ({
-		suffix: basename(path),
+		suffix: worktreeSuffix(path),
 		path,
 		root: join(path, relative(top, main.root)),
 		...(branch === undefined ? {} : { branch }),
@@ -140,6 +121,11 @@ export async function mainBranch(main: Project): Promise<string | undefined> {
 	const top = await toplevel(main.root);
 	if (top === undefined) return undefined;
 	return (await checkoutsOf(top))[0]?.branch;
+}
+
+export async function configDirOf(main: Project): Promise<string> {
+	const top = await toplevel(main.root);
+	return top === undefined ? "" : relative(top, main.root);
 }
 
 export async function hasChanges(path: string): Promise<boolean> {

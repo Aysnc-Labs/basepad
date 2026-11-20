@@ -14,10 +14,11 @@ import {
 import { readHookInput } from "./claude-hooks.ts";
 import { CONFIG_FILE, LABEL, loadProject, type Project } from "./config.ts";
 import { copyEnvFiles, writeEnvFiles } from "./env-files.ts";
+import { hooksOf } from "./hooks.ts";
 import { dropHosts, syncHosts } from "./hosts.ts";
 import type { EnvFiles } from "./index.ts";
-import { init } from "./init.ts";
 import { BasepadError, shellQuote } from "./internal/exec.ts";
+import { throughMise } from "./internal/mise.ts";
 import { Stopped } from "./internal/ports.ts";
 import { table } from "./internal/table.ts";
 import {
@@ -39,7 +40,10 @@ import {
 	servicesHome,
 	suffixOf,
 	supervisorPaths,
+	worktreeSuffix,
 } from "./layout.ts";
+import { hookLog } from "./mission-control/feed.ts";
+import { hooksId } from "./mission-control/model.ts";
 import { setup, trustAsRoot } from "./setup.ts";
 import {
 	type Daemon,
@@ -49,16 +53,17 @@ import {
 	startFailure,
 } from "./supervisor.ts";
 import { ensureLocalhostCertificate } from "./tls.ts";
+import { programsIn, trustedIn } from "./tools.ts";
 import {
 	checkedOut,
 	checkOutWorktree,
 	checkoutOf,
 	clonePaths,
+	configDirOf,
 	hasChanges,
 	type Listed,
 	listWorktrees,
 	removeCheckout,
-	runSetup,
 } from "./worktrees.ts";
 
 export interface Flag {
@@ -88,11 +93,6 @@ const SERVICE_FLAG: Flag = {
 };
 
 export const COMMANDS: Record<string, Command> = {
-	init: {
-		summary: `Write a starter ${CONFIG_FILE} in this folder`,
-		flags: {},
-		run: init,
-	},
 	setup: {
 		summary: "Once per machine: trust basepad's certificate and drop the port from URLs",
 		flags: {
@@ -250,10 +250,21 @@ interface Context {
 	print(line: string): void;
 }
 
+type ReadyOptions = { start?: (key: string) => boolean };
+
 async function ready(
 	environment: Environment,
 	context: Context,
-	{ start = () => true }: { start?: (key: string) => boolean } = {},
+	options: ReadyOptions = {},
+): Promise<Layout> {
+	await checkTools(environment, context.here);
+	return readyOnceChecked(environment, context, options);
+}
+
+async function readyOnceChecked(
+	environment: Environment,
+	context: Context,
+	{ start = () => true }: ReadyOptions = {},
 ): Promise<Layout> {
 	const { project, suffix, main } = environment;
 	const { here, supervisor, print } = context;
@@ -265,16 +276,13 @@ async function ready(
 			`"${ports.namespace}" is the name of the checkout at ${owner}. Two checkouts under one name would share its databases and domains, so basepad stops here.\nIf that checkout moved here, or this one should take over, run \`basepad up --claim\`.`,
 		);
 	}
-	const missing = services.filter((key) => main !== undefined && !(key in main.services));
-	if (missing.length > 0) {
-		throw new BasepadError(
-			`This worktree's config has ${missing.map((key) => `\`${key}\``).join(", ")}, which main's has not. A worktree's services run on main's servers: add ${missing.length > 1 ? "them" : "it"} to main's config and run \`basepad up\` there first.`,
-		);
-	}
 	const daemons: Record<string, Daemon> = {};
 	for (const key of ownServers(ports)) {
 		const service = project.services[key] as Service;
-		const prepared = await kindOf(service).prepare(service, placeOf(project, ports, here, key));
+		const prepared = await kindOf(service).prepare(
+			service,
+			placeOf(project, ports, here, key, main?.root),
+		);
 		for (const id of daemonsOf(ports.services[key] as ServicePlace)) {
 			const daemon = prepared[id];
 			if (daemon === undefined) throw new Error(`\`${key}\`'s kind prepared no daemon ${id}.`);
@@ -287,11 +295,12 @@ async function ready(
 	for (const [key, app] of Object.entries(project.apps)) {
 		const run = withLocalBins(project, app.cwd, app.run);
 		const port = ports.apps[key]?.port;
+		const portName = port === undefined ? [] : ["PORT"];
 		daemons[key] = {
 			run:
 				app.domain === false
-					? `export BASEPAD_TLS_CERT=${shellQuote(tls.cert)} BASEPAD_TLS_KEY=${shellQuote(tls.key)} && ${run}`
-					: run,
+					? `export BASEPAD_TLS_CERT=${shellQuote(tls.cert)} BASEPAD_TLS_KEY=${shellQuote(tls.key)} && ${throughMise(run, [...portName, "BASEPAD_TLS_CERT", "BASEPAD_TLS_KEY"])}`
+					: throughMise(run, portName),
 			dir: app.cwd,
 			port,
 			...(app.domain === false ? { proxy: false as const } : {}),
@@ -332,6 +341,7 @@ async function ready(
 	const outputs: Record<string, unknown> = {};
 	const own = ownServers(lay);
 	const runsIn = (key: string) => (own.includes(key) ? lay.namespace : lay.mainNamespace);
+	const ownDaemons = (namespace: string) => (namespace === ports.namespace ? daemons : {});
 	const placeAt = (key: string) => lay.services[key] as ServicePlace;
 	const serverOf = (key: string) => ofDaemon(placeAt(key).daemon).name;
 	const started = services.filter((key) => runsIn(key) === lay.mainNamespace || start(key));
@@ -347,24 +357,32 @@ async function ready(
 		const states = await supervisor.start(namespace, names, APP_WAIT_MS, hosts);
 		const failed = names.filter((name) => states[name] === "failed");
 		if (failed.length > 0)
-			throw new BasepadError(await failures(supervisor, namespace, failed, since));
+			throw new BasepadError(
+				await failures(supervisor, namespace, failed, since, ownDaemons(namespace)),
+			);
 	}
 	for (const key of services) {
 		const service = project.services[key] as Service;
 		const namespace = runsIn(key);
 		try {
-			outputs[key] = await kindOf(service).provision(service, placeOf(project, lay, here, key), {
-				claim: context.claim,
-				started: started.includes(key),
-				print,
-				stopped: async () => {
-					const state = (await supervisor.status(namespace))[serverOf(key)];
-					return state === "failed" || state === "stopped";
+			outputs[key] = await kindOf(service).provision(
+				service,
+				placeOf(project, lay, here, key, main?.root),
+				{
+					claim: context.claim,
+					started: started.includes(key),
+					print,
+					stopped: async () => {
+						const state = (await supervisor.status(namespace))[serverOf(key)];
+						return state === "failed" || state === "stopped";
+					},
 				},
-			});
+			);
 		} catch (error) {
 			if (!(error instanceof Stopped)) throw error;
-			throw new BasepadError(await failures(supervisor, namespace, [serverOf(key)], since));
+			throw new BasepadError(
+				await failures(supervisor, namespace, [serverOf(key)], since, ownDaemons(namespace)),
+			);
 		}
 	}
 	for (const [key, app] of Object.entries(lay.apps)) {
@@ -374,6 +392,40 @@ async function ready(
 	if (main !== undefined) await copyEnvFiles(main.root, project.root, Object.keys(files));
 	await writeEnvFiles(project.root, files);
 	return lay;
+}
+
+async function checkTools(environment: Environment, here: Machine): Promise<void> {
+	const { project, suffix, main } = environment;
+	await trustedIn(project.root);
+	if (main === undefined) return;
+	const missing = Object.keys(project.services).filter((key) => !(key in main.services));
+	if (missing.length > 0) {
+		throw new BasepadError(
+			`This worktree's config has ${missing.map((key) => `\`${key}\``).join(", ")}, which main's has not. A worktree's services run on main's servers: add ${missing.length > 1 ? "them" : "it"} to main's config and run \`basepad up\` there first.`,
+		);
+	}
+	await sameProgramsAsMain(project, main, layout(project, here, suffix));
+}
+
+async function sameProgramsAsMain(project: Project, main: Project, ports: Layout): Promise<void> {
+	const own = ownServers(ports);
+	for (const key of Object.keys(project.services).filter((key) => !own.includes(key))) {
+		const service = project.services[key] as Service;
+		const needed = kindOf(service).programs(service);
+		const [here, there] = await Promise.all([
+			programsIn(project.root, needed),
+			programsIn(main.root, needed),
+		]);
+		const differ = Object.keys(needed).filter((program) => here[program] !== there[program]);
+		if (differ.length === 0) continue;
+		const lines = differ.flatMap((program) => [
+			`  \`${program}\` in this worktree: ${here[program]}`,
+			`  \`${program}\` in main: ${there[program]}`,
+		]);
+		throw new BasepadError(
+			`This worktree's \`${key}\` runs on main's server, but its mise config resolves other programs than main's:\n${lines.join("\n")}\nOne server runs one build. To try another, change main's mise.toml and run \`basepad up\` in main; or undo the change to this worktree's mise.toml.`,
+		);
+	}
 }
 
 async function stopOrphans(
@@ -416,11 +468,21 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const { project } = environment;
 	const context = await open(environment, flags, print);
 	const { supervisor, here } = context;
-	const lay = await ready(environment, context);
+	const lay = await readyOrCreate(environment, context, print);
+	const hook = hooksOf(project, { environment: environment.suffix, say: print });
+	await hook("beforeUp");
 	const { states, failure } = await startApps(supervisor, project, lay);
+	const afterUp = failure === undefined ? await failureOf(hook("afterUp")) : undefined;
 	print(await stateTables(environment, lay, here, await withServices(supervisor, lay, states)));
 	if (failure !== undefined) throw new BasepadError(failure);
+	if (afterUp !== undefined) throw afterUp;
 }
+
+const failureOf = (running: Promise<void>): Promise<unknown> =>
+	running.then(
+		() => undefined,
+		(error: unknown) => error,
+	);
 
 async function upOnTerminal(
 	environment: Environment,
@@ -433,33 +495,46 @@ async function upOnTerminal(
 	const held: string[] = [];
 	const say = (line: string) => held.push(line);
 	const supervisor = await openSupervisor(here, say);
+	const selected = layout(project, here, environment.suffix).namespace;
+	const hooksRow = hookLog(hooksId(selected));
+	const sayAndLog = (line: string) => {
+		say(line);
+		hooksRow.say(line);
+	};
+	const hook = hooksOf(project, { environment: environment.suffix, say: sayAndLog });
 	let served = here;
 	let outcome: { lay: Layout; states: Record<string, DaemonState>; failure?: string } | undefined;
+	let afterUp: unknown;
 	let error: unknown;
 	let notice: string | undefined;
 	const readying = (async () => {
 		const context = await open(environment, flags, say, supervisor);
-		const lay = await ready(environment, { ...context, print: say });
+		const lay = await readyOrCreate(environment, { ...context, print: say }, sayAndLog);
 		served = await machineWithPortFree(here, supervisor);
+		await hook("beforeUp");
 		outcome = { lay, ...(await startApps(supervisor, project, lay)) };
 		if (outcome.failure !== undefined) {
 			const failed = Object.keys(project.apps).filter((key) => outcome?.states[key] === "failed");
 			notice = `${failed.map((key) => `\`${key}\``).join(", ")} exited on start; ${failed.length > 1 ? "their" : "its"} output is in the logs.`;
+			return;
 		}
+		afterUp = await failureOf(hook("afterUp"));
+		if (afterUp !== undefined) notice = firstLine(messageOf(afterUp));
 	})().catch((caught: unknown) => {
 		error = caught;
-		notice = firstLine(caught instanceof Error ? caught.message : String(caught));
+		notice = firstLine(messageOf(caught));
 	});
 	await missionControl({
 		main: environment.main ?? project,
 		machine: () => served,
 		supervisor,
 		failure: () => {
-			const told = notice;
+			const shown = notice;
 			notice = undefined;
-			return told;
+			return shown;
 		},
-		selected: layout(project, here, environment.suffix).namespace,
+		hookLog: hooksRow,
+		selected,
 		basepad: [process.execPath, ...process.execArgv, process.argv[1] as string],
 	});
 	if (outcome === undefined && error === undefined) print("Still starting; finishing…");
@@ -470,9 +545,65 @@ async function upOnTerminal(
 	const { lay, states, failure } = outcome;
 	print(await stateTables(environment, lay, here, await withServices(supervisor, lay, states)));
 	if (failure !== undefined) throw new BasepadError(failure);
+	if (afterUp !== undefined) throw afterUp;
+}
+
+async function readyOrCreate(
+	environment: Environment,
+	context: Context,
+	say: (line: string) => void,
+): Promise<Layout> {
+	const { project, suffix } = environment;
+	if (
+		suffix !== undefined &&
+		(await context.supervisor.owner(namespaceOf(project.name, suffix))) === undefined
+	) {
+		return create(environment, suffix, context, say);
+	}
+	return ready(environment, context);
+}
+
+async function create(
+	environment: Environment,
+	suffix: string,
+	context: Context,
+	say: (line: string) => void,
+	{
+		start,
+		before = async () => {},
+	}: { start?: (key: string) => boolean; before?: () => Promise<void> } = {},
+): Promise<Layout> {
+	const tree = { suffix, root: environment.project.root };
+	const hook = hooksOf(environment.project, { environment: suffix, say });
+	const lay = await keptOnFailure(tree, UP_THERE, async () => {
+		await before();
+		await checkTools(environment, context.here);
+		await hook("beforeCreate");
+		return readyOnceChecked(environment, context, start === undefined ? {} : { start });
+	});
+	await keptOnFailure(tree, "run the rest of `afterCreate` there", () => hook("afterCreate"));
+	return lay;
+}
+
+const UP_THERE = "run `basepad up` there";
+
+async function keptOnFailure<T>(
+	tree: Pick<Listed, "suffix" | "root">,
+	then: string,
+	step: () => Promise<T>,
+): Promise<T> {
+	try {
+		return await step();
+	} catch (error) {
+		if (!(error instanceof BasepadError)) throw error;
+		throw new BasepadError(
+			`${error.message}\n${checkedOut(tree.suffix, tree.root)}; once that is fixed, ${then}.`,
+		);
+	}
 }
 
 const firstLine = (text: string) => text.split("\n")[0] ?? text;
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 async function startApps(
 	supervisor: Supervisor,
@@ -507,30 +638,16 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	await ready({ project: main }, context);
 	const requested = input?.name ?? (typeof flags.branch === "string" ? flags.branch : undefined);
 	const { suffix, branch, root } = await checkOutWorktree(main, requested);
-	const kept = checkedOut(suffix, root);
-	say(`${kept}.`);
-	let environment: Environment;
-	let lay: Layout;
-	try {
-		environment = await environmentAt(root);
-		const { project } = environment;
-		for (const note of await clonePaths(main.root, project.root, project.worktrees.clone))
-			say(note);
-		lay = await ready(environment, context, { start: () => flags.start === true });
-	} catch (error) {
-		if (!(error instanceof BasepadError)) throw error;
-		throw new BasepadError(
-			`${error.message}\n${kept}; once that is fixed, run \`basepad up\` there.`,
-		);
-	}
-	try {
-		await runSetup(environment.project.root, environment.project.worktrees.setup, say);
-	} catch (error) {
-		if (!(error instanceof BasepadError)) throw error;
-		throw new BasepadError(
-			`${error.message}\n${kept}; once that is fixed, run the rest of \`worktrees.setup\` there.`,
-		);
-	}
+	say(`${checkedOut(suffix, root)}.`);
+	const environment = await keptOnFailure({ suffix, root }, UP_THERE, () => environmentAt(root));
+	const lay = await create(environment, suffix, context, say, {
+		start: () => flags.start === true,
+		before: async () => {
+			const { project } = environment;
+			for (const note of await clonePaths(main.root, project.root, project.worktrees.clone))
+				say(note);
+		},
+	});
 	const { states, failure } =
 		flags.start === true
 			? await startApps(context.supervisor, environment.project, lay)
@@ -633,11 +750,13 @@ async function failures(
 	namespace: string,
 	failed: string[],
 	since: Date,
+	daemons: Record<string, Daemon> = {},
 ): Promise<string> {
 	const parts: string[] = [];
 	for (const key of failed) {
 		const lines = await supervisor.logs(namespace, key, since, FAILED_LINES);
-		parts.push(startFailure(key, lines, supervisor.logsCommand(namespace, key)));
+		const logs = supervisor.logsCommand(namespace, key);
+		parts.push(startFailure(key, lines, logs, daemons[key]?.program));
 	}
 	return parts.join("\n");
 }
@@ -650,6 +769,8 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 	const apps = Object.keys(project.apps);
 	const own = ownServers(lay);
 	const mains = Object.keys(project.services).filter((key) => !own.includes(key));
+	const hook = hooksOf(project, { environment: suffix, say: print, warnOnly: true });
+	await hook("beforeDown");
 	const landed = process.stdout.isTTY
 		? await startLanding(project.name, suffix, [...apps, ...own], mains)
 		: undefined;
@@ -662,6 +783,7 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 	}
 	if (landed !== undefined) {
 		await landed.land();
+		await hook("afterDown");
 		return;
 	}
 	const names = (keys: string[]) => keys.map((key) => `\`${key}\``).join(", ");
@@ -670,6 +792,7 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 			? `Stopped ${project.name}'s apps and services.`
 			: `Stopped worktree ${suffix}'s apps${own.length > 0 ? ` and ${names(own)}` : ""}.${mains.length > 0 ? ` ${names(mains)} ${mains.length > 1 ? "run" : "runs"} on main's and keep${mains.length > 1 ? "" : "s"} running.` : ""}`,
 	);
+	await hook("afterDown");
 }
 
 async function startLanding(
@@ -822,11 +945,28 @@ async function removeWorktree(
 ): Promise<void> {
 	const context = await open({ project: main }, {}, print);
 	await ready({ project: main }, context);
+	const hook = removeHook(main, tree, print);
+	await hook("beforeRemove");
 	await removeEnvironment(main, tree.suffix, tree.root, context);
 	await removeCheckout(main, tree.path);
+	await hook("afterRemove");
 	print(
 		`Removed worktree ${tree.suffix}: its apps, databases and git worktree.${tree.branch === undefined ? "" : ` Its branch ${tree.branch} is kept.`}`,
 	);
+}
+
+function removeHook(
+	main: Project,
+	tree: Pick<Listed, "suffix" | "root">,
+	say: (line: string) => void,
+) {
+	return hooksOf(main, {
+		environment: tree.suffix,
+		say,
+		keysFrom: tree.root,
+		variables: { BASEPAD_WORKTREE: tree.root },
+		warnOnly: true,
+	});
 }
 
 async function removeEnvironment(
@@ -934,7 +1074,12 @@ async function prune({ cwd, flags, print }: Invocation): Promise<void> {
 		const yes = flags.yes === true || (await ask("Remove what worktrees left?"));
 		if (yes === undefined) unasked = true;
 		else if (yes) {
+			const hooks = leftoverWorktrees(main, left, await configDirOf(main)).map((tree) =>
+				removeHook(main, tree, print),
+			);
+			for (const hook of hooks) await hook("beforeRemove");
 			await removeLeftovers(main, left, context);
+			for (const hook of hooks) await hook("afterRemove");
 			print("Removed what worktrees left.");
 		} else print("Kept what worktrees left.");
 	}
@@ -960,6 +1105,24 @@ async function prune({ cwd, flags, print }: Invocation): Promise<void> {
 			"Nothing worktrees left was removed: there is no terminal to ask. Run `basepad prune --yes` to remove it.",
 		);
 	}
+}
+
+function leftoverWorktrees(
+	main: Project,
+	left: Leftovers,
+	configDir: string,
+): Pick<Listed, "suffix" | "root">[] {
+	const trees = new Map<string, string>();
+	for (const tree of left.checkouts) trees.set(tree.root, tree.suffix);
+	for (const { namespace, dir } of left.registrations) {
+		const suffix = suffixOf(main.name, namespace);
+		if (suffix !== undefined && !trees.has(dir)) trees.set(dir, suffix);
+	}
+	for (const { data } of left.data) {
+		for (const { owner } of data)
+			if (!trees.has(owner)) trees.set(owner, worktreeSuffix(owner, configDir));
+	}
+	return [...trees].map(([root, suffix]) => ({ root, suffix }));
 }
 
 async function removeLeftovers(main: Project, left: Leftovers, context: Context): Promise<void> {
@@ -1047,15 +1210,33 @@ async function readyFor(
 	const lay = await ready(environment, context, { start: (key) => keys.includes(key) });
 	return (service) => ({
 		...service,
-		place: placeOf(environment.project, lay, context.here, service.key),
+		place: placeOf(environment.project, lay, context.here, service.key, environment.main?.root),
 	});
 }
 
-async function databaseAt({ cwd, flags, print }: Invocation): Promise<DatabaseTarget> {
+async function databaseAt({
+	cwd,
+	flags,
+	print,
+}: Invocation): Promise<DatabaseTarget & { environment: Environment }> {
 	const { environment, services } = await databaseServicesAt(cwd);
 	const service = chosen(environment.project, services, flags.service);
 	const onServer = await readyFor(environment, print, [service]);
-	return onServer(service);
+	return { ...onServer(service), environment };
+}
+
+function dbHooks(
+	{ environment, key }: { environment: Environment; key: string },
+	event: "Save" | "Load" | "Delete" | "Import" | "Export",
+	say: (line: string) => void,
+	variables: Record<string, string>,
+) {
+	const hook = hooksOf(environment.project, {
+		environment: environment.suffix,
+		say,
+		variables: { BASEPAD_SERVICE: key, ...variables },
+	});
+	return (when: "before" | "after") => hook(`${when}${event}`);
 }
 
 function labelOf(args: string[]): string {
@@ -1070,23 +1251,32 @@ function labelOf(args: string[]): string {
 
 async function dbSave(invocation: Invocation): Promise<void> {
 	const label = labelOf(invocation.args);
-	const { key, service, place, database } = await databaseAt(invocation);
-	await database.save(service, place, label);
+	const target = await databaseAt(invocation);
+	const { key, service, place, database } = target;
+	const hook = dbHooks(target, "Save", invocation.print, { BASEPAD_LABEL: label });
+	await database.save(service, place, label, () => hook("before"));
 	invocation.print(`Saved \`${key}\` as snapshot ${label}.`);
+	await hook("after");
 }
 
 async function dbLoad(invocation: Invocation): Promise<void> {
 	const label = labelOf(invocation.args);
-	const { key, service, place, database } = await databaseAt(invocation);
-	await database.load(service, place, label);
+	const target = await databaseAt(invocation);
+	const { key, service, place, database } = target;
+	const hook = dbHooks(target, "Load", invocation.print, { BASEPAD_LABEL: label });
+	await database.load(service, place, label, () => hook("before"));
 	invocation.print(`Loaded snapshot ${label} into \`${key}\`.`);
+	await hook("after");
 }
 
 async function dbRm(invocation: Invocation): Promise<void> {
 	const label = labelOf(invocation.args);
-	const { key, service, place, database } = await databaseAt(invocation);
-	await database.remove(service, place, label);
+	const target = await databaseAt(invocation);
+	const { key, service, place, database } = target;
+	const hook = dbHooks(target, "Delete", invocation.print, { BASEPAD_LABEL: label });
+	await database.remove(service, place, label, () => hook("before"));
 	invocation.print(`Deleted snapshot ${label} of \`${key}\`.`);
+	await hook("after");
 }
 
 async function dbSnapshots({ cwd, print }: Invocation): Promise<void> {
@@ -1124,22 +1314,29 @@ function size(bytes: number): string {
 
 async function dbImport(invocation: Invocation): Promise<void> {
 	const [given = ""] = invocation.args;
-	const { key, service, place, database } = await databaseAt(invocation);
+	const target = await databaseAt(invocation);
+	const { key, service, place, database } = target;
 	const file = resolve(invocation.cwd, given);
 	const source = existsSync(file) ? file : given;
+	const hook = dbHooks(target, "Import", invocation.print, { BASEPAD_SOURCE: source });
 	let replaced = "";
 	const read = await database.import(service, place, source, async (name) => {
 		replaced = name;
-		if (invocation.flags.yes === true) return;
-		const yes = await ask(`Replace \`${key}\`'s database ${name}? Its data is lost.`);
-		if (yes === undefined) {
-			throw new BasepadError(
-				`Import replaces \`${key}\`'s database ${name}, and there is no terminal to ask. Run it again with \`--yes\` to replace it.`,
-			);
-		}
-		if (!yes) throw new BasepadError(`Nothing imported; ${name} is unchanged.`);
+		if (invocation.flags.yes !== true) await confirmImport(key, name);
+		await hook("before");
 	});
 	invocation.print(`Imported ${read} into \`${key}\`'s database ${replaced}.`);
+	await hook("after");
+}
+
+async function confirmImport(key: string, name: string): Promise<void> {
+	const yes = await ask(`Replace \`${key}\`'s database ${name}? Its data is lost.`);
+	if (yes === undefined) {
+		throw new BasepadError(
+			`Import replaces \`${key}\`'s database ${name}, and there is no terminal to ask. Run it again with \`--yes\` to replace it.`,
+		);
+	}
+	if (!yes) throw new BasepadError(`Nothing imported; ${name} is unchanged.`);
 }
 
 async function dbExport(invocation: Invocation): Promise<void> {
@@ -1150,8 +1347,11 @@ async function dbExport(invocation: Invocation): Promise<void> {
 		);
 	}
 	const say = given === undefined ? (line: string) => console.error(line) : invocation.print;
-	const { key, service, place, database } = await databaseAt({ ...invocation, print: say });
+	const target = await databaseAt({ ...invocation, print: say });
+	const { key, service, place, database } = target;
 	const file = given === undefined ? undefined : resolve(invocation.cwd, given);
-	const format = await database.export(service, place, file);
+	const hook = dbHooks(target, "Export", say, { BASEPAD_FILE: file ?? "" });
+	const format = await database.export(service, place, file, () => hook("before"));
 	if (file !== undefined) invocation.print(`Exported \`${key}\` to ${file} as ${format}.`);
+	await hook("after");
 }

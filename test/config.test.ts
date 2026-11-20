@@ -44,7 +44,7 @@ test("gives one plain description, apps' folders resolved from the config", asyn
 		file: join(dir, "basepad.config.ts"),
 		root: dir,
 		name: "shop",
-		services: { db: { kind: "postgres", version: 18 } },
+		services: { db: { kind: "postgres", worktree: "copy" } },
 		apps: {
 			web: { run: "next dev", cwd: dir },
 			cms: { run: "npm run dev", cwd: join(dir, "apps/cms") },
@@ -56,26 +56,25 @@ test("takes postgresWithNeonProxy() as a service, with postgres()'s options", as
 	const dir = await scratch({
 		"basepad.config.ts": configFile(`{
 			name: "shop",
-			services: { db: postgresWithNeonProxy({ version: 17, worktree: "empty" }) },
+			services: { db: postgresWithNeonProxy({ worktree: "empty" }) },
 		}`),
 	});
 	const project = await loadProject(dir);
 	expect(project.services.db).toEqual({
 		kind: "postgresWithNeonProxy",
-		version: 17,
 		worktree: "empty",
 	});
 });
 
 test("worktrees default to the prefix `worktree`; a set `dir` resolves from the config", async () => {
 	const plain = await loadProject(await scratch({ "basepad.config.ts": twoApps }));
-	expect(plain.worktrees).toEqual({ prefix: "worktree", clone: [], setup: [] });
+	expect(plain.worktrees).toEqual({ prefix: "worktree", clone: [] });
 	expect(plain.services.db).toMatchObject({ worktree: "copy" });
 	const dir = await scratch({
 		"basepad.config.ts": configFile(`{
 			name: "shop",
 			services: { db: postgres({ worktree: "empty" }) },
-			worktrees: { prefix: "wt", dir: "../trees", clone: ["node_modules"], setup: ["npm ci"] },
+			worktrees: { prefix: "wt", dir: "../trees", clone: ["node_modules"] },
 		}`),
 	});
 	const project = await loadProject(dir);
@@ -83,9 +82,24 @@ test("worktrees default to the prefix `worktree`; a set `dir` resolves from the 
 		prefix: "wt",
 		dir: join(dir, "../trees"),
 		clone: ["node_modules"],
-		setup: ["npm ci"],
 	});
 	expect(project.services.db).toMatchObject({ worktree: "empty" });
+});
+
+test("hooks are each a list of commands, a single command taken as one", async () => {
+	const plain = await loadProject(await scratch({ "basepad.config.ts": twoApps }));
+	expect(plain.hooks).toEqual({});
+	const dir = await scratch({
+		"basepad.config.ts": configFile(`{
+			name: "shop",
+			hooks: { afterUp: "php artisan migrate --force", beforeDown: ["a", "b"], afterImport: [] },
+		}`),
+	});
+	expect((await loadProject(dir)).hooks).toEqual({
+		afterUp: ["php artisan migrate --force"],
+		beforeDown: ["a", "b"],
+		afterImport: [],
+	});
 });
 
 describe("errors name the file and key, with no stack", () => {
@@ -123,14 +137,34 @@ describe("errors name the file and key, with no stack", () => {
 			"`worktrees.clone.0`: each must be a path inside the config's folder",
 		],
 		[
+			"`worktrees.setup`, which `hooks.afterCreate` replaced",
+			`{ name: "shop", worktrees: { setup: ["npm ci"] } as {} }`,
+			"unknown key `worktrees.setup`",
+		],
+		[
 			"a bad Postgres worktree option",
 			`{ name: "shop", services: { db: postgres({ worktree: "clone" as "copy" }) } }`,
 			"`services.db.worktree`: Postgres `worktree` must be copy, empty or shared",
 		],
 		[
-			"a bad Postgres version",
-			`{ name: "shop", services: { db: postgres({ version: 16 as 17 }) } }`,
-			"`services.db.version`: Postgres version must be 17 or 18",
+			"a Postgres version, which the project's mise config decides now",
+			`{ name: "shop", services: { db: postgres({ version: 18 } as {}) } }`,
+			"unknown key `services.db.version`",
+		],
+		[
+			"an unknown hook",
+			`{ name: "shop", hooks: { afterStart: "x" } }`,
+			"unknown key `hooks.afterStart`",
+		],
+		[
+			"an empty hook command",
+			`{ name: "shop", hooks: { beforeUp: ["ok", ""] } }`,
+			"`hooks.beforeUp.1`: a hook is a shell command or a list of them",
+		],
+		[
+			"a hook that is no command",
+			`{ name: "shop", hooks: { beforeUp: 3 as unknown as string } }`,
+			"`hooks.beforeUp`: a hook is a shell command or a list of them",
 		],
 		[
 			"a key that is both a service and an app",
@@ -161,7 +195,7 @@ describe("errors name the file and key, with no stack", () => {
 		const out = await box.basepad(dir, "status");
 		expect(out.code).toBe(1);
 		expect(out.stderr).toBe(
-			`basepad: No basepad.config.ts in ${dir} or any folder above it. Run \`basepad init\` to write one.\n`,
+			`basepad: No basepad.config.ts in ${dir} or any folder above it. Create one: https://github.com/Aysnc-Labs/basepad/blob/main/docs/guide.md#a-first-project\n`,
 		);
 	});
 
@@ -191,6 +225,24 @@ export default local;
 		const project = await loadProject(dir);
 		expect(project.apps.web?.run).toBe("next dev --turbo");
 		expect(project.apps.cms?.run).toBe("npm run dev");
+	});
+
+	test("can add and replace hooks", async () => {
+		const dir = await scratch({
+			"basepad.config.ts": configFile(
+				`{ name: "shop", hooks: { afterUp: "team", beforeDown: "team" } }`,
+			),
+			"basepad.config.local.ts": `export default (config) => ({
+	...config,
+	hooks: { ...config.hooks, afterUp: "mine", afterCreate: ["mine too"] },
+});
+`,
+		});
+		expect((await loadProject(dir)).hooks).toEqual({
+			afterUp: ["mine"],
+			beforeDown: ["team"],
+			afterCreate: ["mine too"],
+		});
 	});
 
 	test("that throws gives an error naming it", async () => {

@@ -5,7 +5,6 @@ export { mailpit } from "./catalogue/mailpit.ts";
 export type {
 	PostgresOutputs,
 	PostgresService,
-	PostgresVersion,
 	PostgresWithNeonProxyOutputs,
 	PostgresWithNeonProxyService,
 	PostgresWorktree,
@@ -13,6 +12,10 @@ export type {
 export { postgres, postgresWithNeonProxy } from "./catalogue/postgres.ts";
 export type { RedisOutputs, RedisService, RedisWorktree } from "./catalogue/redis.ts";
 export { redis } from "./catalogue/redis.ts";
+
+import type { HookName } from "./hooks.ts";
+
+export type { HookEvent, HookName } from "./hooks.ts";
 export type { Service };
 
 /** A process of the project's own that basepad runs and gives a domain. */
@@ -76,10 +79,20 @@ export interface Config<
 		dir?: string;
 		/** Untracked paths, relative to the config, copied from main into each new worktree (copy-on-write where the filesystem can). */
 		clone?: string[];
-		/** Shell commands run in order in each new worktree, after its env files are written. */
-		setup?: string[];
 	};
+	/** Commands run around `up`, `down` and the other events that change an environment. */
+	hooks?: Hooks;
 }
+
+/**
+ * Shell commands basepad runs around an event that changes an environment, as `before<Event>` or
+ * `after<Event>`: one command, or a list run in order that stops at the first to fail. They run
+ * through `sh` and mise in the environment's checkout, with stdin closed, the keys of its env
+ * files, `BASEPAD_EVENT` (the hook's name) and `BASEPAD_ENVIRONMENT` (`main` or the worktree's
+ * suffix). A failed `before…` hook cancels its command; a failed `after…` hook makes it exit 1;
+ * a failed Down or Remove hook only warns.
+ */
+export type Hooks = { [K in HookName]?: string | string[] };
 
 /** Types a project's config. It returns the config unchanged. */
 export function defineConfig<

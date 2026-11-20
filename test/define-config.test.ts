@@ -1,9 +1,10 @@
 import { expect, test } from "vitest";
 import { defineConfig, postgres, postgresWithNeonProxy } from "../src/index.ts";
 
-test("postgres() defaults to version 18", () => {
-	expect(postgres()).toEqual({ kind: "postgres", version: 18, worktree: "copy" });
-	expect(postgres({ version: 17 })).toEqual({ kind: "postgres", version: 17, worktree: "copy" });
+test("postgres() takes no version: the project's mise config decides it", () => {
+	expect(postgres()).toEqual({ kind: "postgres", worktree: "copy" });
+	// @ts-expect-error: the binary decides the version
+	postgres({ version: 18 });
 });
 
 test("defineConfig types env's outputs from the config's services and apps", () => {
@@ -37,20 +38,16 @@ test("defineConfig types env's outputs from the config's services and apps", () 
 	});
 	// @ts-expect-error: `port` can only be `false`
 	defineConfig({ name: "shop", apps: { web: { run: "next dev", port: 3000 } } });
-	// @ts-expect-error: Postgres 16 is not offered
-	postgres({ version: 16 });
 	expect(config.name).toBe("shop");
 });
 
 test("postgresWithNeonProxy() defaults as postgres() does, and only it gives wsProxy and directUrl", () => {
 	expect(postgresWithNeonProxy()).toEqual({
 		kind: "postgresWithNeonProxy",
-		version: 18,
 		worktree: "copy",
 	});
-	expect(postgresWithNeonProxy({ version: 17, worktree: "shared" })).toEqual({
+	expect(postgresWithNeonProxy({ worktree: "shared" })).toEqual({
 		kind: "postgresWithNeonProxy",
-		version: 17,
 		worktree: "shared",
 	});
 	defineConfig({

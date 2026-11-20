@@ -8,7 +8,7 @@
 ## Conventions
 
 - CLI tests go through `sandbox()` in `test/sandbox.ts` and dispose it; never touch the developer's `~/.basepad`, mise or pitchfork state.
-- Export `MISE_DATA_DIR` and `MISE_CACHE_DIR` to a temp dir before `pnpm test` to keep tool installs out of your own mise.
+- `pnpm test` installs tools into temporary mise folders, removed after the run; export `MISE_DATA_DIR` and `MISE_CACHE_DIR` to keep them between runs. Every sandbox project gets `test/project-mise.toml`: change tools there for every test at once, as each variant downloads its own.
 - Give each test file's project its own `name`: a service's port comes from it.
 - Outside a container, run `basepad setup` only with `--dry-run`: it changes the trust store and asks for `sudo`.
 - A change users of the npm package would notice carries a changeset (`pnpm changeset`; patch fix, minor feature, major break): its summary becomes the CHANGELOG line and the version bump. Tests, docs and CI-only changes need none.

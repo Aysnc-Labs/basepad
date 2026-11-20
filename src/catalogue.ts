@@ -4,6 +4,7 @@ import { postgresKind, postgresWithNeonProxyKind } from "./catalogue/postgres.ts
 import { redisKind } from "./catalogue/redis.ts";
 import type { Machine } from "./layout.ts";
 import type { Daemon } from "./supervisor.ts";
+import type { MiseTool } from "./tools.ts";
 
 export interface ServiceBase {
 	kind: string;
@@ -20,6 +21,7 @@ export type Place<N = unknown> = {
 	name: string;
 	key: string;
 	owner: string;
+	programsCheckout: string;
 	suffix?: string;
 	dir: string;
 	port: number;
@@ -52,6 +54,7 @@ export interface Kind<S extends ServiceBase, O, N> {
 	extraDaemons?: readonly string[];
 	perEnvironment?(service: S): boolean;
 	names(service: S, input: NameInput): N;
+	programs(service: S): Record<string, MiseTool>;
 	prepare(service: S, place: Place<N>): Promise<Record<string, Daemon>>;
 	provision(
 		service: S,
@@ -82,18 +85,25 @@ export interface Snapshot {
 }
 
 export interface Database<S, N> {
-	save(service: S, place: Place<N>, label: string): Promise<void>;
-	load(service: S, place: Place<N>, label: string): Promise<void>;
+	save(service: S, place: Place<N>, label: string, validated: Validated): Promise<void>;
+	load(service: S, place: Place<N>, label: string, validated: Validated): Promise<void>;
 	snapshots(service: S, place: Place<N>): Promise<Snapshot[]>;
-	remove(service: S, place: Place<N>, label: string): Promise<void>;
+	remove(service: S, place: Place<N>, label: string, validated: Validated): Promise<void>;
 	import(
 		service: S,
 		place: Place<N>,
 		source: string,
 		confirm: (database: string) => Promise<void>,
 	): Promise<string>;
-	export(service: S, place: Place<N>, file: string | undefined): Promise<string>;
+	export(
+		service: S,
+		place: Place<N>,
+		file: string | undefined,
+		validated: Validated,
+	): Promise<string>;
 }
+
+export type Validated = () => Promise<void>;
 
 const CATALOGUE = {
 	postgres: postgresKind,

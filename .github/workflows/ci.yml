@@ -19,6 +19,7 @@ env:
   # mise downloads tools from GitHub releases; a token avoids anonymous rate limits:
   # https://mise.jdx.dev/dev-tools/github-tokens.html
   GITHUB_TOKEN: ${{ github.token }}
+  TEST_MISE: /tmp/basepad-test-mise
 
 jobs:
   macos:
@@ -31,7 +32,14 @@ jobs:
         with:
           version: ${{ env.MISE_VERSION }}
       - run: pnpm install --frozen-lockfile
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.TEST_MISE }}/data
+          key: test-mise-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ matrix.mise }}-${{ hashFiles('test/project-mise.toml', 'src/versions.ts') }}
       - run: pnpm check
+        env:
+          MISE_DATA_DIR: ${{ env.TEST_MISE }}/data
+          MISE_CACHE_DIR: ${{ env.TEST_MISE }}/cache
 
   mise-min:
     name: Read MISE_MIN_VERSION
@@ -72,4 +80,11 @@ jobs:
         with:
           version: ${{ matrix.mise == 'oldest' && needs.mise-min.outputs.version || env.MISE_VERSION }}
       - run: id -u && pnpm install --frozen-lockfile
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.TEST_MISE }}/data
+          key: test-mise-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ matrix.mise }}-${{ hashFiles('test/project-mise.toml', 'src/versions.ts') }}
       - run: pnpm check
+        env:
+          MISE_DATA_DIR: ${{ env.TEST_MISE }}/data
+          MISE_CACHE_DIR: ${{ env.TEST_MISE }}/cache

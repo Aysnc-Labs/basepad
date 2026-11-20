@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { FACTORIES, SCHEMAS, type Service } from "./catalogue.ts";
+import { HOOK_NAMES, type HookName } from "./hooks.ts";
 import type { App, Config, EnvFiles, Outputs } from "./index.ts";
 import { BasepadError } from "./internal/exec.ts";
 
@@ -23,8 +24,8 @@ export interface Project {
 		prefix: string;
 		dir?: string;
 		clone: string[];
-		setup: string[];
 	};
+	hooks: Partial<Record<HookName, string[]>>;
 }
 
 export async function loadProject(cwd: string): Promise<Project> {
@@ -67,11 +68,19 @@ export async function loadProject(cwd: string): Promise<Project> {
 		worktrees: {
 			prefix: config.worktrees?.prefix ?? "worktree",
 			clone: config.worktrees?.clone ?? [],
-			setup: config.worktrees?.setup ?? [],
 			...(config.worktrees?.dir === undefined ? {} : { dir: resolve(root, config.worktrees.dir) }),
 		},
+		hooks: Object.fromEntries(
+			Object.entries(config.hooks ?? {}).map(([name, commands]) => [
+				name,
+				typeof commands === "string" ? [commands] : commands,
+			]),
+		),
 	};
 }
+
+const GUIDE_FIRST_PROJECT =
+	"https://github.com/Aysnc-Labs/basepad/blob/main/docs/guide.md#a-first-project";
 
 function findConfig(cwd: string): string {
 	for (let dir = resolve(cwd); ; dir = dirname(dir)) {
@@ -80,7 +89,7 @@ function findConfig(cwd: string): string {
 		if (dirname(dir) === dir) break;
 	}
 	throw new BasepadError(
-		`No ${CONFIG_FILE} in ${cwd} or any folder above it. Run \`basepad init\` to write one.`,
+		`No ${CONFIG_FILE} in ${cwd} or any folder above it. Create one: ${GUIDE_FIRST_PROJECT}`,
 	);
 }
 
@@ -149,6 +158,10 @@ const AppSchema = z.strictObject({
 		.optional(),
 });
 
+const HOOK = "a hook is a shell command or a list of them";
+const hookCommand = z.string({ error: HOOK }).min(1, HOOK);
+const HookSchema = z.union([hookCommand, z.array(hookCommand)], { error: HOOK });
+
 const ConfigSchema = z
 	.strictObject({
 		name: label,
@@ -184,14 +197,10 @@ const ConfigSchema = z
 							),
 					)
 					.optional(),
-				setup: z
-					.array(
-						z
-							.string({ error: "each must be a shell command" })
-							.min(1, "each must be a shell command"),
-					)
-					.optional(),
 			})
+			.optional(),
+		hooks: z
+			.strictObject(Object.fromEntries(HOOK_NAMES.map((name) => [name, HookSchema.optional()])))
 			.optional(),
 	})
 	.superRefine((config, ctx) => {

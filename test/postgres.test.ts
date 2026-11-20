@@ -79,10 +79,14 @@ test("the postgres role has the SCRAM password the URL names; a cluster without 
 	expect(await sql(shop, SCRAM)).toBe("t");
 });
 
-test("pgvector and Postgres's standard extensions can be created; basepad enables none", async () => {
+test("pgvector, PostGIS and Postgres's standard extensions can be created; basepad enables none", async () => {
 	expect(await sql(shop, "select count(*) from pg_extension where extname <> 'plpgsql'")).toBe("0");
 	await sql(shop, "create extension vector; create extension pg_trgm; create extension citext");
 	expect(await sql(shop, "select '[1,2]'::vector <-> '[1,5]'::vector")).toBe("3");
+	await sql(shop, "create extension postgis");
+	expect(
+		await sql(shop, "select st_distance('point(0 0)'::geometry, 'point(3 4)'::geometry)"),
+	).toBe("5");
 });
 
 test("status lists the service with its state and address", async () => {
@@ -196,6 +200,7 @@ test("a server that exits after it starts is reported with its output, and up fa
 		expect(out.code).toBe(1);
 		expect(out.stderr).toContain("basepad: `db` exited on start. Its last output:");
 		expect(out.stderr).toContain("max_connections");
+		expect(out.stderr).toMatch(/\nIts program: \/\S+\/postgres\n/);
 		expect(out.stderr).toMatch(/pitchfork logs pg-shop\/db/);
 	} finally {
 		await writeFile(conf, kept);

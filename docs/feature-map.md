@@ -11,7 +11,7 @@ A feature is anything a user starts from: an import, a config key, a command or 
 
 ```mermaid
 flowchart LR
-  CLI["basepad (launcher, cli)"] --> Commands["commands: init, up, down, status, setup, worktree add, ls, rm, prune, db save, load, snapshots, rm, import, export"]
+  CLI["basepad (launcher, cli)"] --> Commands["commands: up, down, status, setup, worktree add, ls, rm, prune, db save, load, snapshots, rm, import, export"]
   Commands --> Worktrees["worktrees"]
   Worktrees -- "git" --> Git["git"]
   Commands --> Config["config: basepad.config.ts"]
@@ -25,7 +25,10 @@ flowchart LR
   MissionControl --> Worktrees
   MissionControl -- "worktree add, rm" --> Commands
   Commands --> EnvFiles["env files"]
-  Supervisor -- "mise exec" --> Pitchfork["pitchfork (isolated)"]
+  Commands -- "up, down, db" --> Hooks["hooks"]
+  Hooks -- "sh, mise x" --> Mise
+  Supervisor -- "runs" --> Pitchfork["pitchfork (isolated)"]
+  Pitchfork -- "apps: mise x" --> Mise
   Catalogue --> Tools
   Supervisor --> Tools
   Tools -- "exec" --> Mise["mise"]
@@ -38,31 +41,31 @@ flowchart LR
 
 ### The config file
 
-Purpose: one committed, typed `basepad.config.ts` that names the project, its services (with each one's `worktree` option: copy, empty or shared), apps (each served at a domain, or with `port: false` for one that listens on nothing, or `domain: false` for one served at `https://localhost:$PORT`), env files and `worktrees` (prefix, folder, clone, setup); `basepad.config.local.ts` adjusts it per machine.
+Purpose: one committed, typed `basepad.config.ts` that names the project, its services (with each one's `worktree` option: copy, empty or shared), apps (each served at a domain, or with `port: false` for one that listens on nothing, or `domain: false` for one served at `https://localhost:$PORT`), env files, `hooks` and `worktrees` (prefix, folder, clone); `basepad.config.local.ts` adjusts it per machine.
 Entry: `import { defineConfig, postgres } from "basepad"`
 Paths: src/index.ts, src/config.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md)
+
+### Hooks
+
+Purpose: the project's own shell commands run around events that change an environment (`beforeUp`, `afterDown`, …), through mise in the environment's checkout, with stdin closed, the env files' keys, `BASEPAD_EVENT` and `BASEPAD_ENVIRONMENT`; a failed `before…` cancels, a failed `after…` exits 1, Down and Remove hooks only warn. Before a hook runs, `hooksOf` checks that mise trusts the checkout's config: `up`, `worktree add`, `worktree rm`, `prune` and every `db` command fail on an untrusted one earlier, in `ready()`, before any hook; only `down` reaches it, and warns and skips its Down hooks. `hooksOf` binds the one runner to an environment, and every event calls it. On a terminal, output streams into mission control's `hooks` log row (`hookLog` in the feed). `up` and `down` run Up and Down hooks; each `db` command its own, with `BASEPAD_SERVICE` and its label, source or file; a `db` command's `before…` runs once the Postgres Kind's verb calls its `validated` (or import's `confirm`) step. `worktree add`, and `up` in a worktree not registered with the supervisor yet, run Create hooks (never main); `worktree rm` and `prune` run main's Remove hooks from main's folder, with `BASEPAD_WORKTREE` and the worktree's env file keys, empty where its file is gone.
+Entry: `hooks: { beforeUp, afterUp, beforeDown, afterDown, … }` in the config
+Paths: src/hooks.ts, src/config.ts, src/commands.ts, src/env-files.ts, src/mission-control/feed.ts, src/catalogue/postgres.ts
 
 ## Commands
 
 ### The `basepad` command
 
-Purpose: runs basepad on mise's Node 24 whatever the project's Node, checks the mise floor, and dispatches commands and help from one table.
+Purpose: runs basepad on mise's Node 24 whatever the project's Node (from basepad's home, so mise never trusts the project's config), checks the mise floor, and dispatches commands and help from one table.
 Entry: `basepad`, `basepad <command> --help`
-Paths: src/launcher.ts, src/cli.ts, src/versions.ts, src/internal/exec.ts, src/internal/files.ts, src/internal/table.ts
-
-### `basepad init`
-
-Purpose: writes a starter config named from the folder, ignores the local file, adds basepad as a devDependency.
-Entry: `basepad init`
-Paths: src/init.ts
+Paths: src/launcher.ts, src/cli.ts, src/home.ts, src/versions.ts, src/internal/exec.ts, src/internal/files.ts, src/internal/table.ts
 
 ### `basepad up`, `down` and `status`
 
-Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.localhost`, starts services, sets the env keys the config names; stops them (on a terminal, the landing in `src/mission-control/launch.ts` shows them coming down); shows their state.
+Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.localhost`, through mise in its checkout (`src/internal/mise.ts`) so its tools are the checkout's, starts services, sets the env keys the config names; stops them (on a terminal, the landing in `src/mission-control/launch.ts` shows them coming down); shows their state.
 Entry: `basepad up [-d] [--claim]`, `basepad down`, `basepad status`
-Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts, src/internal/processes.ts, src/mission-control/launch.ts, src/tls.ts
-Decisions: [0001](adr/0001-config-is-the-only-interface.md)
+Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/mise.ts, src/internal/ports.ts, src/internal/processes.ts, src/mission-control/launch.ts, src/tls.ts
+Decisions: [0001](adr/0001-config-is-the-only-interface.md), [0003](adr/0003-services-run-the-projects-mise-tools.md)
 
 ### Mission control
 
@@ -72,13 +75,13 @@ Paths: src/mission-control/, src/supervisor.ts, src/commands.ts, src/worktrees.t
 
 ### `basepad worktree add`
 
-Purpose: makes a worktree of main, ready to use: a git worktree with suffix `<prefix>-<n>`, beside the project, on a new branch or `--branch`'s, with `worktrees.clone` copied from main, its own databases (copied from main's while its app is connected, by the fastest route the server has; empty or shared), domains `<app>.<suffix>.<name>.localhost`, env files from main's, and `worktrees.setup` run in it. Its apps start on the first request to their domains (the supervisor's proxy, with main's services as dependencies), or at once with `--start`. `up`, `down` and `status` in its folder act on it; `up` in a git worktree made by hand makes it a worktree whose suffix is its folder's name. Worktrees are found from git; nothing is listed.
+Purpose: makes a worktree of main, ready to use: a git worktree with suffix `<prefix>-<n>`, beside the project, on a new branch or `--branch`'s, with `worktrees.clone` copied from main, its own databases (copied from main's while its app is connected, by the fastest route the server has; empty or shared), domains `<app>.<suffix>.<name>.localhost`, env files from main's, and its `beforeCreate` and `afterCreate` hooks run in it. Its apps start on the first request to their domains (the supervisor's proxy, with main's services as dependencies), or at once with `--start`. `up`, `down` and `status` in its folder act on it; `up` in a git worktree made by hand makes it a worktree whose suffix is its folder's name, and runs its Create hooks the first time (the worktree's namespace is not registered with the supervisor yet). A worktree whose `mise.toml` resolves another program for a service on main's servers than main's does fails `up` and `worktree add`, naming both paths (`down` and `status` still work). Worktrees are found from git; nothing is listed.
 Entry: `basepad worktree add [--json] [--branch <name>] [--start]`, `basepad up` in a git worktree, `worktrees` in the config, `postgres({ worktree })`
 Paths: src/worktrees.ts, src/commands.ts, src/layout.ts, src/catalogue/postgres.ts
 
 ### `basepad worktree ls`, `worktree rm` and `prune`
 
-Purpose: lists worktrees (and `status` in main shows each); removes one from its suffix alone (apps, registration, databases, git worktree; branch kept; refuses uncommitted changes unless `--force`); clears what worktrees whose folder is gone left, and asks before deleting a removed service's data. Never drops main's databases.
+Purpose: lists worktrees (and `status` in main shows each); removes one from its suffix alone (apps, registration, databases, git worktree; branch kept; refuses uncommitted changes unless `--force`); clears what worktrees whose folder is gone left, and asks before deleting a removed service's data; runs main's Remove hooks around each removal. Never drops main's databases.
 Entry: `basepad worktree ls`, `basepad worktree rm <worktree> [--force]`, `basepad prune [--yes]`, `basepad status` in main
 Paths: src/commands.ts, src/worktrees.ts, src/catalogue.ts, src/catalogue/postgres.ts, src/supervisor.ts, src/hosts.ts
 
@@ -106,29 +109,23 @@ Purpose: port-free URLs on macOS with no privilege and no pf (pf turns off iClou
 Entry: `basepad up` on macOS
 Paths: src/forward.ts, src/supervisor.ts, src/layout.ts
 
-### Port 443 on macOS
-
-Purpose: port-free URLs on macOS with no privilege and no pf (pf turns off iCloud Private Relay): `serve` starts a forwarder on the wildcard address's port 443 that passes connections from this Mac to the proxy, refuses the network's, and stops with the supervisor. Off when `BASEPAD_PROXY_PORT` is set, or something else answers on 443.
-Entry: `basepad up` on macOS
-Paths: src/forward.ts, src/supervisor.ts, src/layout.ts
-
 ## Services
 
 ### Postgres
 
-Purpose: a Postgres 17 or 18 server per project, with its database stamped to the owning checkout, pgvector available, and connection values for `env`. `postgresWithNeonProxy()` is the same server with Neon's local proxy in front of it, as its own daemon `<key>-neon-proxy` (an extra daemon of the Kind; `up` stops it once the config no longer asks for it), so `@neondatabase/serverless` connects through `url` and `wsProxy`; `directUrl` goes straight to Postgres.
-Entry: `services: { db: postgres({ version }) }` or `services: { db: postgresWithNeonProxy({ version }) }` in the config
-Paths: src/catalogue.ts, src/catalogue/postgres.ts, src/internal/service-user.ts, src/layout.ts
-Decisions: [0002](adr/0002-a-kind-owns-its-companion-processes.md)
+Purpose: a Postgres server per project, run from the programs the project's mise config gives in main's checkout (`programsIn` in `src/tools.ts`: trust read, `mise install`, `mise which`; a missing program fails `up` with the lines to add), its major version read from `postgres --version`, with its database stamped to the owning checkout, and connection values for `env`. `postgresWithNeonProxy()` is the same server with Neon's local proxy in front of it, as its own daemon `<key>-neon-proxy` (an extra daemon of the Kind; `up` stops it once the config no longer asks for it), so `@neondatabase/serverless` connects through `url` and `wsProxy`; `directUrl` goes straight to Postgres.
+Entry: `services: { db: postgres() }` or `services: { db: postgresWithNeonProxy() }` in the config, and `postgres`/`neon-proxy` in the project's `mise.toml`
+Paths: src/catalogue.ts, src/catalogue/postgres.ts, src/tools.ts, src/internal/service-user.ts, src/layout.ts
+Decisions: [0002](adr/0002-a-kind-owns-its-companion-processes.md), [0003](adr/0003-services-run-the-projects-mise-tools.md)
 
 ### Redis
 
-Purpose: a Redis per environment, in memory, on a port derived from the environment's name (the next free one when taken, and env files follow), with `url`, `host` and `port` for `env`. A worktree's is its own and empty, started only with the worktree (`up`, `--start` or the first request to its apps), stopped by its `down` and removed by `worktree rm`; `worktree: "shared"` gives it main's.
-Entry: `services: { cache: redis({ worktree }) }` in the config
-Paths: src/catalogue.ts, src/catalogue/redis.ts, src/layout.ts
+Purpose: a Redis per environment, in memory, on a port derived from the environment's name (the next free one when taken, and env files follow), with `url`, `host` and `port` for `env`. A worktree's is its own and empty, started only with the worktree (`up`, `--start` or the first request to its apps), stopped by its `down` and removed by `worktree rm`; `worktree: "shared"` gives it main's. Its `redis-server` comes from `programsIn` (see Postgres) in the checkout it runs for: a worktree's own Redis from the worktree's, main's and a shared one from main's.
+Entry: `services: { cache: redis({ worktree }) }` in the config, and `redis` in the project's `mise.toml`
+Paths: src/catalogue.ts, src/catalogue/redis.ts, src/tools.ts, src/layout.ts
 
 ### Mailpit
 
-Purpose: one Mailpit per project that catches all its mail, shared by its worktrees: the inbox at `https://<key>.<name>.localhost` (the Catalogue's `web`: a service asking Layout for a domain, which the supervisor's proxy serves), SMTP `url`, `host`, `port` and `user` for `env`, each environment's mail tagged by its SMTP user (`main` or the suffix).
-Entry: `services: { mail: mailpit() }` in the config
-Paths: src/catalogue.ts, src/catalogue/mailpit.ts, src/layout.ts
+Purpose: one Mailpit per project that catches all its mail, shared by its worktrees: the inbox at `https://<key>.<name>.localhost` (the Catalogue's `web`: a service asking Layout for a domain, which the supervisor's proxy serves), SMTP `url`, `host`, `port` and `user` for `env`, each environment's mail tagged by its SMTP user (`main` or the suffix). Its `mailpit` comes from `programsIn` (see Postgres) in main's checkout.
+Entry: `services: { mail: mailpit() }` in the config, and `mailpit` in the project's `mise.toml`
+Paths: src/catalogue.ts, src/catalogue/mailpit.ts, src/tools.ts, src/layout.ts

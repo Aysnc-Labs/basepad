@@ -5,12 +5,12 @@ import type { Kind, Place, Web } from "../catalogue.ts";
 import { BasepadError, shellQuote } from "../internal/exec.ts";
 import { answers, freePort, waitFor } from "../internal/ports.ts";
 import { recordRunning, runningPort } from "../internal/processes.ts";
-import { install } from "../tools.ts";
-import { MAILPIT_VERSION } from "../versions.ts";
+import { programsIn } from "../tools.ts";
 
 const HOST = "127.0.0.1";
 const PLACEHOLDER_PASSWORD = "basepad";
 const READY_MS = 30_000;
+const MAILPIT_TOOLS = { mailpit: { name: "mailpit", version: "1.33.1" } };
 
 /** A Mailpit of the project's own, shared by its worktrees. */
 export interface MailpitService {
@@ -50,12 +50,14 @@ export const mailpitKind: Kind<MailpitService, MailpitOutputs, MailpitNames> = {
 
 	web: true,
 
+	programs: () => MAILPIT_TOOLS,
+
 	names(_service, { dir, suffix }) {
 		return { user: suffix ?? "main", data: join(dir, "mailpit.db"), pid: join(dir, "mailpit.pid") };
 	},
 
 	async prepare(_service, place) {
-		const bin = (await install("mailpit", MAILPIT_VERSION, place.machine.home)).bin("mailpit");
+		const bin = (await programsIn(place.programsCheckout, MAILPIT_TOOLS)).mailpit;
 		await mkdir(place.dir, { recursive: true });
 		const smtp = (await runningPort(place.pid)) ?? (await freePort(place.port));
 		const argv = [
@@ -73,6 +75,7 @@ export const mailpitKind: Kind<MailpitService, MailpitOutputs, MailpitNames> = {
 		return {
 			[place.daemon]: {
 				run: `${recordRunning(place.pid, smtp)} && exec ${argv.map(shellQuote).join(" ")} --listen "${HOST}:$PORT"`,
+				program: bin,
 				dir: place.dir,
 				port: webOf(place).port,
 			},

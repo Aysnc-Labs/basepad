@@ -1,5 +1,4 @@
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, normalize, sep } from "node:path";
 import {
 	EXTRA_DAEMONS,
 	type ExtraDaemon,
@@ -11,6 +10,7 @@ import {
 	type Web,
 } from "./catalogue.ts";
 import type { Project } from "./config.ts";
+import { basepadHome } from "./home.ts";
 import { BasepadError } from "./internal/exec.ts";
 
 export interface Machine {
@@ -34,7 +34,7 @@ export function machine(
 		throw new BasepadError(`BASEPAD_PROXY_PORT must be a port number; got \`${raw}\`.`);
 	}
 	return {
-		home: env.BASEPAD_HOME || join(env.HOME || homedir(), ".basepad"),
+		home: basepadHome(env),
 		proxyPort,
 		portFree: proxyPort === 443,
 		forwards443: unset && platform === "darwin",
@@ -199,10 +199,21 @@ export function placeOf(
 	lay: Layout,
 	machine: Machine,
 	key: string,
+	mainRoot = project.root,
 ): Place<NamesOf<Service>> {
 	const service = lay.services[key] as ServicePlace;
 	const suffix = lay.suffix === undefined ? {} : { suffix: lay.suffix };
-	return { name: project.name, key, owner: project.root, machine, ...suffix, ...service };
+	const inMain = ofDaemon(service.daemon).namespace === lay.mainNamespace;
+	const programsCheckout = inMain ? mainRoot : project.root;
+	return {
+		name: project.name,
+		key,
+		owner: project.root,
+		programsCheckout,
+		machine,
+		...suffix,
+		...service,
+	};
 }
 
 export function ownServers(lay: Pick<Layout, "namespace" | "services">): string[] {
@@ -246,6 +257,17 @@ export function ofDaemon(id: string): { namespace: string; name: string } {
 
 export function suffixOf(name: string, namespace: string): string | undefined {
 	return namespace.startsWith(`${name}.`) ? namespace.slice(name.length + 1) : undefined;
+}
+
+export function worktreeSuffix(root: string, configDir = ""): string {
+	const folders = segments(root);
+	return folders[folders.length - 1 - segments(configDir).length] ?? "";
+}
+
+function segments(path: string): string[] {
+	return normalize(path)
+		.split(sep)
+		.filter((segment) => segment !== "" && segment !== ".");
 }
 
 export function worktreeFolder(

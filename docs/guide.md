@@ -3,7 +3,7 @@
 Everything basepad does, in detail. New here? Start with the [README](../README.md).
 
 - [Install](#install) · [A first project](#a-first-project)
-- [The config](#the-config): [what `env` gets](#what-env-gets), [env files](#env-files), [apps](#apps), [Postgres](#postgres), [Postgres with Neon's proxy](#postgres-with-neons-proxy), [worktrees](#worktrees), [the local file](#the-local-file)
+- [The config](#the-config): [what `env` gets](#what-env-gets), [env files](#env-files), [apps](#apps), [Postgres](#postgres), [Postgres with Neon's proxy](#postgres-with-neons-proxy), [worktrees](#worktrees), [hooks](#hooks) and [a test database](#a-test-database), [the local file](#the-local-file)
 - [Commands](#commands) and mission control's keys
 - [Port-free URLs: `basepad setup`](#port-free-urls-basepad-setup)
 - [Notes](#notes): apps that ignore `PORT`, frameworks behind the proxy, extensions, your own database
@@ -11,7 +11,7 @@ Everything basepad does, in detail. New here? Start with the [README](../README.
 
 ## Install
 
-mise is the one thing you install by hand. basepad installs everything else it needs through it: Postgres, [pitchfork](https://pitchfork.jdx.dev) (which runs the apps and serves their domains) and, when your project's Node is older than 24, a Node 24 to run on.
+mise is the one thing you install by hand. Your project's `mise.toml` lists its tools, its services' among them, and `basepad up` installs them through mise. basepad also installs what runs basepad itself: [pitchfork](https://pitchfork.jdx.dev) (which runs the apps and serves their domains) and, when your project's Node is older than 24, a Node 24 to run on.
 
 1. Install mise 2026.10.24 or later, and activate it in your shell, as [mise's guide](https://mise.jdx.dev/getting-started.html) says:
 
@@ -38,10 +38,21 @@ mise use node@24
 npm init -y
 echo "allow-git=root" >> .npmrc
 npm install --save-dev github:Aysnc-Labs/basepad
-npx basepad init
+echo "basepad.config.local.ts" >> .gitignore
 ```
 
-`init` writes a starter `basepad.config.ts`, named after the folder, and adds `basepad.config.local.ts` to `.gitignore`. Give the project a database and an app:
+`npm install --save-dev` adds basepad to `package.json`'s devDependencies, and the `.gitignore` line keeps [the local file](#the-local-file) out of git. Add Postgres to the `mise.toml` that `mise use` wrote, so the project has a database server:
+
+```toml
+[tool_alias]
+postgres = "github:aysnc-labs/prebuilt-binaries[version_prefix=postgres-]"
+
+[tools]
+node = "24"
+postgres = "18.7-3"
+```
+
+Write `basepad.config.ts` to give the project a database and an app:
 
 ```ts
 import { defineConfig, postgres } from "basepad";
@@ -112,7 +123,7 @@ import { defineConfig, postgres } from "basepad";
 export default defineConfig({
 	name: "shop",
 	services: {
-		db: postgres({ version: 18 }),
+		db: postgres(),
 	},
 	apps: {
 		web: { run: "next dev" }, // https://web.shop.localhost
@@ -136,10 +147,11 @@ export default defineConfig({
 | Key        | Required | What it is                                                                                                                                |
 | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`     | yes      | The project's one key: a lowercase DNS label (letters, digits, hyphens). Every database and domain is built from it.                      |
-| `services` | no       | The services basepad provides, by key: Postgres, `postgres()` or `postgres({ version: 17 })` (18 is the default), Postgres with [Neon's proxy](#postgres-with-neons-proxy), `postgresWithNeonProxy()`, Redis, `redis()` or `redis({ worktree: "shared" })`, and [Mailpit](#mailpit), `mailpit()`. |
+| `services` | no       | The services basepad provides, by key: [Postgres](#postgres), `postgres()`, Postgres with [Neon's proxy](#postgres-with-neons-proxy), `postgresWithNeonProxy()`, [Redis](#redis), `redis()` or `redis({ worktree: "shared" })`, and [Mailpit](#mailpit), `mailpit()`. |
 | `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config, `port: false` for one that listens on nothing, and `domain: false` for one served at `https://localhost:$PORT`. |
 | `env`      | no       | A function from every service's and app's outputs to the env files to write: each file's path, relative to the config, to its keys.       |
-| `worktrees` | no      | How [worktrees](#worktrees) are made: `prefix` (default `worktree`) names them `<prefix>-<n>`; `dir`, relative to the config, is where they are checked out (default `<repository>/../<name>.worktrees`); `clone` lists untracked paths copied from main, such as `node_modules`; `setup` lists shell commands run once in each new worktree. |
+| `hooks`    | no       | Shell commands run around `up`, `down` and other events, by name: `beforeUp`, `afterUp` and so on. See [Hooks](#hooks). |
+| `worktrees` | no      | How [worktrees](#worktrees) are made: `prefix` (default `worktree`) names them `<prefix>-<n>`; `dir`, relative to the config, is where they are checked out (default `<repository>/../<name>.worktrees`); `clone` lists untracked paths copied from main, such as `node_modules`. To run commands in each new worktree, use the `afterCreate` [hook](#hooks). |
 
 Keys of `services` and `apps` are lowercase DNS labels, and one key can't be both. A name that would make a domain label or a database name longer than 63 characters is rejected with the reason, counting a worktree's names (up to `<prefix>-999`); basepad never shortens one.
 
@@ -179,6 +191,7 @@ basepad sets exactly the keys `env` returns, in the files it names:
 ### Apps
 
 - Each app runs from its `cwd` (the config's folder by default), through `sh`, with its own and the project's `node_modules/.bin` first on `PATH`, as `npm run` does. So `next dev` works without `npx`.
+- Each app runs through `mise exec` in its checkout, so its tools are the ones the checkout's `mise.toml` pins: `php artisan serve` runs the project's PHP even when Homebrew's comes first on your `PATH`, and an app in a worktree gets the worktree's tools. A tool the config names but hasn't installed is installed on start.
 - Each app is given a free port as `PORT`, and must listen on it.
 - Each app answers at `https://<key>.<name>.localhost`, through pitchfork's proxy. Hot reload and WebSockets work through it.
 - An app with `domain: false`, such as Vite serving another app's assets, gets `PORT` but no domain and no `url` in `env`. It serves HTTPS itself at `https://localhost:$PORT`, with a certificate for `localhost` from basepad's certificate authority, given as `BASEPAD_TLS_CERT` and `BASEPAD_TLS_KEY`, and starts whenever another of the environment's apps does. Safari keeps a page's requests to `localhost` on your Mac, where iCloud Private Relay sends requests to another app's domain away from it. basepad makes the certificate with `openssl`, which must be on `PATH`, and makes it again before it expires or once its certificate authority changes.
@@ -187,15 +200,32 @@ basepad sets exactly the keys `env` returns, in the files it names:
 
 ### Postgres
 
-- Each Postgres service is a server of the project's own, from mise, listening on `127.0.0.1` only, with trust authentication. No other project shares it.
+- Each Postgres service is a server of the project's own, listening on `127.0.0.1` only, with trust authentication. No other project shares it.
+- Its programs come from the project's mise config. In main's checkout, `up` runs `mise install`, then `mise which` for `initdb`, `pg_ctl`, `postgres`, `psql`, `pg_dump` and `pg_restore`, as your shell finds them. So the `psql` in your terminal is the server's own build, and a Postgres on your `PATH` that mise doesn't give, such as Homebrew's, is never used.
 - Its port comes from the project's name, so it is the same on every machine. When something else holds it, `up` takes the next free one and rewrites your env files.
 - `up` creates the database `<name>_<key>`, and keeps its data across `down` and `up` in `~/.basepad/services/<name>/<key>`.
-- Postgres's standard extensions and pgvector are there for `CREATE EXTENSION`. basepad enables none; see [Extensions](#extensions).
-- Data from another Postgres major version is refused, never converted. To change `version`, dump the database first.
+- The build decides which extensions are there for `CREATE EXTENSION`. basepad enables none; see [Extensions](#extensions).
+- The build also decides the version: `up` reads Postgres's major version from `postgres --version`. Data from another major version is refused, never converted, and the error names the program. To change major version, dump the database first.
+
+When the mise config gives none of these programs, `up` stops before it starts anything and prints the lines to add to `mise.toml`:
+
+```toml
+[tool_alias]
+postgres = "github:aysnc-labs/prebuilt-binaries[version_prefix=postgres-]"
+
+[tools]
+postgres = "18.7-3"
+```
+
+That build, from [Aysnc-Labs/prebuilt-binaries](https://github.com/Aysnc-Labs/prebuilt-binaries), has pgvector, PostGIS, pg_repack and more. To run another build or version, change those lines: any tool works that gives the six programs, such as `"conda:postgresql" = "17"`. `mise outdated --bump` shows a newer version, and `mise upgrade --bump` moves to it, as for your other tools.
+
+mise keeps one install folder per tool name and version. A `postgres` tool at a version already installed from another source, such as an older registry `postgres@18.7`, is reused as it is, whichever source the config names.
+
+basepad never trusts a mise config for you. In a project whose `mise.toml` isn't trusted, `up`, `worktree add`, `worktree rm`, `prune` and every `db` command fail with mise's error and the command to run, `mise trust <project>/mise.toml`. `down` prints that error, skips its Down hooks and still stops everything. To trust every project in a folder once, set `trusted_config_paths` in your global mise config, `~/.config/mise/config.toml`. mise trusts a git worktree of a trusted checkout by itself.
 
 ### Postgres with Neon's proxy
 
-`db: postgresWithNeonProxy()` is for an app that talks to Postgres through Neon's serverless driver, `@neondatabase/serverless`. It is the Postgres above, with [Neon's local proxy](https://neon.com/guides/local-development-with-neon) in front of it, so the driver connects locally as it does to Neon, with one code path. It takes `postgres()`'s options, `version` and `worktree`.
+`db: postgresWithNeonProxy()` is for an app that talks to Postgres through Neon's serverless driver, `@neondatabase/serverless`. It is the Postgres above, with [Neon's local proxy](https://neon.com/guides/local-development-with-neon) in front of it, so the driver connects locally as it does to Neon, with one code path. It takes `postgres()`'s option, `worktree`.
 
 | Output      | What it is                                                                                  |
 | ----------- | ------------------------------------------------------------------------------------------- |
@@ -227,13 +257,21 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 - Its port comes from the project's name, as Postgres's does; when something else holds it, `up` takes the next free one and rewrites your env files.
 - It speaks plain WebSocket on `127.0.0.1`, with no certificate, hence `useSecureWebSocket = false`.
 - It checks the `postgres` role's password, `basepad`, against Postgres. `up` creates the table the proxy reads in the `postgres` database, `neon_control_plane.endpoints`.
-- It comes from mise, as `github:aysnc-labs/prebuilt-binaries@neon-proxy-<version>`, pinned by basepad. On Linux it needs glibc 2.39 or newer (Ubuntu 24.04, Debian 13); on an older one, `up` says so.
+- Its program, `neon-proxy`, comes from the project's mise config, as Postgres's do. When the config gives none, `up` prints the lines to add:
+
+  ```toml
+  [tool_alias]
+  neon-proxy = "github:aysnc-labs/prebuilt-binaries[version_prefix=neon-proxy-]"
+
+  [tools]
+  neon-proxy = "8853-1"
+  ```
 
 It is not a copy of Neon, so passing locally is not passing on Neon:
 
 - The driver connects as `postgres`, a superuser; on Neon your role is not one.
 - There is no pooler: no PgBouncer, as Neon's `-pooler` hosts have.
-- The extensions are basepad's (Postgres's standard ones and pgvector), not Neon's list.
+- The extensions are your Postgres build's, not Neon's list.
 - There are no cold starts.
 - The WebSocket is plain, not TLS.
 
@@ -260,10 +298,29 @@ npx basepad db export ./shop.dump      # a dump others can import; ./shop.sql fo
 - `export` writes a custom-format dump, or plain SQL, without owners or grants, for a name ending `.sql`. With no file it writes the dump to standard output, for a pipe or `>`, and refuses a terminal. Your app stays connected while it runs.
 - The URL's server is read with this service's Postgres version's `pg_dump`, which reads that version and older ones.
 
+### Redis
+
+- `cache: redis()` is a Redis of the environment's own, listening on `127.0.0.1` only. It keeps its data in memory: it starts empty and keeps nothing after it stops.
+- Its port comes from the project's name, as Postgres's does. When something else holds it, `up` takes the next free one and rewrites your env files.
+- Its `redis-server` comes from the mise config of the checkout it runs for, found as [Postgres's programs](#postgres) are: a worktree's own Redis from the worktree's `mise.toml`, main's and `redis({ worktree: "shared" })` from main's.
+
+When the mise config gives no `redis-server`, `up` stops before it starts anything and prints the lines to add to `mise.toml`:
+
+```toml
+[tool_alias]
+redis = "github:aysnc-labs/prebuilt-binaries[version_prefix=redis-]"
+
+[tools]
+redis = "8.10.3-1"
+```
+
+Any tool that gives `redis-server` works, such as conda's: `"conda:redis-server" = "8.10.3"`. As with Postgres, mise keeps one install folder per tool name and version, so a `redis` at a version already installed from another source is reused as it is.
+
 ### Mailpit
 
 - `mail: mailpit()` catches every message the project sends: nothing reaches a real inbox. Read them at `https://mail.<name>.localhost`, the service's key as its domain; a key that is also an app's is refused.
-- One Mailpit per project, from mise, its SMTP server on `127.0.0.1` only. No other project shares it; main and every worktree do.
+- One Mailpit per project, its SMTP server on `127.0.0.1` only. No other project shares it; main and every worktree do.
+- Its `mailpit` program comes from main's mise config, found as [Postgres's programs](#postgres) are. When the config gives none, `up` prints the line to add under `[tools]` in `mise.toml`: `mailpit = "1.33.1"`, from mise's registry.
 - Each environment sends as its own SMTP user, `main` or the worktree's suffix, and Mailpit tags each message with it. Use `url`, or set your mailer's username to `user`, or mail arrives untagged.
 - Its SMTP port comes from the project's name, as Postgres's does. Its messages are kept across `down` and `up` in `~/.basepad/services/<name>/<key>`.
 - After `down`, opening the inbox starts Mailpit again.
@@ -285,8 +342,9 @@ npx basepad worktree add --start  # starts its apps now
 - Its apps answer at `https://<app>.<suffix>.<name>.localhost`, beside main's.
 - Each env file `env` names starts as a copy of main's, secrets included, then basepad sets its keys for the worktree. A file the worktree already has is kept.
 - Each path in `worktrees.clone` is copied from main, copy-on-write where the filesystem can (APFS, btrfs, XFS) and fully otherwise, so the worktree's writes never reach main's files. A path main lacks is skipped with a note. A full copy is slow: about 10 s for a `node_modules` of 34,000 files on Linux's ext4.
-- Then the commands in `worktrees.setup` run in order in the worktree, with its env files written. The first that fails is shown with its output, the rest don't run, `worktree add` exits 1 and the worktree is kept.
+- Then its `beforeCreate` and `afterCreate` [hooks](#hooks) run in the worktree: `beforeCreate` before its databases and env files are made, `afterCreate` once they are, before `--start`'s apps. If either fails, `worktree add` exits 1, keeps the worktree and says where it is.
 - `worktree add` starts no app: an app starts when its domain is first opened, with main's services if they are stopped, or straight away with `--start`. After `down`, an app stays stopped until `up`. `basepad up`, `down` and `status` in the worktree's folder act on it, with the config in that folder. A worktree's services are main's servers, apart from a Redis of its own, so `up` there starts main's services too, and `down` there stops only the worktree's apps.
+- A service on main's servers (Postgres, its Neon proxy, Mailpit, a `shared` Redis) runs main's programs, so the worktree's `mise.toml` must resolve the same ones. If it gives another (a Postgres of another version or build, say), `up` and `worktree add` there stop and name both paths. To try another build, change it in main and run `basepad up` there. `down` and `status` in the worktree still work. Two sources at the same version share one install folder (mise keys installs by the tool's short name), which this check can't tell apart.
 - The copy works while main's app is connected. basepad closes main's database to connections for the copy, ends its sessions and opens it again; main's app reconnects by itself. A node-postgres `Pool` needs an `error` listener (`pool.on("error", …)`), or an ended idle client crashes its process. If a copy is interrupted, the next `basepad up` opens main's database again.
 - The copy is a file clone where the server offers one (Postgres 18 on APFS, btrfs or XFS with reflink: copy-on-write), else a template copy (about 1 s per GB on Linux), else dump and restore. The output says which.
 
@@ -306,7 +364,7 @@ npx basepad prune                     # clears what worktrees whose folder you d
 
 #### A git worktree made by hand
 
-`basepad up` in any linked git worktree of main makes it a worktree, with its folder's name as the suffix: `git worktree add ../hand` then `basepad up` in `../hand` gives `shop_db_hand` with main's data and `https://web.hand.shop.localhost`. The folder name must be a lowercase DNS label (letters, digits and inner hyphens); any other is refused with the reason. `git worktree move` renames it.
+`basepad up` in any linked git worktree of main makes it a worktree, with its folder's name as the suffix: `git worktree add ../hand` then `basepad up` in `../hand` gives `shop_db_hand` with main's data and `https://web.hand.shop.localhost`. That first `up` runs its Create hooks, as `worktree add` does, before its Up hooks. The folder name must be a lowercase DNS label (letters, digits and inner hyphens); any other is refused with the reason. `git worktree move` renames it.
 
 #### Claude Code
 
@@ -321,13 +379,94 @@ Claude Code makes worktrees for `claude --worktree`, background sessions and sub
 }
 ```
 
-- `worktree add --claude` reads the hook's input on stdin, makes a worktree as `worktree add --branch <name>` does with the name Claude Code asks for (`bold-oak-a3f2`), and prints only its path on stdout. Everything else goes to stderr. If setup fails, it exits 1 and the session does not start; the worktree is kept.
+- `worktree add --claude` reads the hook's input on stdin, makes a worktree as `worktree add --branch <name>` does with the name Claude Code asks for (`bold-oak-a3f2`), and prints only its path on stdout. Everything else goes to stderr. If a Create hook fails, it exits 1 and the session does not start; the worktree is kept. Hook output goes to stderr too.
 - `worktree rm --claude` removes the worktree at the input's `worktree_path` as `worktree rm --force` does, since Claude Code asks before discarding work. The branch is kept.
 - Claude Code removes the worktree of a session you exit. It keeps a subagent's: remove it with `basepad worktree rm`.
 
+### Hooks
+
+Hooks run your own commands when an environment changes, such as migrations once services are up:
+
+```ts
+hooks: {
+	beforeUp: "php artisan migrate --force",
+	afterUp: ["php artisan db:seed --force", "scripts/warm-cache.sh"],
+	beforeDown: "php artisan queue:clear",
+},
+```
+
+| Hook         | Runs                                                                                                       |
+| ------------ | ---------------------------------------------------------------------------------------------------------- |
+| `beforeUp`   | in `basepad up`, once the services are ready and the env files written, before the apps start             |
+| `afterUp`    | in `basepad up`, once the apps have started; skipped when an app fails to start                           |
+| `beforeDown` | in `basepad down`, before anything stops                                                                   |
+| `afterDown`  | in `basepad down`, once everything has stopped                                                             |
+| `beforeSave`, `afterSave`, `beforeLoad`, `afterLoad`, `beforeDelete`, `afterDelete` | around `db save`, `db load` and `db rm` |
+| `beforeImport`, `afterImport`, `beforeExport`, `afterExport` | around `db import` and `db export` |
+| `beforeCreate` | in a new worktree, from `worktree add` or the first `up` in a git worktree made by hand, before its databases and env files are made |
+| `afterCreate`  | in a new worktree, once its databases and env files are made, before `--start`'s apps                      |
+| `beforeRemove` | in `worktree rm`, and in `prune` for each worktree whose folder is gone, before its apps, databases and git worktree go |
+| `afterRemove`  | in `worktree rm` and `prune`, once they have gone                                                          |
+
+Create hooks run only for worktrees, never for main: put main's commands in `afterUp`. A worktree's Create hooks run once. If `beforeCreate` fails, the worktree's next `basepad up` runs them again, since it was never made ready.
+
+Remove hooks are main's, from main's config, and run from main's folder, so removing a worktree whose folder or config is gone still runs them. They get `BASEPAD_WORKTREE`, the worktree's folder, which may be gone, and the keys of the worktree's env files, never main's: a key whose file is gone is set empty.
+
+- A hook is one shell command or a list of them. The commands run in order through `sh`, from the folder that holds the environment's `basepad.config.ts` (main's, or the worktree's), where apps run by default. When the config sits in a subfolder of the repository, that subfolder is where hooks run, not the repository's top.
+- They run through `mise exec`, so `php`, `psql` and `node` are the ones the checkout's `mise.toml` pins.
+- stdin is closed, so a hook can't ask a question. A command that waits for an answer reads end of file.
+- Each command gets the keys of the env files basepad writes that are shell names, as `env` sets them, so `$DB_HOST` and `$DB_PORT` work directly; other keys, such as `app.url`, may or may not reach a hook (dash, Debian's and Ubuntu's `/bin/sh`, drops them; bash passes them on), so don't rely on them. A key missing from its file is set empty. These keys and basepad's own variables win over the checkout's `mise.toml` `[env]`. It also gets `BASEPAD_EVENT`, the hook's name (`afterUp`), and `BASEPAD_ENVIRONMENT`: `main`, or the worktree's suffix.
+- `db` hooks also get `BASEPAD_SERVICE`, the database service's key, and per command: `BASEPAD_LABEL` (save, load, rm), `BASEPAD_SOURCE` (import: the file's full path, or the URL) and `BASEPAD_FILE` (export: the file's full path, empty for standard output).
+- A `db` command's `before…` hook runs only once basepad has checked the command can go ahead: the service isn't `shared` in this worktree, the snapshot exists, the import source reads and you said yes. A command refused there runs no hook.
+- A hook's output is printed where basepad's own lines go: standard error for `db export` to standard output and under `--json` and `--claude`, so that output stays clean. With mission control open, it shows in the environment's logs as a `hooks` row, and a failure shows as a notice.
+- The first command that fails stops the hook, and the rest of its commands don't run. A failed `beforeUp` cancels `up`: no app starts. A failed `afterUp` makes `up` exit 1 and leaves the apps running. A failed `beforeCreate` or `afterCreate` makes the command exit 1 and keeps the worktree. A failed Down or Remove hook only prints a warning: `down` still stops everything, and `worktree rm` and `prune` still remove it. A failed `before…` hook of a `db` command cancels it, and a failed `after…` one makes it exit 1, keeping what it did. basepad never runs a failed hook again by itself.
+- Only the `up` and `down` commands run Up and Down hooks. `worktree add --start`, an app started by the first request to its domain, and mission control's start and stop run none.
+
+#### A test database
+
+basepad makes one database per Postgres service and environment. For a second one, such as the database a Laravel test suite runs against, name it in `env` and let hooks make and drop it:
+
+```ts
+services: { db: postgres() },
+apps: { www: { run: "php artisan serve --port=$PORT" } },
+env: ({ db }) => ({
+	".env": {
+		DB_HOST: db.host,
+		DB_PORT: db.port,
+		DB_USERNAME: db.user,
+		DB_PASSWORD: db.password,
+		DB_DATABASE: db.database,
+		DB_TEST_DATABASE: `${db.database}_testing`,
+	},
+}),
+hooks: {
+	afterCreate: "scripts/test-db.sh",
+	afterUp: ["php artisan migrate --force", "scripts/test-db.sh"],
+	afterImport: "php artisan migrate --force",
+	beforeRemove: "scripts/test-db.sh drop",
+},
+```
+
+`scripts/test-db.sh` makes the test database when it is missing, or drops it:
+
+```sh
+#!/bin/sh
+set -e
+[ -n "$DB_TEST_DATABASE" ] || exit 0
+export PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$DB_USERNAME" PGPASSWORD="$DB_PASSWORD"
+if [ "$1" = drop ]; then
+	psql -d postgres -c "drop database if exists \"$DB_TEST_DATABASE\""
+elif ! psql -d postgres -tAc "select 1 from pg_database where datname = '$DB_TEST_DATABASE'" | grep -q 1; then
+	psql -d postgres -c "create database \"$DB_TEST_DATABASE\""
+fi
+```
+
+- Main gets `shop_db_testing` on its next `up`, and each worktree its own, such as `shop_db_worktree_1_testing`, when it is made. `afterUp` makes it again if it was dropped.
+- basepad drops only the databases it made. Without `beforeRemove`, `worktree rm` leaves the test database on main's server. A worktree whose folder is already gone has no env file left, so `prune` can't drop its test database: drop it with `psql`.
+
 ### The local file
 
-`basepad.config.local.ts`, beside the config, adjusts it for your machine only; `basepad init` adds it to `.gitignore`. When it exists, basepad loads it after the config. Its default export is a function that gets the project's config and returns the changed one:
+`basepad.config.local.ts`, beside the config, adjusts it for your machine only, so add it to `.gitignore`. When it exists, basepad loads it after the config. Its default export is a function that gets the project's config and returns the changed one:
 
 ```ts
 import type { LocalConfig } from "basepad";
@@ -340,17 +479,18 @@ const local: LocalConfig = (config) => ({
 export default local;
 ```
 
+It can add or replace hooks the same way: `hooks: { ...config.hooks, afterUp: "make seed" }`.
+
 ## Commands
 
 Run them anywhere in the project, as `npx basepad <command>`. `basepad --help` lists them, and `basepad <command> --help` gives a command's flags. A mistyped command or flag names the nearest one and exits 1.
 
 | Command          | What it changes                                                                                                                                                                        | What it never touches                                                             |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `basepad init`   | Writes `basepad.config.ts`, named after the folder. Adds `basepad.config.local.ts` to `.gitignore`, creating it. Adds basepad to `package.json`'s devDependencies when it isn't there. | An existing config: it refuses to overwrite one. It installs nothing.             |
-| `basepad up`     | Installs what it needs through mise, starts the services, creates their databases, sets the env files' keys, starts the apps, prints the tables above and, on a terminal, opens mission control.                              | Any other file in the project, any other line of an env file, your own pitchfork. |
-| `basepad down`   | Stops the project's apps and services. Its apps stay stopped, whatever opens their domains, until `up`.                                                                               | Data and env files: it deletes nothing.                                           |
+| `basepad up`     | Installs what it needs through mise, starts the services, creates their databases, sets the env files' keys, runs `beforeUp`, starts the apps, runs `afterUp`, prints the tables above and, on a terminal, opens mission control.                              | Any other file in the project, any other line of an env file, your own pitchfork. |
+| `basepad down`   | Runs `beforeDown`, stops the project's apps and services, then runs `afterDown`. Its apps stay stopped, whatever opens their domains, until `up`.                                                                               | Data and env files: it deletes nothing.                                           |
 | `basepad status` | Nothing. Prints each app with its URL and each service with its address, and their state: `running`, `starting`, `failed` or `stopped`. In main, then each worktree's.               | Anything: it starts nothing.                                                      |
-| `basepad worktree add` | Checks out a git worktree beside the project, copies `worktrees.clone` into it, creates its databases from main's, writes its env files from main's and runs `worktrees.setup`. Starts main's services. Ends main's database sessions for the copy. | Main's data and env files, apart from what `up` in main would set. It starts no app, unless `--start`. |
+| `basepad worktree add` | Checks out a git worktree beside the project, copies `worktrees.clone` into it, creates its databases from main's, writes its env files from main's and runs its Create hooks. Starts main's services. Ends main's database sessions for the copy. | Main's data and env files, apart from what `up` in main would set. It starts no app, unless `--start`. |
 | `basepad worktree ls` | Nothing. Lists main's worktrees with their branch and folder. | Anything. |
 | `basepad worktree rm <worktree>` | Stops the worktree's apps, drops its databases, removes its registration and its git worktree. | Its branch, main's data. Uncommitted work: it refuses unless `--force`. |
 | `basepad prune` | After asking: removes what worktrees whose folder is gone left, and the data of services no longer in the config. | Anything you did not say yes to. Main's databases of services still in the config. |
@@ -438,7 +578,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 ```
 
-Postgres's standard extensions (`pg_trgm`, `citext`, `hstore` and the rest) and [pgvector](https://github.com/pgvector/pgvector) are installed, on 17 and 18.
+Which extensions are installed is up to the Postgres build in your mise config. The default, `postgres = "18.7-3"` from prebuilt-binaries, has Postgres's standard extensions (`pg_trgm`, `citext`, `hstore` and the rest), [pgvector](https://github.com/pgvector/pgvector) and [PostGIS](https://postgis.net), among others.
 
 ### Your own database
 
@@ -488,7 +628,7 @@ As root on Linux (most cloud sandboxes and containers), `up` needs no human:
 - The proxy listens on port 443 itself, and `up` trusts its certificate authority in the system store and the browsers' stores, so URLs are port-free with no `basepad setup` and no prompt.
 - Where `*.localhost` doesn't resolve for server-side code (glibc without systemd's resolver, as in most containers), `up` adds the project's domains to `/etc/hosts`, in a block marked `# >>> basepad <name>`. When it can't write the file, it prints the lines to add.
 
-`postgresWithNeonProxy()` installs Neon's proxy from GitHub releases through mise, which checks its attestation. A GitHub Actions job needs `GITHUB_TOKEN` in its env and the `attestations: read` permission:
+mise installs a `github:` tool from the project's `mise.toml` from GitHub releases, and checks the release's attestation with GitHub's API. In GitHub Actions, any project with a `github:` tool needs the `attestations: read` permission and `GITHUB_TOKEN` in its env:
 
 ```yaml
 permissions:
@@ -497,5 +637,9 @@ permissions:
 env:
   GITHUB_TOKEN: ${{ github.token }}
 ```
+
+A job with its own `permissions` replaces the workflow's, so repeat `attestations: read` in it.
+
+mise treats every config as trusted in CI (`CI` is set), so a job needs no `mise trust`. In a sandbox, the setup script's `mise install` trusts the project's config. mise holds back a release under 24 hours old (`minimum_release_age`) when it chooses a version for a prefix such as `postgres = "18"`; an exact version such as `postgres = "18.7-3"` installs at once.
 
 As a user, as on a hosted CI runner, URLs keep their port, and tools basepad doesn't start (a test runner, say) need its certificate authority, `~/.basepad/pitchfork/state/proxy/ca.pem`: for Node, set `NODE_EXTRA_CA_CERTS` to it.

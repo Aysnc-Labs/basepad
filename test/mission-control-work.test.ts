@@ -107,12 +107,12 @@ test("while it runs, a removal names its worktree", async () => {
 
 test("a command that fails says its error's first and last line", async () => {
 	const { command, dir } = basepad(`
-		console.log("Running \`npm ci\`");
-		console.error("basepad: Setup command \`npm ci\` failed (exit 1). Its output:\\n  npm ERR! missing lockfile\\nWorktree shop-1 is checked out at /code/shop-1; once that is fixed, run the rest of \`worktrees.setup\` there.");
+		console.log("Running afterCreate \`npm ci\`");
+		console.error("basepad: afterCreate \`npm ci\` failed (exit 1).\\n  npm ERR! missing lockfile\\nWorktree shop-1 is checked out at /code/shop-1; once that is fixed, run the rest of \`afterCreate\` there.");
 		process.exitCode = 1;`);
 	await startWork({ dir, command, cwd: tmpdir(), order: { kind: "add" } });
 	expect((await until(dir, (w) => w.finished.length > 0)).finished).toEqual([
-		"Could not add a worktree: Setup command `npm ci` failed (exit 1). Its output: … Worktree shop-1 is checked out at /code/shop-1; once that is fixed, run the rest of `worktrees.setup` there.",
+		"Could not add a worktree: afterCreate `npm ci` failed (exit 1). … Worktree shop-1 is checked out at /code/shop-1; once that is fixed, run the rest of `afterCreate` there.",
 	]);
 });
 
