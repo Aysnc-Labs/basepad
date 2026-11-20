@@ -9,7 +9,7 @@ import { answers, freePort, waitFor } from "../internal/ports.ts";
 import { recordRunning, runningPort } from "../internal/processes.ts";
 import { serviceUser } from "../internal/service-user.ts";
 import type { Daemon } from "../supervisor.ts";
-import { type MiseTool, programsIn } from "../tools.ts";
+import { prebuilt, programsIn } from "../tools.ts";
 
 const HOST = "127.0.0.1";
 const USER = "postgres";
@@ -738,13 +738,7 @@ export async function stampOwnerAndCheck(sql: Sql, name: string, owner: string):
 	}
 }
 
-const PREBUILT = "github:aysnc-labs/prebuilt-binaries";
-
-const POSTGRES_TOOL: MiseTool = {
-	name: "postgres",
-	version: "18.7-1",
-	alias: `${PREBUILT}[version_prefix=postgres-]`,
-};
+const POSTGRES_TOOL = prebuilt("postgres", "18.7-1");
 
 const POSTGRES_TOOLS = {
 	initdb: POSTGRES_TOOL,
@@ -755,13 +749,7 @@ const POSTGRES_TOOLS = {
 	pg_restore: POSTGRES_TOOL,
 };
 
-const NEON_PROXY_TOOLS = {
-	[NEON_PROXY]: {
-		name: NEON_PROXY,
-		version: "8853",
-		alias: `${PREBUILT}[version_prefix=neon-proxy-]`,
-	},
-} satisfies Record<string, MiseTool>;
+const NEON_PROXY_TOOLS = { [NEON_PROXY]: prebuilt(NEON_PROXY, "8853") };
 
 type Pg = Record<keyof typeof POSTGRES_TOOLS, string>;
 

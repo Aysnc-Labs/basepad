@@ -126,7 +126,7 @@ export async function sandbox(): Promise<Sandbox> {
 		run: (file, args) => exec(file, args, root),
 		psql,
 		redis: (url, ...args) =>
-			exec("mise", ["exec", "redis@8", "--", "redis-cli", "-u", url, ...args], toolsDir, {
+			exec("mise", ["exec", "--", "redis-cli", "-u", url, ...args], toolsDir, {
 				MISE_SKILLS_FETCH: "false",
 			}),
 		async sql(project, sql) {

@@ -42,6 +42,11 @@ export interface MiseTool {
 	alias?: string;
 }
 
+/** A tool of Aysnc-Labs/prebuilt-binaries, under its own name through a `[tool_alias]`. */
+export function prebuilt(name: string, version: string): MiseTool {
+	return { name, version, alias: `github:aysnc-labs/prebuilt-binaries[version_prefix=${name}-]` };
+}
+
 const readied = new Map<string, Promise<void>>();
 const found = new Map<string, Promise<string | undefined>>();
 

@@ -120,12 +120,12 @@ Decisions: [0002](adr/0002-a-kind-owns-its-companion-processes.md), [0003](adr/0
 
 ### Redis
 
-Purpose: a Redis per environment, in memory, on a port derived from the environment's name (the next free one when taken, and env files follow), with `url`, `host` and `port` for `env`. A worktree's is its own and empty, started only with the worktree (`up`, `--start` or the first request to its apps), stopped by its `down` and removed by `worktree rm`; `worktree: "shared"` gives it main's.
-Entry: `services: { cache: redis({ worktree }) }` in the config
-Paths: src/catalogue.ts, src/catalogue/redis.ts, src/layout.ts
+Purpose: a Redis per environment, in memory, on a port derived from the environment's name (the next free one when taken, and env files follow), with `url`, `host` and `port` for `env`. A worktree's is its own and empty, started only with the worktree (`up`, `--start` or the first request to its apps), stopped by its `down` and removed by `worktree rm`; `worktree: "shared"` gives it main's. Its `redis-server` comes from `programsIn` (see Postgres) in the checkout it runs for: a worktree's own Redis from the worktree's, main's and a shared one from main's.
+Entry: `services: { cache: redis({ worktree }) }` in the config, and `redis` in the project's `mise.toml`
+Paths: src/catalogue.ts, src/catalogue/redis.ts, src/tools.ts, src/layout.ts
 
 ### Mailpit
 
-Purpose: one Mailpit per project that catches all its mail, shared by its worktrees: the inbox at `https://<key>.<name>.localhost` (the Catalogue's `web`: a service asking Layout for a domain, which the supervisor's proxy serves), SMTP `url`, `host`, `port` and `user` for `env`, each environment's mail tagged by its SMTP user (`main` or the suffix).
-Entry: `services: { mail: mailpit() }` in the config
-Paths: src/catalogue.ts, src/catalogue/mailpit.ts, src/layout.ts
+Purpose: one Mailpit per project that catches all its mail, shared by its worktrees: the inbox at `https://<key>.<name>.localhost` (the Catalogue's `web`: a service asking Layout for a domain, which the supervisor's proxy serves), SMTP `url`, `host`, `port` and `user` for `env`, each environment's mail tagged by its SMTP user (`main` or the suffix). Its `mailpit` comes from `programsIn` (see Postgres) in main's checkout.
+Entry: `services: { mail: mailpit() }` in the config, and `mailpit` in the project's `mise.toml`
+Paths: src/catalogue.ts, src/catalogue/mailpit.ts, src/tools.ts, src/layout.ts

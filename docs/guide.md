@@ -147,7 +147,7 @@ export default defineConfig({
 | Key        | Required | What it is                                                                                                                                |
 | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`     | yes      | The project's one key: a lowercase DNS label (letters, digits, hyphens). Every database and domain is built from it.                      |
-| `services` | no       | The services basepad provides, by key: [Postgres](#postgres), `postgres()`, Postgres with [Neon's proxy](#postgres-with-neons-proxy), `postgresWithNeonProxy()`, Redis, `redis()` or `redis({ worktree: "shared" })`, and [Mailpit](#mailpit), `mailpit()`. |
+| `services` | no       | The services basepad provides, by key: [Postgres](#postgres), `postgres()`, Postgres with [Neon's proxy](#postgres-with-neons-proxy), `postgresWithNeonProxy()`, [Redis](#redis), `redis()` or `redis({ worktree: "shared" })`, and [Mailpit](#mailpit), `mailpit()`. |
 | `apps`     | no       | The project's own processes, by key. Each has `run`, a shell command, and optionally `cwd`, a folder relative to the config, `port: false` for one that listens on nothing, and `domain: false` for one served at `https://localhost:$PORT`. |
 | `env`      | no       | A function from every service's and app's outputs to the env files to write: each file's path, relative to the config, to its keys.       |
 | `hooks`    | no       | Shell commands run around `up`, `down` and other events, by name: `beforeUp`, `afterUp` and so on. See [Hooks](#hooks). |
@@ -300,10 +300,29 @@ npx basepad db export ./shop.dump      # a dump others can import; ./shop.sql fo
 - `export` writes a custom-format dump, or plain SQL, without owners or grants, for a name ending `.sql`. With no file it writes the dump to standard output, for a pipe or `>`, and refuses a terminal. Your app stays connected while it runs.
 - The URL's server is read with this service's Postgres version's `pg_dump`, which reads that version and older ones.
 
+### Redis
+
+- `cache: redis()` is a Redis of the environment's own, listening on `127.0.0.1` only. It keeps its data in memory: it starts empty and keeps nothing after it stops.
+- Its port comes from the project's name, as Postgres's does. When something else holds it, `up` takes the next free one and rewrites your env files.
+- Its `redis-server` comes from the mise config of the checkout it runs for, found as [Postgres's programs](#postgres) are: a worktree's own Redis from the worktree's `mise.toml`, main's and `redis({ worktree: "shared" })` from main's.
+
+When the mise config gives no `redis-server`, `up` stops before it starts anything and prints the lines to add to `mise.toml`:
+
+```toml
+[tool_alias]
+redis = "github:aysnc-labs/prebuilt-binaries[version_prefix=redis-]"
+
+[tools]
+redis = "8.10.3"
+```
+
+On Linux, that build needs glibc 2.43 (Ubuntu 26.04) for now, so it doesn't start on Ubuntu 24.04 or Debian 12. There, use conda's build instead: `"conda:redis-server" = "8.10.3"` under `[tools]`. Any tool that gives `redis-server` works. As with Postgres, mise keeps one install folder per tool name and version, so a `redis` at a version already installed from another source is reused as it is.
+
 ### Mailpit
 
 - `mail: mailpit()` catches every message the project sends: nothing reaches a real inbox. Read them at `https://mail.<name>.localhost`, the service's key as its domain; a key that is also an app's is refused.
-- One Mailpit per project, from mise, its SMTP server on `127.0.0.1` only. No other project shares it; main and every worktree do.
+- One Mailpit per project, its SMTP server on `127.0.0.1` only. No other project shares it; main and every worktree do.
+- Its `mailpit` program comes from main's mise config, found as [Postgres's programs](#postgres) are. When the config gives none, `up` prints the line to add under `[tools]` in `mise.toml`: `mailpit = "1.33.1"`, from mise's registry.
 - Each environment sends as its own SMTP user, `main` or the worktree's suffix, and Mailpit tags each message with it. Use `url`, or set your mailer's username to `user`, or mail arrives untagged.
 - Its SMTP port comes from the project's name, as Postgres's does. Its messages are kept across `down` and `up` in `~/.basepad/services/<name>/<key>`.
 - After `down`, opening the inbox starts Mailpit again.
