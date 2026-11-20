@@ -14,7 +14,7 @@ import {
 import { readHookInput } from "./claude-hooks.ts";
 import { CONFIG_FILE, LABEL, loadProject, type Project } from "./config.ts";
 import { copyEnvFiles, writeEnvFiles } from "./env-files.ts";
-import { runHook } from "./hooks.ts";
+import { hooksOf } from "./hooks.ts";
 import { dropHosts, syncHosts } from "./hosts.ts";
 import type { EnvFiles } from "./index.ts";
 import { BasepadError, shellQuote } from "./internal/exec.ts";
@@ -459,18 +459,13 @@ async function up({ cwd, flags, print }: Invocation): Promise<void> {
 	const context = await open(environment, flags, print);
 	const { supervisor, here } = context;
 	const lay = await readyOrCreate(environment, context, print);
-	const hook = upHooks(environment, print);
+	const hook = hooksOf(project, { environment: environment.suffix, say: print });
 	await hook("beforeUp");
 	const { states, failure } = await startApps(supervisor, project, lay);
 	const afterUp = failure === undefined ? await failureOf(hook("afterUp")) : undefined;
 	print(await stateTables(environment, lay, here, await withServices(supervisor, lay, states)));
 	if (failure !== undefined) throw new BasepadError(failure);
 	if (afterUp !== undefined) throw afterUp;
-}
-
-function upHooks(environment: Environment, say: (line: string) => void) {
-	return (name: "beforeUp" | "afterUp") =>
-		runHook(environment.project, name, { environment: environment.suffix, say });
 }
 
 const failureOf = (running: Promise<void>): Promise<unknown> =>
@@ -492,10 +487,11 @@ async function upOnTerminal(
 	const supervisor = await openSupervisor(here, say);
 	const selected = layout(project, here, environment.suffix).namespace;
 	const hooksRow = hookLog(hooksId(selected));
-	const hook = upHooks(environment, (line) => {
+	const sayAndLog = (line: string) => {
 		say(line);
 		hooksRow.say(line);
-	});
+	};
+	const hook = hooksOf(project, { environment: environment.suffix, say: sayAndLog });
 	let served = here;
 	let outcome: { lay: Layout; states: Record<string, DaemonState>; failure?: string } | undefined;
 	let afterUp: unknown;
@@ -503,10 +499,7 @@ async function upOnTerminal(
 	let notice: string | undefined;
 	const readying = (async () => {
 		const context = await open(environment, flags, say, supervisor);
-		const lay = await readyOrCreate(environment, { ...context, print: say }, (line) => {
-			say(line);
-			hooksRow.say(line);
-		});
+		const lay = await readyOrCreate(environment, { ...context, print: say }, sayAndLog);
 		served = await machineWithPortFree(here, supervisor);
 		await hook("beforeUp");
 		outcome = { lay, ...(await startApps(supervisor, project, lay)) };
@@ -568,8 +561,7 @@ async function create(
 	}: { start?: (key: string) => boolean; before?: () => Promise<void> } = {},
 ): Promise<Layout> {
 	const { root } = environment.project;
-	const hook = (name: "beforeCreate" | "afterCreate") =>
-		runHook(environment.project, name, { environment: suffix, say });
+	const hook = hooksOf(environment.project, { environment: suffix, say });
 	const lay = await keptOnFailure(suffix, root, UP_THERE, async () => {
 		await before();
 		await checkTools(environment, context.here);
@@ -767,12 +759,7 @@ async function down({ cwd, print }: Invocation): Promise<void> {
 	const apps = Object.keys(project.apps);
 	const own = ownServers(lay);
 	const mains = Object.keys(project.services).filter((key) => !own.includes(key));
-	const hook = (name: "beforeDown" | "afterDown") =>
-		runHook(project, name, {
-			environment: suffix,
-			say: print,
-			warn: (line) => console.error(`basepad: ${line}`),
-		});
+	const hook = hooksOf(project, { environment: suffix, say: print, warnOnly: true });
 	await hook("beforeDown");
 	const landed = process.stdout.isTTY
 		? await startLanding(project.name, suffix, [...apps, ...own], mains)
@@ -963,14 +950,13 @@ function removeHook(
 	tree: Pick<Listed, "suffix" | "root">,
 	say: (line: string) => void,
 ) {
-	return (name: "beforeRemove" | "afterRemove") =>
-		runHook(main, name, {
-			environment: tree.suffix,
-			say,
-			keysFrom: tree.root,
-			variables: { BASEPAD_WORKTREE: tree.root },
-			warn: (line) => console.error(`basepad: ${line}`),
-		});
+	return hooksOf(main, {
+		environment: tree.suffix,
+		say,
+		keysFrom: tree.root,
+		variables: { BASEPAD_WORKTREE: tree.root },
+		warnOnly: true,
+	});
 }
 
 async function removeEnvironment(
@@ -1230,12 +1216,12 @@ function dbHooks(
 	say: (line: string) => void,
 	variables: Record<string, string>,
 ) {
-	return (when: "before" | "after") =>
-		runHook(environment.project, `${when}${event}`, {
-			environment: environment.suffix,
-			say,
-			variables: { BASEPAD_SERVICE: key, ...variables },
-		});
+	const hook = hooksOf(environment.project, {
+		environment: environment.suffix,
+		say,
+		variables: { BASEPAD_SERVICE: key, ...variables },
+	});
+	return (when: "before" | "after") => hook(`${when}${event}`);
 }
 
 function labelOf(args: string[]): string {

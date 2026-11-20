@@ -30,29 +30,32 @@ export const HOOK_NAMES: HookName[] = HOOK_EVENTS.flatMap((event) => [
 export interface HookRun {
 	environment: string | undefined;
 	say(line: string): void;
-	dir?: string;
 	keysFrom?: string;
 	variables?: Record<string, string>;
-	warn?(line: string): void;
+	warnOnly?: true;
 }
 
-export async function runHook(project: Project, name: HookName, run: HookRun): Promise<void> {
-	const commands = project.hooks[name] ?? [];
-	if (commands.length === 0) return;
-	const env = {
-		...(await envFileKeys(project, run.keysFrom ?? project.root)),
-		...run.variables,
-		BASEPAD_EVENT: name,
-		BASEPAD_ENVIRONMENT: run.environment ?? "main",
+export type RunHook = (name: HookName) => Promise<void>;
+
+export function hooksOf(project: Project, run: HookRun): RunHook {
+	return async (name) => {
+		const commands = project.hooks[name] ?? [];
+		if (commands.length === 0) return;
+		const env = {
+			...(await envFileKeys(project, run.keysFrom ?? project.root)),
+			...run.variables,
+			BASEPAD_EVENT: name,
+			BASEPAD_ENVIRONMENT: run.environment ?? "main",
+		};
+		const failed = await runCommands(project.root, commands, env, (command) => {
+			run.say(`Running ${name} \`${command}\``);
+			return (line) => run.say(`  ${line}`);
+		});
+		if (failed === undefined) return;
+		const message = `${name} \`${failed.command}\` failed (exit ${failed.code}).`;
+		if (run.warnOnly !== true) throw new BasepadError(message);
+		console.error(`basepad: ${message} Going on.`);
 	};
-	const failed = await runCommands(run.dir ?? project.root, commands, env, (command) => {
-		run.say(`Running ${name} \`${command}\``);
-		return (line) => run.say(`  ${line}`);
-	});
-	if (failed === undefined) return;
-	const message = `${name} \`${failed.command}\` failed (exit ${failed.code}).`;
-	if (run.warn === undefined) throw new BasepadError(message);
-	run.warn(`${message} Going on.`);
 }
 
 async function runCommands(
@@ -93,25 +96,28 @@ function streamed(
 
 async function envFileKeys(project: Project, root: string): Promise<Record<string, string>> {
 	const keys: Record<string, string> = {};
-	for (const [path, names] of Object.entries(envFileNames(project))) {
+	for (const { path, names } of envFileShape(project)) {
 		const text = await readFile(resolve(root, path), "utf8").catch(() => undefined);
 		if (text !== undefined) Object.assign(keys, valuesOf(text, names));
 	}
 	return keys;
 }
 
-function envFileNames(project: Project): Record<string, string[]> {
+interface EnvFileShape {
+	path: string;
+	names: string[];
+}
+
+function envFileShape(project: Project): EnvFileShape[] {
 	let files: unknown;
 	try {
 		files = project.env(anyOutputs as Parameters<Project["env"]>[0]);
 	} catch {
-		return {};
+		return [];
 	}
-	if (typeof files !== "object" || files === null) return {};
-	return Object.fromEntries(
-		Object.entries(files).flatMap(([path, keys]) =>
-			typeof keys === "object" && keys !== null ? [[path, Object.keys(keys)]] : [],
-		),
+	if (typeof files !== "object" || files === null) return [];
+	return Object.entries(files).flatMap(([path, keys]) =>
+		typeof keys === "object" && keys !== null ? [{ path, names: Object.keys(keys) }] : [],
 	);
 }
 
