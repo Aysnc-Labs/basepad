@@ -72,7 +72,9 @@ test("a worktree whose shared service resolves another program than main's fails
 
 test("a worktree whose mise config isn't trusted fails before beforeCreate runs", async () => {
 	const main = await box.project("t57trust", {
-		"basepad.config.ts": configFile(`{ name: "t57trust", hooks: { beforeCreate: "touch created" } }`),
+		"basepad.config.ts": configFile(
+			`{ name: "t57trust", hooks: { beforeCreate: "touch created" } }`,
+		),
 		".gitignore": "node_modules\ncreated\n",
 	});
 	await git(main, "init", "--quiet", "--initial-branch=main");

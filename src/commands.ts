@@ -253,11 +253,14 @@ interface Context {
 async function ready(
 	environment: Environment,
 	context: Context,
-	{ start = () => true }: { start?: (key: string) => boolean } = {},
+	{
+		start = () => true,
+		toolsChecked = false,
+	}: { start?: (key: string) => boolean; toolsChecked?: boolean } = {},
 ): Promise<Layout> {
 	const { project, suffix, main } = environment;
 	const { here, supervisor, print } = context;
-	await checkTools(environment, here);
+	if (!toolsChecked) await checkTools(environment, here);
 	const ports = layout(project, here, suffix);
 	const services = Object.keys(project.services);
 	const owner = await supervisor.owner(ports.namespace);
@@ -566,7 +569,10 @@ async function create(
 		await before();
 		await checkTools(environment, context.here);
 		await hook("beforeCreate");
-		return ready(environment, context, start === undefined ? {} : { start });
+		return ready(environment, context, {
+			toolsChecked: true,
+			...(start === undefined ? {} : { start }),
+		});
 	});
 	await keptOnFailure(tree, "run the rest of `afterCreate` there", () => hook("afterCreate"));
 	return lay;
@@ -993,7 +999,6 @@ function worktreeLayout(main: Project, here: Machine, suffix: string): Layout | 
 }
 
 interface Leftovers {
-	configDir: string;
 	checkouts: Listed[];
 	data: { key: string; data: WorktreeData[] }[];
 	registrations: { namespace: string; dir: string }[];
@@ -1017,7 +1022,7 @@ async function leftoversOf(
 	const registrations = (await supervisor.registrations()).filter(
 		(entry) => suffixOf(main.name, entry.namespace) !== undefined && !existsSync(entry.dir),
 	);
-	return { configDir: await configDirOf(main), checkouts, data, registrations };
+	return { checkouts, data, registrations };
 }
 
 function leftoverRows({ checkouts, data, registrations }: Leftovers): string[][] {
@@ -1062,7 +1067,9 @@ async function prune({ cwd, flags, print }: Invocation): Promise<void> {
 		const yes = flags.yes === true || (await ask("Remove what worktrees left?"));
 		if (yes === undefined) unasked = true;
 		else if (yes) {
-			const hooks = leftoverWorktrees(main, left).map((tree) => removeHook(main, tree, print));
+			const hooks = leftoverWorktrees(main, left, await configDirOf(main)).map((tree) =>
+				removeHook(main, tree, print),
+			);
 			for (const hook of hooks) await hook("beforeRemove");
 			await removeLeftovers(main, left, context);
 			for (const hook of hooks) await hook("afterRemove");
@@ -1093,7 +1100,11 @@ async function prune({ cwd, flags, print }: Invocation): Promise<void> {
 	}
 }
 
-function leftoverWorktrees(main: Project, left: Leftovers): Pick<Listed, "suffix" | "root">[] {
+function leftoverWorktrees(
+	main: Project,
+	left: Leftovers,
+	configDir: string,
+): Pick<Listed, "suffix" | "root">[] {
 	const trees = new Map<string, string>();
 	for (const tree of left.checkouts) trees.set(tree.root, tree.suffix);
 	for (const { namespace, dir } of left.registrations) {
@@ -1102,7 +1113,7 @@ function leftoverWorktrees(main: Project, left: Leftovers): Pick<Listed, "suffix
 	}
 	for (const { data } of left.data) {
 		for (const { owner } of data)
-			if (!trees.has(owner)) trees.set(owner, worktreeSuffix(owner, left.configDir));
+			if (!trees.has(owner)) trees.set(owner, worktreeSuffix(owner, configDir));
 	}
 	return [...trees].map(([root, suffix]) => ({ root, suffix }));
 }
