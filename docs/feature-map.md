@@ -11,7 +11,7 @@ A feature is anything a user starts from: an import, a config key, a command or 
 
 ```mermaid
 flowchart LR
-  CLI["basepad (launcher, cli)"] --> Commands["commands: init, up, down, status, setup, worktree add, ls, rm, prune, db save, load, snapshots, rm, import, export"]
+  CLI["basepad (launcher, cli)"] --> Commands["commands: up, down, status, setup, worktree add, ls, rm, prune, db save, load, snapshots, rm, import, export"]
   Commands --> Worktrees["worktrees"]
   Worktrees -- "git" --> Git["git"]
   Commands --> Config["config: basepad.config.ts"]
@@ -50,12 +50,6 @@ Decisions: [0001](adr/0001-config-is-the-only-interface.md)
 Purpose: runs basepad on mise's Node 24 whatever the project's Node, checks the mise floor, and dispatches commands and help from one table.
 Entry: `basepad`, `basepad <command> --help`
 Paths: src/launcher.ts, src/cli.ts, src/versions.ts, src/internal/exec.ts, src/internal/files.ts, src/internal/table.ts
-
-### `basepad init`
-
-Purpose: writes a starter config named from the folder, ignores the local file, adds basepad as a devDependency.
-Entry: `basepad init`
-Paths: src/init.ts
 
 ### `basepad up`, `down` and `status`
 
