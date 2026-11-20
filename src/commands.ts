@@ -328,6 +328,7 @@ async function ready(
 	const outputs: Record<string, unknown> = {};
 	const own = ownServers(lay);
 	const runsIn = (key: string) => (own.includes(key) ? lay.namespace : lay.mainNamespace);
+	const ownDaemons = (namespace: string) => (namespace === ports.namespace ? daemons : {});
 	const placeAt = (key: string) => lay.services[key] as ServicePlace;
 	const serverOf = (key: string) => ofDaemon(placeAt(key).daemon).name;
 	const started = services.filter((key) => runsIn(key) === lay.mainNamespace || start(key));
@@ -343,7 +344,9 @@ async function ready(
 		const states = await supervisor.start(namespace, names, APP_WAIT_MS, hosts);
 		const failed = names.filter((name) => states[name] === "failed");
 		if (failed.length > 0)
-			throw new BasepadError(await failures(supervisor, namespace, failed, since));
+			throw new BasepadError(
+				await failures(supervisor, namespace, failed, since, ownDaemons(namespace)),
+			);
 	}
 	for (const key of services) {
 		const service = project.services[key] as Service;
@@ -360,7 +363,9 @@ async function ready(
 			});
 		} catch (error) {
 			if (!(error instanceof Stopped)) throw error;
-			throw new BasepadError(await failures(supervisor, namespace, [serverOf(key)], since));
+			throw new BasepadError(
+				await failures(supervisor, namespace, [serverOf(key)], since, ownDaemons(namespace)),
+			);
 		}
 	}
 	for (const [key, app] of Object.entries(lay.apps)) {
@@ -629,11 +634,13 @@ async function failures(
 	namespace: string,
 	failed: string[],
 	since: Date,
+	daemons: Record<string, Daemon> = {},
 ): Promise<string> {
 	const parts: string[] = [];
 	for (const key of failed) {
 		const lines = await supervisor.logs(namespace, key, since, FAILED_LINES);
-		parts.push(startFailure(key, lines, supervisor.logsCommand(namespace, key)));
+		const logs = supervisor.logsCommand(namespace, key);
+		parts.push(startFailure(key, lines, logs, daemons[key]?.program));
 	}
 	return parts.join("\n");
 }

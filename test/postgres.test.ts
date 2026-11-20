@@ -196,6 +196,7 @@ test("a server that exits after it starts is reported with its output, and up fa
 		expect(out.code).toBe(1);
 		expect(out.stderr).toContain("basepad: `db` exited on start. Its last output:");
 		expect(out.stderr).toContain("max_connections");
+		expect(out.stderr).toMatch(/\nIts program: \/\S+\/postgres\n/);
 		expect(out.stderr).toMatch(/pitchfork logs pg-shop\/db/);
 	} finally {
 		await writeFile(conf, kept);
