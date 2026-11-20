@@ -349,6 +349,7 @@ export const postgresWithNeonProxyKind: Kind<
 			[place.daemon]: daemon,
 			[extra.daemon]: {
 				run: `${recordProxy(extra.pid, { proxy: proxyPort, postgres: postgresPort })} && export LOGFMT=text RUST_LOG=warn && exec ${argv.map(shellQuote).join(" ")}`,
+				program: argv[0],
 				dir: place.dir,
 				listens: proxyPort,
 				depends: [place.daemon],
@@ -458,6 +459,7 @@ async function prepareServer(
 		port,
 		daemon: {
 			run: `exec ${server.map(shellQuote).join(" ")}`,
+			program: pg.bin("postgres"),
 			dir: place.dir,
 			// Fast shutdown: SIGTERM's smart shutdown would wait for every app's connections to close:
 			// https://www.postgresql.org/docs/current/server-shutdown.html

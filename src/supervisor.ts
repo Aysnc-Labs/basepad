@@ -15,6 +15,7 @@ import { PITCHFORK_VERSION } from "./versions.ts";
 
 export interface Daemon {
 	run: string;
+	program?: string;
 	dir: string;
 	port?: number;
 	proxy?: false;
@@ -581,9 +582,18 @@ function localTime(date: Date): string {
 	return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
 }
 
-const FIRST_DISTROS_WITH_GLIBC: Record<string, string> = { "2.39": "Ubuntu 24.04, Debian 13" };
+const FIRST_DISTROS_WITH_GLIBC: Record<string, string> = {
+	"2.39": "Ubuntu 24.04, Debian 13",
+	"2.41": "Debian 13, Ubuntu 26.04",
+	"2.43": "Ubuntu 26.04",
+};
 
-export function startFailure(name: string, lines: string[], logsCommand: string): string {
+export function startFailure(
+	name: string,
+	lines: string[],
+	logsCommand: string,
+	program?: string,
+): string {
 	const glibc = glibcFloor(lines);
 	const distros = glibc === undefined ? undefined : FIRST_DISTROS_WITH_GLIBC[glibc];
 	const why =
@@ -593,6 +603,7 @@ export function startFailure(name: string, lines: string[], logsCommand: string)
 	return [
 		`\`${name}\` ${why} Its last output:`,
 		...(lines.length > 0 ? lines : ["(none)"]).map((line) => `  ${line}`),
+		...(program === undefined ? [] : [`Its program: ${program}`]),
 		`For more, run: ${logsCommand}`,
 	].join("\n");
 }
