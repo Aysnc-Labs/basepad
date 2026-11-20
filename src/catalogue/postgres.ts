@@ -295,6 +295,8 @@ export const postgresKind: Kind<PostgresService, PostgresOutputs, PostgresNames>
 	...server,
 	schema: schemaOf("postgres"),
 
+	programs: () => POSTGRES_TOOLS,
+
 	async prepare(service, place) {
 		const { daemon } = await prepareServer(service, place);
 		return { [place.daemon]: daemon };
@@ -312,6 +314,8 @@ export const postgresWithNeonProxyKind: Kind<
 > = {
 	...server,
 	schema: schemaOf("postgresWithNeonProxy"),
+
+	programs: () => POSTGRES_WITH_NEON_PROXY_TOOLS,
 
 	extraDaemons: [NEON_PROXY],
 
@@ -751,14 +755,14 @@ const POSTGRES_TOOLS = {
 
 const NEON_PROXY_TOOLS = { [NEON_PROXY]: prebuilt(NEON_PROXY, "8853") };
 
+const POSTGRES_WITH_NEON_PROXY_TOOLS = { ...POSTGRES_TOOLS, ...NEON_PROXY_TOOLS };
+
 type Pg = Record<keyof typeof POSTGRES_TOOLS, string>;
 
 function programsOf(service: AnyPostgres, place: Place<PostgresNames>): Promise<Pg> {
 	return programsIn(
 		place.checkout,
-		service.kind === "postgresWithNeonProxy"
-			? { ...POSTGRES_TOOLS, ...NEON_PROXY_TOOLS }
-			: POSTGRES_TOOLS,
+		service.kind === "postgresWithNeonProxy" ? POSTGRES_WITH_NEON_PROXY_TOOLS : POSTGRES_TOOLS,
 	);
 }
 

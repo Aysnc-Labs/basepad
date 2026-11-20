@@ -4,6 +4,7 @@ import { postgresKind, postgresWithNeonProxyKind } from "./catalogue/postgres.ts
 import { redisKind } from "./catalogue/redis.ts";
 import type { Machine } from "./layout.ts";
 import type { Daemon } from "./supervisor.ts";
+import type { MiseTool } from "./tools.ts";
 
 export interface ServiceBase {
 	kind: string;
@@ -54,6 +55,8 @@ export interface Kind<S extends ServiceBase, O, N> {
 	extraDaemons?: readonly string[];
 	perEnvironment?(service: S): boolean;
 	names(service: S, input: NameInput): N;
+	/** The programs the service runs, each with the tool that gives it by default. */
+	programs(service: S): Record<string, MiseTool>;
 	prepare(service: S, place: Place<N>): Promise<Record<string, Daemon>>;
 	provision(
 		service: S,

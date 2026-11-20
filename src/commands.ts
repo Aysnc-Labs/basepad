@@ -52,6 +52,7 @@ import {
 	startFailure,
 } from "./supervisor.ts";
 import { ensureLocalhostCertificate } from "./tls.ts";
+import { programsIn } from "./tools.ts";
 import {
 	checkedOut,
 	checkOutWorktree,
@@ -268,6 +269,7 @@ async function ready(
 			`This worktree's config has ${missing.map((key) => `\`${key}\``).join(", ")}, which main's has not. A worktree's services run on main's servers: add ${missing.length > 1 ? "them" : "it"} to main's config and run \`basepad up\` there first.`,
 		);
 	}
+	if (main !== undefined) await sameProgramsAsMain(project, main, ports);
 	const daemons: Record<string, Daemon> = {};
 	for (const key of ownServers(ports)) {
 		const service = project.services[key] as Service;
@@ -384,6 +386,27 @@ async function ready(
 	if (main !== undefined) await copyEnvFiles(main.root, project.root, Object.keys(files));
 	await writeEnvFiles(project.root, files);
 	return lay;
+}
+
+async function sameProgramsAsMain(project: Project, main: Project, ports: Layout): Promise<void> {
+	const own = ownServers(ports);
+	for (const key of Object.keys(project.services).filter((key) => !own.includes(key))) {
+		const service = project.services[key] as Service;
+		const needed = kindOf(service).programs(service);
+		const [here, there] = await Promise.all([
+			programsIn(project.root, needed),
+			programsIn(main.root, needed),
+		]);
+		const differ = Object.keys(needed).filter((program) => here[program] !== there[program]);
+		if (differ.length === 0) continue;
+		const lines = differ.flatMap((program) => [
+			`  \`${program}\` in this worktree: ${here[program]}`,
+			`  \`${program}\` in main: ${there[program]}`,
+		]);
+		throw new BasepadError(
+			`This worktree's \`${key}\` runs on main's server, but its mise config resolves other programs than main's:\n${lines.join("\n")}\nOne server runs one build. To try another, change main's mise.toml and run \`basepad up\` in main; or undo the change to this worktree's mise.toml.`,
+		);
+	}
 }
 
 async function stopOrphans(
