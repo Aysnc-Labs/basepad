@@ -116,11 +116,25 @@ interface EnvFileShape {
 	names: string[];
 }
 
+const shapes = new WeakMap<Project, EnvFileShape[]>();
+
 function envFileShape(project: Project): EnvFileShape[] {
+	const known = shapes.get(project);
+	if (known !== undefined) return known;
+	const shape = shapeOf(project);
+	shapes.set(project, shape);
+	return shape;
+}
+
+function shapeOf(project: Project): EnvFileShape[] {
 	let files: unknown;
 	try {
 		files = project.env(anyOutputs as Parameters<Project["env"]>[0]);
-	} catch {
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		console.error(
+			`basepad: hooks get no env file keys: \`env\` threw on basepad's placeholder outputs: ${reason}`,
+		);
 		return [];
 	}
 	if (typeof files !== "object" || files === null) return [];
@@ -129,8 +143,9 @@ function envFileShape(project: Project): EnvFileShape[] {
 	);
 }
 
+const PLACEHOLDER = "http://basepad.invalid/";
 const anyValue: unknown = new Proxy(
 	{},
-	{ get: (_, key) => (key === Symbol.toPrimitive ? () => "" : "") },
+	{ get: (_, key) => (key === Symbol.toPrimitive ? () => PLACEHOLDER : PLACEHOLDER) },
 );
 const anyOutputs: unknown = new Proxy({}, { get: () => anyValue });

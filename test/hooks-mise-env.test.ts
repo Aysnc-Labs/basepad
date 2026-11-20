@@ -82,6 +82,26 @@ test("a Remove hook sees the worktree's env file keys even when main's mise conf
 	await box.basepad(main, "down");
 }, 300_000);
 
+test("a hook gets the env file keys when `env` builds a value from an output", async () => {
+	const dir = await box.project("t67keys", {
+		"basepad.config.ts": configFile(`{
+			name: "t67keys",
+			apps: { web: { run: "sleep 60" } },
+			env: ({ web }) => ({
+				".env.local": { WEB_URL: web.url, WEB_HOST: new URL(web.url).hostname },
+			}),
+			hooks: { afterUp: 'echo "$WEB_URL $WEB_HOST" > keys' },
+		}`),
+	});
+
+	expect((await box.basepad(dir, "up")).code).toBe(0);
+
+	expect(await readFile(join(dir, "keys"), "utf8")).toMatch(
+		/^https:\/\/web\.t67keys\.localhost(:\d+)? web\.t67keys\.localhost\n$/,
+	);
+	await box.basepad(dir, "down");
+}, 120_000);
+
 test("an app gets basepad's PORT even when its checkout's mise config sets PORT", async () => {
 	const echo = join(import.meta.dirname, "apps/echo.mjs");
 	const dir = await box.project("t67appport", {
@@ -95,5 +115,27 @@ test("an app gets basepad's PORT even when its checkout's mise config sets PORT"
 	await box.basepad(dir, "up");
 
 	expect(await readFile(join(dir, "port"), "utf8")).toMatch(/^2\d{4}\n$/);
+	await box.basepad(dir, "down");
+}, 120_000);
+
+test("a hook warns once that it gets no env file keys when `env` throws on basepad's placeholders", async () => {
+	const dir = await box.project("t67envthrows", {
+		"basepad.config.ts": configFile(`{
+			name: "t67envthrows",
+			apps: { web: { run: "sleep 60" } },
+			env: ({ web }) => {
+				if (!web.url.startsWith("https://")) throw new Error("web.url isn't https");
+				return { ".env.local": { WEB_URL: web.url } };
+			},
+			hooks: { beforeUp: "true", afterUp: "true" },
+		}`),
+	});
+
+	const up = await box.basepad(dir, "up");
+
+	expect(up.code).toBe(0);
+	expect(up.stderr).toBe(
+		"basepad: hooks get no env file keys: `env` threw on basepad's placeholder outputs: web.url isn't https\n",
+	);
 	await box.basepad(dir, "down");
 }, 120_000);
