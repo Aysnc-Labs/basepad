@@ -10,14 +10,6 @@ beforeAll(async () => {
 });
 afterAll(() => box.dispose());
 
-const notCi = {
-	CI: undefined,
-	CONTINUOUS_INTEGRATION: undefined,
-	GITHUB_ACTIONS: undefined,
-	BUILD_NUMBER: undefined,
-	RUN_ID: undefined,
-};
-
 test("on a Node older than 24, basepad runs again on mise's Node 24 without trusting the project's mise config", {
 	timeout: 300_000,
 }, async () => {
@@ -30,11 +22,7 @@ test("on a Node older than 24, basepad runs again on mise's Node 24 without trus
 	const where = await box.run("mise", ["where", "node@18"]);
 	const node18 = join(where.stdout.trim(), "bin/node");
 
-	const out = await box.basepadWith(
-		{ via: [node18], env: { ...notCi, MISE_TRUSTED_CONFIG_PATHS: undefined } },
-		dir,
-		"status",
-	);
+	const out = await box.basepadWith({ via: [node18], env: box.untrusted() }, dir, "status");
 
 	expect(out.stdout).toContain(`web  https://web.shop.localhost:${box.proxyPort}  stopped`);
 	expect(out.code).toBe(0);

@@ -81,11 +81,7 @@ test("a worktree whose mise config isn't trusted fails before beforeCreate runs"
 	await git(main, "add", ".");
 	await git(main, "commit", "--quiet", "-m", "init");
 	const onlyMainTrusted = {
-		CI: undefined,
-		CONTINUOUS_INTEGRATION: undefined,
-		GITHUB_ACTIONS: undefined,
-		BUILD_NUMBER: undefined,
-		RUN_ID: undefined,
+		...box.untrusted(),
 		MISE_PARANOID: "1",
 		MISE_TRUSTED_CONFIG_PATHS: main,
 	};

@@ -295,12 +295,12 @@ async function readyOnceChecked(
 	for (const [key, app] of Object.entries(project.apps)) {
 		const run = withLocalBins(project, app.cwd, app.run);
 		const port = ports.apps[key]?.port;
+		const portName = port === undefined ? [] : ["PORT"];
 		daemons[key] = {
-			run: throughMise(
+			run:
 				app.domain === false
-					? `export BASEPAD_TLS_CERT=${shellQuote(tls.cert)} BASEPAD_TLS_KEY=${shellQuote(tls.key)} && ${run}`
-					: run,
-			),
+					? `export BASEPAD_TLS_CERT=${shellQuote(tls.cert)} BASEPAD_TLS_KEY=${shellQuote(tls.key)} && ${throughMise(run, [...portName, "BASEPAD_TLS_CERT", "BASEPAD_TLS_KEY"])}`
+					: throughMise(run, portName),
 			dir: app.cwd,
 			port,
 			...(app.domain === false ? { proxy: false as const } : {}),

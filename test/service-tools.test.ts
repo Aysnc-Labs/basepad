@@ -10,14 +10,6 @@ beforeAll(async () => {
 });
 afterAll(() => box?.dispose());
 
-const notCi = {
-	CI: undefined,
-	CONTINUOUS_INTEGRATION: undefined,
-	GITHUB_ACTIONS: undefined,
-	BUILD_NUMBER: undefined,
-	RUN_ID: undefined,
-};
-
 const withNeonProxy = configFile(`{
 	name: "tools-shop",
 	services: { db: postgresWithNeonProxy() },
@@ -33,7 +25,7 @@ test("a project whose mise config has no Postgres gets the lines to add, and not
 
 	expect(up.code).toBe(1);
 	expect(up.stderr).toContain(
-		`No tool in the mise config at ${dir} gives \`initdb\`, \`pg_ctl\`, \`postgres\`, \`psql\`, \`pg_dump\`, \`pg_restore\`, \`neon-proxy\`. Add these lines to ${join(dir, "mise.toml")}:
+		`No tool in the mise config at ${dir} gives \`initdb\`, \`pg_ctl\`, \`postgres\`, \`psql\`, \`pg_dump\`, \`pg_restore\`, \`neon-proxy\`. Put each line under its table in ${join(dir, "mise.toml")}, adding a table the file lacks; don't repeat a table it has:
 
 [tool_alias]
 postgres = "github:aysnc-labs/prebuilt-binaries[version_prefix=postgres-]"
@@ -59,7 +51,7 @@ test("a project whose mise config has no Redis gets the prebuilt Redis lines", a
 
 	expect(up.code).toBe(1);
 	expect(up.stderr).toContain(
-		`No tool in the mise config at ${dir} gives \`redis-server\`. Add these lines to ${join(dir, "mise.toml")}:
+		`No tool in the mise config at ${dir} gives \`redis-server\`. Put each line under its table in ${join(dir, "mise.toml")}, adding a table the file lacks; don't repeat a table it has:
 
 [tool_alias]
 redis = "github:aysnc-labs/prebuilt-binaries[version_prefix=redis-]"
@@ -81,7 +73,7 @@ test("a project whose mise config has no Mailpit gets the Mailpit line", async (
 
 	expect(up.code).toBe(1);
 	expect(up.stderr).toContain(
-		`No tool in the mise config at ${dir} gives \`mailpit\`. Add these lines to ${join(dir, "mise.toml")}:
+		`No tool in the mise config at ${dir} gives \`mailpit\`. Put each line under its table in ${join(dir, "mise.toml")}, adding a table the file lacks; don't repeat a table it has:
 
 [tools]
 mailpit = "1.33.1"
@@ -95,12 +87,7 @@ test("an untrusted mise config fails up with mise's error and how to trust it, a
 		"basepad.config.ts": configFile(`{ name: "tools-untrusted", services: { db: postgres() } }`),
 	});
 
-	const up = await box.basepadWith(
-		{ env: { ...notCi, MISE_TRUSTED_CONFIG_PATHS: undefined } },
-		dir,
-		"up",
-		"-d",
-	);
+	const up = await box.basepadWith({ env: box.untrusted() }, dir, "up", "-d");
 
 	expect(up.code).toBe(1);
 	expect(up.stderr).toContain(`Config files in ${join(dir, "mise.toml")} are not trusted.`);
@@ -119,12 +106,7 @@ test("an untrusted mise config fails up before any hook or app runs, even with n
 		}`),
 	});
 
-	const up = await box.basepadWith(
-		{ env: { ...notCi, MISE_TRUSTED_CONFIG_PATHS: undefined } },
-		dir,
-		"up",
-		"-d",
-	);
+	const up = await box.basepadWith({ env: box.untrusted() }, dir, "up", "-d");
 
 	expect(up.code).toBe(1);
 	expect(up.stderr).toContain(`Config files in ${join(dir, "mise.toml")} are not trusted.`);

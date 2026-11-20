@@ -6,6 +6,7 @@ import type { Project } from "./config.ts";
 import { valuesOf } from "./env-files.ts";
 import { BasepadError } from "./internal/exec.ts";
 import { throughMise } from "./internal/mise.ts";
+import { trustedIn } from "./tools.ts";
 
 export const HOOK_EVENTS = [
 	"Create",
@@ -41,6 +42,13 @@ export function hooksOf(project: Project, run: HookRun): RunHook {
 	return async (name) => {
 		const commands = project.hooks[name] ?? [];
 		if (commands.length === 0) return;
+		try {
+			await trustedIn(project.root);
+		} catch (error) {
+			if (run.warnOnly !== true || !(error instanceof BasepadError)) throw error;
+			console.error(`basepad: ${error.message}\nSkipping ${name}.`);
+			return;
+		}
 		const env = {
 			...(await envFileKeys(project, run.keysFrom ?? project.root)),
 			...run.variables,
@@ -67,8 +75,9 @@ async function runCommands(
 	const env: NodeJS.ProcessEnv = { ...process.env, ...variables };
 	if (env.BASEPAD_PATH) env.PATH = env.BASEPAD_PATH;
 	delete env.BASEPAD_PATH;
+	const names = Object.keys(variables);
 	for (const command of commands) {
-		const code = await streamed(dir, command, env, starting(command));
+		const code = await streamed(dir, throughMise(command, names), env, starting(command));
 		if (code !== 0) return { command, code };
 	}
 	return undefined;
@@ -76,12 +85,12 @@ async function runCommands(
 
 function streamed(
 	dir: string,
-	command: string,
+	script: string,
 	env: NodeJS.ProcessEnv,
 	line: (text: string) => void,
 ): Promise<number> {
 	return new Promise((done, fail) => {
-		const child = spawn("sh", ["-c", throughMise(command)], {
+		const child = spawn("sh", ["-c", script], {
 			cwd: dir,
 			env,
 			stdio: ["ignore", "pipe", "pipe"],
@@ -95,8 +104,11 @@ function streamed(
 }
 
 async function envFileKeys(project: Project, root: string): Promise<Record<string, string>> {
-	const keys: Record<string, string> = {};
-	for (const { path, names } of envFileShape(project)) {
+	const shape = envFileShape(project);
+	const keys: Record<string, string> = Object.fromEntries(
+		shape.flatMap(({ names }) => names.map((name) => [name, ""])),
+	);
+	for (const { path, names } of shape) {
 		const text = await readFile(resolve(root, path), "utf8").catch(() => undefined);
 		if (text !== undefined) Object.assign(keys, valuesOf(text, names));
 	}
@@ -108,11 +120,25 @@ interface EnvFileShape {
 	names: string[];
 }
 
+const shapes = new WeakMap<Project, EnvFileShape[]>();
+
 function envFileShape(project: Project): EnvFileShape[] {
+	const known = shapes.get(project);
+	if (known !== undefined) return known;
+	const shape = shapeOf(project);
+	shapes.set(project, shape);
+	return shape;
+}
+
+function shapeOf(project: Project): EnvFileShape[] {
 	let files: unknown;
 	try {
 		files = project.env(anyOutputs as Parameters<Project["env"]>[0]);
-	} catch {
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		console.error(
+			`basepad: hooks get no env file keys: \`env\` threw on basepad's placeholder outputs: ${reason}`,
+		);
 		return [];
 	}
 	if (typeof files !== "object" || files === null) return [];
@@ -121,8 +147,9 @@ function envFileShape(project: Project): EnvFileShape[] {
 	);
 }
 
+const PLACEHOLDER = "http://basepad.invalid/";
 const anyValue: unknown = new Proxy(
 	{},
-	{ get: (_, key) => (key === Symbol.toPrimitive ? () => "" : "") },
+	{ get: (_, key) => (key === Symbol.toPrimitive ? () => PLACEHOLDER : PLACEHOLDER) },
 );
 const anyOutputs: unknown = new Proxy({}, { get: () => anyValue });

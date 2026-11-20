@@ -221,7 +221,7 @@ That build, from [Aysnc-Labs/prebuilt-binaries](https://github.com/Aysnc-Labs/pr
 
 mise keeps one install folder per tool name and version. A `postgres` tool at a version already installed from another source, such as an older registry `postgres@18.7`, is reused as it is, whichever source the config names.
 
-`up` never trusts a mise config for you. In a project whose `mise.toml` isn't trusted, `up` prints mise's error and the command to run, `mise trust <project>/mise.toml`. To trust every project in a folder once, set `trusted_config_paths` in your global mise config, `~/.config/mise/config.toml`. mise trusts a git worktree of a trusted checkout by itself.
+basepad never trusts a mise config for you. In a project whose `mise.toml` isn't trusted, `up`, `worktree add`, `worktree rm`, `prune` and every `db` command fail with mise's error and the command to run, `mise trust <project>/mise.toml`. `down` prints that error, skips its Down hooks and still stops everything. To trust every project in a folder once, set `trusted_config_paths` in your global mise config, `~/.config/mise/config.toml`. mise trusts a git worktree of a trusted checkout by itself.
 
 ### Postgres with Neon's proxy
 
@@ -410,12 +410,12 @@ hooks: {
 
 Create hooks run only for worktrees, never for main: put main's commands in `afterUp`. A worktree's Create hooks run once. If `beforeCreate` fails, the worktree's next `basepad up` runs them again, since it was never made ready.
 
-Remove hooks are main's, from main's config, and run from main's folder, so removing a worktree whose folder or config is gone still runs them. They get `BASEPAD_WORKTREE`, the worktree's folder, which may be gone, and the keys of the worktree's env files while its folder still has them, never main's.
+Remove hooks are main's, from main's config, and run from main's folder, so removing a worktree whose folder or config is gone still runs them. They get `BASEPAD_WORKTREE`, the worktree's folder, which may be gone, and the keys of the worktree's env files, never main's: a key whose file is gone is set empty.
 
 - A hook is one shell command or a list of them. The commands run in order through `sh`, from the folder that holds the environment's `basepad.config.ts` (main's, or the worktree's), where apps run by default. When the config sits in a subfolder of the repository, that subfolder is where hooks run, not the repository's top.
 - They run through `mise exec`, so `php`, `psql` and `node` are the ones the checkout's `mise.toml` pins.
 - stdin is closed, so a hook can't ask a question. A command that waits for an answer reads end of file.
-- Each command gets the keys of the env files basepad writes, as `env` sets them, so `$DB_HOST` and `$DB_PORT` work directly. It also gets `BASEPAD_EVENT`, the hook's name (`afterUp`), and `BASEPAD_ENVIRONMENT`: `main`, or the worktree's suffix.
+- Each command gets the keys of the env files basepad writes that are shell names, as `env` sets them, so `$DB_HOST` and `$DB_PORT` work directly; other keys, such as `app.url`, may or may not reach a hook (dash, Debian's and Ubuntu's `/bin/sh`, drops them; bash passes them on), so don't rely on them. A key missing from its file is set empty. These keys and basepad's own variables win over the checkout's `mise.toml` `[env]`. It also gets `BASEPAD_EVENT`, the hook's name (`afterUp`), and `BASEPAD_ENVIRONMENT`: `main`, or the worktree's suffix.
 - `db` hooks also get `BASEPAD_SERVICE`, the database service's key, and per command: `BASEPAD_LABEL` (save, load, rm), `BASEPAD_SOURCE` (import: the file's full path, or the URL) and `BASEPAD_FILE` (export: the file's full path, empty for standard output).
 - A `db` command's `before…` hook runs only once basepad has checked the command can go ahead: the service isn't `shared` in this worktree, the snapshot exists, the import source reads and you said yes. A command refused there runs no hook.
 - A hook's output is printed where basepad's own lines go: standard error for `db export` to standard output and under `--json` and `--claude`, so that output stays clean. With mission control open, it shows in the environment's logs as a `hooks` row, and a failure shows as a notice.
