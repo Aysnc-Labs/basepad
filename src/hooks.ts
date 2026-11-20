@@ -33,6 +33,7 @@ export interface HookRun {
 	keysFrom?: string;
 	variables?: Record<string, string>;
 	warnOnly?: true;
+	warn?(line: string): void;
 }
 
 export type RunHook = (name: HookName) => Promise<void>;
@@ -54,9 +55,11 @@ export function hooksOf(project: Project, run: HookRun): RunHook {
 		if (failed === undefined) return;
 		const message = `${name} \`${failed.command}\` failed (exit ${failed.code}).`;
 		if (run.warnOnly !== true) throw new BasepadError(message);
-		console.error(`basepad: ${message} Going on.`);
+		(run.warn ?? toStderr)(`basepad: ${message} Going on.`);
 	};
 }
+
+const toStderr = (line: string) => console.error(line);
 
 async function runCommands(
 	dir: string,
