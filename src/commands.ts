@@ -560,25 +560,22 @@ async function create(
 		before = async () => {},
 	}: { start?: (key: string) => boolean; before?: () => Promise<void> } = {},
 ): Promise<Layout> {
-	const { root } = environment.project;
+	const tree = { suffix, root: environment.project.root };
 	const hook = hooksOf(environment.project, { environment: suffix, say });
-	const lay = await keptOnFailure(suffix, root, UP_THERE, async () => {
+	const lay = await keptOnFailure(tree, UP_THERE, async () => {
 		await before();
 		await checkTools(environment, context.here);
 		await hook("beforeCreate");
 		return ready(environment, context, start === undefined ? {} : { start });
 	});
-	await keptOnFailure(suffix, root, "run the rest of `afterCreate` there", () =>
-		hook("afterCreate"),
-	);
+	await keptOnFailure(tree, "run the rest of `afterCreate` there", () => hook("afterCreate"));
 	return lay;
 }
 
 const UP_THERE = "run `basepad up` there";
 
 async function keptOnFailure<T>(
-	suffix: string,
-	root: string,
+	tree: Pick<Listed, "suffix" | "root">,
 	then: string,
 	step: () => Promise<T>,
 ): Promise<T> {
@@ -587,7 +584,7 @@ async function keptOnFailure<T>(
 	} catch (error) {
 		if (!(error instanceof BasepadError)) throw error;
 		throw new BasepadError(
-			`${error.message}\n${checkedOut(suffix, root)}; once that is fixed, ${then}.`,
+			`${error.message}\n${checkedOut(tree.suffix, tree.root)}; once that is fixed, ${then}.`,
 		);
 	}
 }
@@ -629,7 +626,7 @@ async function worktreeAdd({ cwd, flags, print }: Invocation): Promise<void> {
 	const requested = input?.name ?? (typeof flags.branch === "string" ? flags.branch : undefined);
 	const { suffix, branch, root } = await checkOutWorktree(main, requested);
 	say(`${checkedOut(suffix, root)}.`);
-	const environment = await keptOnFailure(suffix, root, UP_THERE, () => environmentAt(root));
+	const environment = await keptOnFailure({ suffix, root }, UP_THERE, () => environmentAt(root));
 	const lay = await create(environment, suffix, context, say, {
 		start: () => flags.start === true,
 		before: async () => {
