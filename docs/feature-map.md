@@ -26,6 +26,7 @@ flowchart LR
   MissionControl -- "worktree add, rm" --> Commands
   Commands --> EnvFiles["env files"]
   Supervisor -- "runs" --> Pitchfork["pitchfork (isolated)"]
+  Pitchfork -- "apps: mise x" --> Mise
   Catalogue --> Tools
   Supervisor --> Tools
   Tools -- "exec" --> Mise["mise"]
@@ -53,9 +54,9 @@ Paths: src/launcher.ts, src/cli.ts, src/home.ts, src/versions.ts, src/internal/e
 
 ### `basepad up`, `down` and `status`
 
-Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.localhost`, starts services, sets the env keys the config names; stops them (on a terminal, the landing in `src/mission-control/launch.ts` shows them coming down); shows their state.
+Purpose: runs each app under basepad's own pitchfork at `https://<app>.<name>.localhost`, through mise in its checkout (`src/internal/mise.ts`) so its tools are the checkout's, starts services, sets the env keys the config names; stops them (on a terminal, the landing in `src/mission-control/launch.ts` shows them coming down); shows their state.
 Entry: `basepad up [-d] [--claim]`, `basepad down`, `basepad status`
-Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/ports.ts, src/internal/processes.ts, src/mission-control/launch.ts, src/tls.ts
+Paths: src/commands.ts, src/layout.ts, src/supervisor.ts, src/tools.ts, src/env-files.ts, src/internal/mise.ts, src/internal/ports.ts, src/internal/processes.ts, src/mission-control/launch.ts, src/tls.ts
 Decisions: [0001](adr/0001-config-is-the-only-interface.md), [0003](adr/0003-services-run-the-projects-mise-tools.md)
 
 ### Mission control
