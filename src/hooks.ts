@@ -104,8 +104,11 @@ function streamed(
 }
 
 async function envFileKeys(project: Project, root: string): Promise<Record<string, string>> {
-	const keys: Record<string, string> = {};
-	for (const { path, names } of envFileShape(project)) {
+	const shape = envFileShape(project);
+	const keys: Record<string, string> = Object.fromEntries(
+		shape.flatMap(({ names }) => names.map((name) => [name, ""])),
+	);
+	for (const { path, names } of shape) {
 		const text = await readFile(resolve(root, path), "utf8").catch(() => undefined);
 		if (text !== undefined) Object.assign(keys, valuesOf(text, names));
 	}

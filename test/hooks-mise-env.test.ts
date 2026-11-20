@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, test } from "vitest";
@@ -79,6 +79,31 @@ test("a Remove hook sees the worktree's env file keys even when main's mise conf
 	expect(await readFile(join(main, "removed"), "utf8")).toMatch(
 		/^https:\/\/web\.worktree-1\.t67rmkeys\.localhost(:\d+)?\n$/,
 	);
+	await box.basepad(main, "down");
+}, 300_000);
+
+test("a Remove hook gets an empty key, not main's, when the worktree's env file is gone", async () => {
+	const main = await box.project("t67rmgone", {
+		"basepad.config.ts": configFile(`{
+			name: "t67rmgone",
+			apps: { web: { run: "sleep 60" } },
+			env: ({ web }) => ({ ".env.local": { WEB_URL: web.url } }),
+			hooks: { beforeRemove: 'echo "[$WEB_URL]" >> removed' },
+		}`),
+		"mise.toml": `${MISE_TOML}\n[env]\n_.file = ".env.local"\n`,
+		".gitignore": "node_modules\n.env.local\nremoved\n",
+	});
+	await git(main, "init", "--quiet", "--initial-branch=main");
+	await git(main, "add", ".");
+	await git(main, "commit", "--quiet", "-m", "init");
+	expect((await box.basepad(main, "worktree", "add")).code).toBe(0);
+	const tree = join(box.root, "t67rmgone.worktrees/worktree-1");
+	await box.basepad(tree, "down");
+	await rm(tree, { recursive: true, force: true });
+
+	expect((await box.basepad(main, "prune", "--yes")).code).toBe(0);
+
+	expect(await readFile(join(main, "removed"), "utf8")).toBe("[]\n");
 	await box.basepad(main, "down");
 }, 300_000);
 

@@ -9,9 +9,9 @@ import { configFile, type Result, type Sandbox, sandbox } from "./sandbox.ts";
 const echo = join(import.meta.dirname, "apps/echo.mjs");
 const web = `web: { run: ${JSON.stringify(`touch started && exec '${process.execPath}' '${echo}'`)} }`;
 const note =
-	'echo "$BASEPAD_EVENT $BASEPAD_ENVIRONMENT $(printenv WEB_URL || echo no-keys) $(test -e .env.local && echo files || echo no-files) $(test -e started && echo started || echo waiting)" >> marker';
+	'echo "$BASEPAD_EVENT $BASEPAD_ENVIRONMENT $(test -n "$WEB_URL" && echo "$WEB_URL" || echo no-keys) $(test -e .env.local && echo files || echo no-files) $(test -e started && echo started || echo waiting)" >> marker';
 const removal =
-	'echo "$BASEPAD_EVENT $BASEPAD_ENVIRONMENT $BASEPAD_WORKTREE $(test -d "$BASEPAD_WORKTREE" && echo present || echo gone) $(printenv WEB_URL || echo no-keys)" >> removed';
+	'echo "$BASEPAD_EVENT $BASEPAD_ENVIRONMENT $BASEPAD_WORKTREE $(test -d "$BASEPAD_WORKTREE" && echo present || echo gone) $(test -n "$WEB_URL" && echo "$WEB_URL" || echo no-keys)" >> removed';
 const config = (hooks: Record<string, string | readonly string[]>) =>
 	configFile(`{
 	name: "t62trees",
